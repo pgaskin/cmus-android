@@ -387,6 +387,15 @@ view-selector tab bar + Android status/nav bar coloring) — needs its
 detailed plan written and approved first. CmusIpc's cached Options
 already carries all color_* values, replayed to late listeners.
 
+Note for later (Patrick; stage 18 data import, or wherever imports
+land first): inhibit the idle-quit timer while media is being
+imported — a long add/import scan with the app backgrounded and
+nothing playing looks exactly like idle, and quitting mid-import
+would truncate it. TermService.updateIdleQuit is the gate point;
+cmus-side job activity could come from the running import command's
+lifecycle (the importer knows when it started/finished) rather than
+anything cmus reports.
+
 Future feature (Patrick, needs a cmus patch): periodically save cmus
 state — resume file, autosave/library, cache — during runtime, not
 just at exit, to protect against unexpected exits that skip the
