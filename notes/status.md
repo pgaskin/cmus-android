@@ -175,5 +175,12 @@ have TermService export env vars for the android data dir, the
 external storage path, the external data path, etc., and put them in
 `pl_env_vars`, so saved paths survive reinstalls / storage moves.
 
+Idea from Patrick for later (theme selector, ~stage 16): a generated
+Material You colorscheme — Java reads the system dynamic color palette
+(android.R.color system_accent/neutral tones) and produces a cmus
+.theme from it (written to cmus-data or applied via `set color_*` over
+IPC), offered alongside the bundled themes and updating when the
+system palette changes.
+
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
