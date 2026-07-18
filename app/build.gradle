@@ -40,6 +40,14 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 
+    sourceSets {
+        main {
+            // plain File: AGP 9 rejects Providers here; the task dependency
+            // rides on preBuild -> cmusDataAssets below
+            assets.srcDir layout.buildDirectory.dir('generated/cmus-assets').get().asFile
+        }
+    }
+
     packaging {
         jniLibs {
             // extract to nativeLibraryDir as real files: libcmus.so is
@@ -59,6 +67,13 @@ def patchCheck = tasks.register('patchCheck', Exec) {
     workingDir rootDir
     commandLine './patch.sh', 'check'
 }
+
+// cmus rc + themes as assets straight from the pristine submodule
+def cmusDataAssets = tasks.register('cmusDataAssets', Copy) {
+    from new File(rootDir, 'third_party/cmus/data')
+    into layout.buildDirectory.dir('generated/cmus-assets/cmus-data')
+}
+
 tasks.named('preBuild') {
-    dependsOn patchCheck
+    dependsOn patchCheck, cmusDataAssets
 }
