@@ -3,6 +3,42 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 5: cmus build (done)
+
+- `native/cmus/CMakeLists.txt` per [plans/05-cmus.md](plans/05-cmus.md):
+  the 16 config/*.h generated at configure time in the exact
+  `config_header` emit format; core = cmus-y sources as an executable
+  named libcmus.so with ENABLE_EXPORTS, linking ncursesw iconv dl m;
+  VERSION composed from the Makefile's `_ver3` fallback + gitlink short
+  sha (git describe is unusable in the submodule: shallow, and patch.sh's
+  `base` tag wins `--tags`).
+- 10 plugins as SHARED libs, codecs static inside, `-Wl,-z,undefs`
+  overriding the NDK's `--no-undefined` (core syms resolve at dlopen from
+  the executable). Two include quirks solved without patches: wavpack's
+  in-tree header lives at include/wavpack.h, mirrored into gen/ under the
+  installed `<wavpack/wavpack.h>` name; the `"../config/*.h"` quoted
+  includes in ip/vorbis.c + ip/mp4.c resolve textually against -I dirs,
+  so plugins get an empty `gen/ip` anchor dir beside gen/config.
+- Flagged AGP packaging risk retired empirically: AGP packages the
+  executable parked in CMAKE_LIBRARY_OUTPUT_DIRECTORY as-is (wireguard
+  pattern), no POST_BUILD fallback needed. `useLegacyPackaging = true`
+  set (extractNativeLibs); `cmus_deps` aggregate target retired — gradle
+  builds cmus + the 10 plugin targets, statics come transitively.
+- Verified: clean `./gradlew clean assembleDebug` (~12s); APK gains
+  exactly libcmus.so + 10 libcmus_{ip,op}_*.so (terminfo asset
+  unchanged); ET_DYN AArch64, 1268 dynsym T entries survive AGP strip;
+  plugins show undefined core syms + their codec defined (145 FLAC__ in
+  ip flac). On-device (Pixel 8/Android 16, wifi adb; note adbd runs as
+  *root* on this device, so the shell-uid aaudio question stayed
+  untested): hand-built stage-6 layout under /data/local/tmp/cmus, TUI
+  renders with the pushed terminfo, all 10 plugins in /proc/pid/maps,
+  flac/mp3/ogg/opus/m4a/wv/wav/aac + a cue sheet all play through
+  aaudio with real-time position advance; pause works; `seek 6` on an
+  8s tone "stuck" at 3 turned out to be upstream clamping absolute
+  seeks to duration−5 (player.c), not a bug. Server socket driven with
+  toybox `nc -U` (the socat-equivalent stage-7 baseline); `quit` exited
+  cleanly, autosave written. Test layout left on-device for poking.
+
 ## 2026-07-18 — Stage 4: native deps B (done)
 
 - libmad repointed to codeberg.org/tenacityteam/libmad @ be34ec9 (0.16.4)
@@ -89,14 +125,14 @@ pick up where things left off.
 
 ## Next
 
-Stage 5: cmus build — cmus core as `libcmus.so` executable + 10 ip/op
-plugin shared libs + CMake-generated config headers replacing
-./configure output. Plan drafted at
-[plans/05-cmus.md](plans/05-cmus.md) (pending Patrick's approval);
-implementation in a fresh session. Verify target: cmus TUI runs in adb
-shell, plugins all load, playback via aaudio if shell uid allows. The
-stage-4 ncursesw/iconv/mad libs get their first real link test here.
-One flagged scope addition: ip/cue (upstream default-on, dep-free).
+Stage 6: terminal MVP — termux terminal-emulator/-view modules wired
+into gradle from the submodule, TerminalView + foreground service,
+spawn cmus in a pty, in-app runtime layout (plugin symlinks, terminfo
+extraction, data dir), IME toggle. Plan to be drafted as
+plans/06-terminal.md (needs Patrick's approval before implementing).
+Verify target: usable TUI in-app, flac plays. Open question carried
+from stage 5: aaudio from a non-root uid was never exercised (this
+device's adbd runs as root) — the app itself will be the real test.
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.

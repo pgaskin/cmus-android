@@ -11,6 +11,7 @@ full plan and rationale; this file describes what currently exists.
 ├── native/           CMake source root (AGP externalNativeBuild)
 │   ├── CMakeLists.txt  upstream-CMake deps via add_subdirectory
 │   ├── cmake/          Find{Ogg,Opus}.cmake shims → in-tree targets
+│   ├── cmus/           cmus core + plugin targets + generated config/*.h
 │   └── ports/          handwritten CMake ports (ncurses, libiconv), each
 │                       with gen.sh + committed gen/ outputs
 ├── third_party/      13 pinned submodules (cmus, termux-app, ncurses,
@@ -47,11 +48,11 @@ full plan and rationale; this file describes what currently exists.
   28.2.13676358, arm64-v8a only, default c++_static STL).
 - Upstream-CMake deps (libogg, libvorbis, opus, opusfile, flac, wavpack,
   faad2, mp4v2, libmad) added with `add_subdirectory(... EXCLUDE_FROM_ALL)`,
-  forced static, programs/tests/docs off; gradle builds only the
-  `cmus_deps` custom target = the 12 libs cmus links (ogg vorbis
-  vorbisfile opus opusfile FLAC wavpack faad mp4v2 mad-static ncursesw
-  iconv), keeping strays (vorbisenc, opusurl, faad_drm, the shared mad…)
-  out.
+  forced static, programs/tests/docs off; gradle builds the cmus
+  executable + 10 plugin targets, whose transitive deps are exactly the
+  12 static libs (ogg vorbis vorbisfile opus opusfile FLAC wavpack faad
+  mp4v2 mad-static ncursesw iconv), keeping strays (vorbisenc, opusurl,
+  faad_drm, the shared mad…) out.
 - `native/cmake/Find{Ogg,Opus}.cmake` (prepended to CMAKE_MODULE_PATH)
   satisfy find_package in libvorbis/opusfile with the in-tree targets.
   `CMAKE_SKIP_INSTALL_RULES=ON` because opusfile/flac install(EXPORT)
@@ -63,10 +64,21 @@ full plan and rationale; this file describes what currently exists.
   ncursesw is the configured NORMAL_OBJS module set (wide-char,
   ext-colors, no trace/ticlib/driver); iconv is lib/iconv.c +
   localcharset.c with a handwritten bionic config.h.
-- Static libs land under `app/.cxx/` only. The APK carries one native
-  asset so far: `assets/terminfo/x/xterm-256color`, compiled by
-  ncurses' gen.sh with host tic (verified loadable on-device by the
-  in-tree ncurses; runtime extraction comes in stage 6).
+- `native/cmus/`: cmus core (the Makefile's cmus-y set, mpris off) as an
+  executable named `libcmus.so` — ENABLE_EXPORTS so plugins resolve core
+  symbols from it at dlopen — parked in CMAKE_LIBRARY_OUTPUT_DIRECTORY,
+  which AGP packages as-is; 9 ip plugins (flac vorbis opus mad wavpack
+  aac mp4 wav cue) + op/aaudio as `libcmus_{ip,op}_*.so` SHARED libs
+  with codecs linked statically and `-z undefs` overriding the NDK's
+  `--no-undefined`. The config/*.h that upstream `./configure` would
+  emit are generated at CMake configure time in the same format
+  (values: bionic + our deps; DEBUG=1; rtsched off); VERSION = the
+  Makefile's `_ver3` fallback + gitlink short sha.
+- Static libs land under `app/.cxx/` only. The APK carries the 11
+  cmus libs (extracted at install: `useLegacyPackaging` for exec +
+  stage-6 symlinks) and one asset: `assets/terminfo/x/xterm-256color`,
+  compiled by ncurses' gen.sh with host tic (runtime extraction comes
+  in stage 6).
 
 ## App module
 
@@ -86,6 +98,6 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-cmus itself (5), terminal UI via termux terminal-emulator/-view (6),
-cmus unix-socket IPC (7–8), media session (9), then
-chrome/input/overlays/settings (10+).
+Terminal UI via termux terminal-emulator/-view (6), cmus unix-socket
+IPC (7–8), media session (9), then chrome/input/overlays/settings
+(10+).
