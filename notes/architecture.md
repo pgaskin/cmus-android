@@ -7,16 +7,17 @@ full plan and rationale; this file describes what currently exists.
 
 ```
 ├── notes/            spec, plans/, status.md, this file
-├── app/              Android app module (Java 21, no androidx/deps)
+├── app/              Android app module (Java 21; termux terminal libs
+│                     via jitpack, androidx transitively)
 ├── native/           CMake source root (AGP externalNativeBuild)
 │   ├── CMakeLists.txt  upstream-CMake deps via add_subdirectory
 │   ├── cmake/          Find{Ogg,Opus}.cmake shims → in-tree targets
 │   ├── cmus/           cmus core + plugin targets + generated config/*.h
 │   └── ports/          handwritten CMake ports (ncurses, libiconv), each
 │                       with gen.sh + committed gen/ outputs
-├── third_party/      13 pinned submodules (cmus, termux-app, ncurses,
-│                     libogg, libvorbis, opus, opusfile, flac, libmad,
-│                     wavpack, faad2, mp4v2, libiconv)
+├── third_party/      12 pinned submodules (cmus, ncurses, libogg,
+│                     libvorbis, opus, opusfile, flac, libmad, wavpack,
+│                     faad2, mp4v2, libiconv)
 ├── patches/          per-submodule patch dirs (none yet)
 ├── patch.sh          vncpatch-style patch apply/regenerate
 ├── settings.gradle   root: pluginManagement + :app
@@ -34,11 +35,15 @@ full plan and rationale; this file describes what currently exists.
   patch files from base..HEAD (`-n` skips regen). `./patch.sh check` is
   read-only; the `:app:patchCheck` Exec task runs it before `preBuild` so
   builds fail with a hint when patches exist but aren't applied.
-- Pins (2026-07-18): cmus master d335e90, termux-app v0.118.3, ncurses
-  snapshot 87c2c84, libogg v1.3.6, libvorbis v1.3.7, opus v1.6.1, opusfile
-  master 6dfd29e, flac 1.5.0, libmad 0.16.4 be34ec9 (the codeberg
-  tenacityteam fork — the github URL silently redirects to libid3tag),
-  wavpack 5.9.0, faad2 2.11.2, mp4v2 v2.1.3, libiconv v1.19.
+- Pins (2026-07-18): cmus master d335e90, ncurses snapshot 87c2c84,
+  libogg v1.3.6, libvorbis v1.3.7, opus v1.6.1, opusfile master 6dfd29e,
+  flac 1.5.0, libmad 0.16.4 be34ec9 (the codeberg tenacityteam fork —
+  the github URL silently redirects to libid3tag), wavpack 5.9.0,
+  faad2 2.11.2, mp4v2 v2.1.3, libiconv v1.19.
+- termux terminal-view/-emulator v0.118.3 are a gradle dep from jitpack
+  (`com.github.termux.termux-app`, exclusiveContent-filtered; the
+  com.termux custom-domain group serves no artifacts), not a submodule —
+  their AGP-4-era build.gradle never enters our build.
 
 ## Native build
 
@@ -74,18 +79,36 @@ full plan and rationale; this file describes what currently exists.
   emit are generated at CMake configure time in the same format
   (values: bionic + our deps; DEBUG=1; rtsched off); VERSION = the
   Makefile's `_ver3` fallback + gitlink short sha.
-- Static libs land under `app/.cxx/` only. The APK carries the 11
-  cmus libs (extracted at install: `useLegacyPackaging` for exec +
-  stage-6 symlinks) and one asset: `assets/terminfo/x/xterm-256color`,
-  compiled by ncurses' gen.sh with host tic (runtime extraction comes
-  in stage 6).
+- Static libs land under `app/.cxx/` only. The APK carries the 11 cmus
+  libs + termux's libtermux.so (extracted at install:
+  `useLegacyPackaging` for exec + plugin symlinks), the
+  `assets/terminfo/x/xterm-256color` compiled by ncurses' gen.sh with
+  host tic, and `assets/cmus-data/*` (rc + 17 themes) copied by a
+  gradle task from the pristine cmus submodule.
 
 ## App module
 
 - `net.pgaskin.cmus.android`, minSdk 34 (Android 14), target/compileSdk 36.
-- Plain framework APIs only (`android.app.Activity`, custom views later) —
-  no androidx, no external Java deps.
-- `MainActivity` — stub (black screen) for now.
+- Framework APIs + the termux terminal libs; androidx allowed where it
+  makes sense (currently only androidx.annotation, transitively).
+- `TermService` — mediaPlayback foreground service owning the cmus
+  `TerminalSession`: runs `CmusFiles.prepare`, spawns
+  `nativeLibraryDir/libcmus.so` in a pty (env: HOME/TMPDIR/TERM/
+  TERMINFO/CMUS_{HOME,LIB_DIR,DATA_DIR}), and is the session's one
+  stable `TerminalSessionClient`, forwarding to the attached activity.
+  Stub "running" notification (real media notification is stage 9);
+  session exit → stopSelf + finish the activity.
+- `CmusFiles` — idempotent per-spawn filesDir layout: extracts the
+  terminfo + cmus-data assets (stamped by versionCode + APK install
+  time), rebuilds `cmus-lib/{ip,op}/NAME.so` symlinks into
+  nativeLibraryDir, creates `cmus-home/`.
+- `MainActivity` — `TerminalView` (focusableInTouchMode — required for
+  IME/keys; set in code, easy to miss) in a FrameLayout wrapper that
+  consumes systemBars+cutout+ime insets as padding (TerminalView sizes
+  from raw bounds; targetSdk 36 = enforced edge-to-edge, adjustResize
+  is a no-op). Tap toggles the IME, pinch scales the font (5–36dp),
+  back backgrounds the app (playback continues under the FGS);
+  rotation recreates the activity and re-attaches the live session.
 - Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout);
   colors become cmus-theme-driven in a later stage.
 
@@ -98,6 +121,5 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Terminal UI via termux terminal-emulator/-view (6), cmus unix-socket
-IPC (7–8), media session (9), then chrome/input/overlays/settings
-(10+).
+cmus unix-socket IPC (7: android.c patch, 8: Java client), media
+session (9), then lifecycle/chrome/input/overlays/settings (10+).

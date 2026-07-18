@@ -3,6 +3,42 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 6: terminal MVP (done)
+
+- Per [plans/06-terminal.md](plans/06-terminal.md) with Patrick's
+  amendments: terminal-view v0.118.3 via jitpack (exclusiveContent
+  repo), termux-app submodule removed (13 → 12),
+  `android.useAndroidX=true` (androidx.annotation comes transitively).
+  AAR `package=` attr risk retired: resolves fine under AGP 9.
+- cmus data/ → APK assets via a Copy task into
+  `build/generated/cmus-assets` (AGP 9 rejects Provider srcDirs, so the
+  srcDir is an eager File and the task rides on preBuild). CmusFiles
+  builds the filesDir layout per plan; one deviation: the asset stamp
+  is versionCode **+ APK lastUpdateTime**, since versionCode stays 1
+  during development.
+- TermService (mediaPlayback FGS) + MainActivity per plan, with one
+  design simplification: the service is the session's only
+  TerminalSessionClient and forwards to the attached activity via a
+  small SessionCallback, so re-attach never needs
+  `updateTerminalSessionClient`. Gotcha that cost a debug cycle:
+  TerminalView needs `setFocusableInTouchMode(true)` (termux sets it
+  in layout XML) — without it the view never becomes the IME target
+  and key events silently go nowhere.
+- Verified on device (Pixel 8/Android 16): TUI themed, `:add ~/music`
+  typed through the soft keyboard, view switching, tap-to-IME with the
+  terminal resizing above the keyboard (insets wrapper works); flac
+  (+aac, cue) play **from the app uid** — active audioflinger track,
+  position advances, pause + seek via the cmus socket — retiring the
+  stage-5 aaudio-from-nonroot question. Home-away → playback continues
+  under the FGS; relaunch + rotation re-attach the live session;
+  `:quit` → cmus exits, autosave written, service + activity gone.
+  Untested by hand: pinch zoom (no adb multitouch) — eyeball later.
+- Flagged for later: our NDK-r28 libs + termux's NDK-21 libtermux.so
+  trip Android 16's debug-only "not 16 KB aligned" dialog
+  (useLegacyPackaging compresses libs, so the check can't verify
+  alignment). Harmless on 4 KB-page devices; revisit if 16 KB pages
+  ever matter.
+
 ## 2026-07-18 — Stage 5: cmus build (done)
 
 - `native/cmus/CMakeLists.txt` per [plans/05-cmus.md](plans/05-cmus.md):
@@ -125,16 +161,11 @@ pick up where things left off.
 
 ## Next
 
-Stage 6: terminal MVP — plan approved and committed as
-[plans/06-terminal.md](plans/06-terminal.md); implement it in a fresh
-session. Patrick's amendments (recorded in the plan): termux libs come
-from JitPack as a gradle dep (`com.github.termux.termux-app` — the
-com.termux custom-domain group 404s; v0.118.3 artifacts verified
-present, arm64 libtermux.so in the AAR), the termux-app submodule gets
-removed, and androidx is now allowed where it makes sense. Verify
-target: usable TUI in-app, flac plays — which also retires the stage-5
-open question (aaudio from a non-root uid; this device's adbd runs as
-root, so the app is the real test).
+Stage 7: cmus IPC patch (android.c + call-site hooks + remote-stream
+removal as patches via patch.sh; verify with socat/adb) — needs its
+detailed plan written and approved first. The cmus socket at
+`$CMUS_HOME/socket` was driven successfully with `toybox nc -U` from
+adb during stages 5–6, so the transport baseline is proven.
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
