@@ -125,14 +125,16 @@ pick up where things left off.
 
 ## Next
 
-Stage 6: terminal MVP — termux terminal-emulator/-view modules wired
-into gradle from the submodule, TerminalView + foreground service,
-spawn cmus in a pty, in-app runtime layout (plugin symlinks, terminfo
-extraction, data dir), IME toggle. Plan to be drafted as
-plans/06-terminal.md (needs Patrick's approval before implementing).
-Verify target: usable TUI in-app, flac plays. Open question carried
-from stage 5: aaudio from a non-root uid was never exercised (this
-device's adbd runs as root) — the app itself will be the real test.
+Stage 6: terminal MVP — plan approved and committed as
+[plans/06-terminal.md](plans/06-terminal.md); implement it in a fresh
+session. Patrick's amendments (recorded in the plan): termux libs come
+from JitPack as a gradle dep (`com.github.termux.termux-app` — the
+com.termux custom-domain group 404s; v0.118.3 artifacts verified
+present, arm64 libtermux.so in the AAR), the termux-app submodule gets
+removed, and androidx is now allowed where it makes sense. Verify
+target: usable TUI in-app, flac plays — which also retires the stage-5
+open question (aaudio from a non-root uid; this device's adbd runs as
+root, so the app is the real test).
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
