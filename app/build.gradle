@@ -1,0 +1,21 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'net.pgaskin.cmus.android'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'net.pgaskin.cmus.android'
+        minSdk 34
+        targetSdk 36
+        versionCode 1
+        versionName '1'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+}
