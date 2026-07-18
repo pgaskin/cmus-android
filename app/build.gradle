@@ -16,7 +16,11 @@ android {
 
         externalNativeBuild {
             cmake {
-                targets 'cmus_deps'
+                targets 'cmus',
+                        'cmus_ip_flac', 'cmus_ip_vorbis', 'cmus_ip_opus',
+                        'cmus_ip_mad', 'cmus_ip_wavpack', 'cmus_ip_aac',
+                        'cmus_ip_mp4', 'cmus_ip_wav', 'cmus_ip_cue',
+                        'cmus_op_aaudio'
             }
         }
         ndk {
@@ -34,6 +38,14 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
+    }
+
+    packaging {
+        jniLibs {
+            // extract to nativeLibraryDir as real files: libcmus.so is
+            // exec'd and the runtime layout symlinks plugins by short name
+            useLegacyPackaging = true
+        }
     }
 }
 
