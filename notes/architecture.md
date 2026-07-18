@@ -18,7 +18,7 @@ full plan and rationale; this file describes what currently exists.
 ├── third_party/      12 pinned submodules (cmus, ncurses, libogg,
 │                     libvorbis, opus, opusfile, flac, libmad, wavpack,
 │                     faad2, mp4v2, libiconv)
-├── patches/          per-submodule patch dirs (none yet)
+├── patches/          per-submodule patch dirs (cmus: 2)
 ├── patch.sh          vncpatch-style patch apply/regenerate
 ├── settings.gradle   root: pluginManagement + :app
 ├── build.gradle      AGP 9.3.0 (apply false)
@@ -35,6 +35,13 @@ full plan and rationale; this file describes what currently exists.
   patch files from base..HEAD (`-n` skips regen). `./patch.sh check` is
   read-only; the `:app:patchCheck` Exec task runs it before `preBuild` so
   builds fail with a hint when patches exist but aren't applied.
+- patches/cmus: 0001 adds the app IPC socket (android.c/android.h + hook
+  hunks in ui_curses.c/command_mode.c; everything guarded by
+  CONFIG_ANDROID so the patched tree still builds with the upstream
+  Makefile), 0002 removes remote-stream support (input.c remote machinery
+  behind `#ifndef CONFIG_ANDROID`, cmus_detect_ft's http branch out) so
+  http.c drops from the link. The protocol comment atop android.c is the
+  contract the Java client codes against.
 - Pins (2026-07-18): cmus master d335e90, ncurses snapshot 87c2c84,
   libogg v1.3.6, libvorbis v1.3.7, opus v1.6.1, opusfile master 6dfd29e,
   flac 1.5.0, libmad 0.16.4 be34ec9 (the codeberg tenacityteam fork —
@@ -69,7 +76,9 @@ full plan and rationale; this file describes what currently exists.
   ncursesw is the configured NORMAL_OBJS module set (wide-char,
   ext-colors, no trace/ticlib/driver); iconv is lib/iconv.c +
   localcharset.c with a handwritten bionic config.h.
-- `native/cmus/`: cmus core (the Makefile's cmus-y set, mpris off) as an
+- `native/cmus/`: cmus core (the Makefile's cmus-y set, mpris off,
+  http.c out, + the patch's android.c; `CONFIG_ANDROID` set as a plain
+  compile definition on the core only) as an
   executable named `libcmus.so` — ENABLE_EXPORTS so plugins resolve core
   symbols from it at dlopen — parked in CMAKE_LIBRARY_OUTPUT_DIRECTORY,
   which AGP packages as-is; 9 ip plugins (flac vorbis opus mad wavpack
@@ -78,7 +87,9 @@ full plan and rationale; this file describes what currently exists.
   `--no-undefined`. The config/*.h that upstream `./configure` would
   emit are generated at CMake configure time in the same format
   (values: bionic + our deps; DEBUG=1; rtsched off); VERSION = the
-  Makefile's `_ver3` fallback + gitlink short sha.
+  Makefile's `_ver3` fallback + gitlink short sha (resolved from the
+  parent repo — the submodule HEAD is the patched tip, whose sha changes
+  on every patch regen).
 - Static libs land under `app/.cxx/` only. The APK carries the 11 cmus
   libs + termux's libtermux.so (extracted at install:
   `useLegacyPackaging` for exec + plugin symlinks), the
@@ -94,7 +105,10 @@ full plan and rationale; this file describes what currently exists.
 - `TermService` — mediaPlayback foreground service owning the cmus
   `TerminalSession`: runs `CmusFiles.prepare`, spawns
   `nativeLibraryDir/libcmus.so` in a pty (env: HOME/TMPDIR/TERM/
-  TERMINFO/CMUS_{HOME,LIB_DIR,DATA_DIR}), and is the session's one
+  TERMINFO/CMUS_{HOME,LIB_DIR,DATA_DIR} +
+  `CMUS_ANDROID_SOCKET=<filesDir>/cmus-android.sock`, the app IPC
+  socket — filesDir root so tar exports of cmus-home never pick up
+  socket files), and is the session's one
   stable `TerminalSessionClient`, forwarding to the attached activity.
   Stub "running" notification (real media notification is stage 9);
   session exit → stopSelf + finish the activity.
@@ -121,5 +135,6 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-cmus unix-socket IPC (7: android.c patch, 8: Java client), media
-session (9), then lifecycle/chrome/input/overlays/settings (10+).
+Java IPC client (8: CmusIpc typed state + commands over the android.c
+socket), media session (9), then lifecycle/chrome/input/overlays/
+settings (10+).

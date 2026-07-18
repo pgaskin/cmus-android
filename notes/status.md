@@ -3,6 +3,47 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 7: cmus IPC patch (done)
+
+- Per [plans/07-ipc.md](plans/07-ipc.md), no deviations from the plan's
+  design. patches/cmus/0001 = android.c/android.h + 6 small hunks
+  (ui_curses.c init/free/select-loop/flush, command_mode.c options-dirty
+  hook at the end of run_parsed_command); 0002 = remote-stream removal
+  (input.c machinery + the timeout/pl-mime statics behind `#ifndef
+  CONFIG_ANDROID` with a stub open_remote, cmus_detect_ft keeps only
+  is_cue_url). The protocol block atop android.c is the stage-8
+  contract: JSON events out (hello/status/position/volume/options; one
+  flush per main-loop iteration off the player_info snapshot flags, a
+  position event only when no status event is sent), raw command lines
+  in. Single client, new-connection-wins, full snapshot on connect.
+- Implementation notes: inbound uses a persistent 4 KB line buffer
+  (server.c's local buffer can drop a partial line between reads;
+  overlong line = client dropped); the write path treats EAGAIN as a
+  dead client rather than write_all's busy-loop; `config/*.h` in a
+  comment trips -Wcomment, mind the wording. CMake follow-on fix: the
+  VERSION sha now resolves the gitlink via the parent repo (`git -C
+  third_party/.. rev-parse ":third_party/cmus"`) — submodule HEAD is
+  now the patched tip, whose sha changes every regen.
+- patch.sh got its first real exercise: regen → reset → gradle fails
+  via patchCheck with the hint → reapply → regen stable modulo the
+  known `From <sha>` first-line churn. TermService exports
+  `CMUS_ANDROID_SOCKET=<filesDir>/cmus-android.sock`.
+- Verified on device (Pixel 8, `toybox nc -U` from adb root + host jq):
+  connect snapshot hello/status/volume/options all valid JSON (129
+  options incl. all color_*); play → status event + position ~1/s;
+  seek → position event (a seek racing player-play in the same write
+  is ignored by the player, upstream behavior, don't chase it);
+  `player-pause` inbound pauses with the status event back;
+  `set softvol=true` → volume + options events; `colorscheme gruvbox`
+  → one coalesced options event (note gruvbox sets color_win_bg=default
+  — check color_win_cur/title_bg when eyeballing theme changes);
+  second connect drops the first (clean EOF) with a fresh snapshot on
+  the new one; `add http://…` rejected, library intact (`save -l -`
+  over the old socket is a handy library dump); `quit` sent through
+  the android socket → clean EOF, socket unlinked, autosave written,
+  service gone (only the frozen empty app process remains, as in
+  stage 6). nm: 6 android_* T-syms exported, zero http syms left.
+
 ## 2026-07-18 — Stage 6: terminal MVP (done)
 
 - Per [plans/06-terminal.md](plans/06-terminal.md) with Patrick's
@@ -170,11 +211,15 @@ pick up where things left off.
 
 ## Next
 
-Stage 7: cmus IPC patch (android.c + call-site hooks + remote-stream
-removal as patches via patch.sh; verify with socat/adb) — needs its
-detailed plan written and approved first. The cmus socket at
-`$CMUS_HOME/socket` was driven successfully with `toybox nc -U` from
-adb during stages 5–6, so the transport baseline is proven.
+Stage 8: Java IPC client (CmusIpc: connect to the android.c socket,
+typed state — status/track/volume/options map — via listener, command
+sending; verify: app logs live status/track/options, commands work) —
+needs its detailed plan written and approved first. Code against the
+protocol comment at the top of android.c (patches/cmus/0001); events
+are complete-state, reconnect always yields a full snapshot, so the
+client can be stateless-reconnect-simple. LocalSocket to a filesystem
+path already works from Java (TermService.forceMouseOption is the
+stage-6 precedent).
 
 Note from Patrick for later stages: use cmus's own `pl_env_vars`
 mechanism (pl_env.c — Patrick's upstream feature: saved library/
