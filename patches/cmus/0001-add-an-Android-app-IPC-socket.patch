@@ -1,0 +1,541 @@
+From 5ebc439d543a8eac4c1ce1062f9a0ed7cf0f525d Mon Sep 17 00:00:00 2001
+From: Claude Fable 5 <noreply@anthropic.com>
+Date: Sat, 18 Jul 2026 16:29:26 -0400
+Subject: [PATCH 1/2] add an Android app IPC socket
+
+A unix stream socket at $CMUS_ANDROID_SOCKET (unset = disabled) for the
+Android wrapper app: pushes newline-delimited JSON events (status,
+position, volume, and a full options dump, composed and flushed at most
+once per main-loop iteration from the player_info snapshot flags) and
+accepts raw cmus command lines like the server.c socket. Single client,
+new connection wins, every connect starts with a full snapshot.
+
+Everything is guarded by CONFIG_ANDROID, a plain compile definition the
+app build sets; upstream builds never define it and stay unaffected.
+
+diff --git a/android.c b/android.c
+new file mode 100644
+index 0000000..abe0f23
+--- /dev/null
++++ b/android.c
+@@ -0,0 +1,381 @@
++/*
++ * Copyright 2026 Various Authors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++/*
++ * App-facing IPC socket for the Android wrapper app.
++ *
++ * A unix stream socket is bound at $CMUS_ANDROID_SOCKET (unset = disabled;
++ * the same binary runs unchanged outside the app). One client at a time; a
++ * new connection replaces the old one and always starts with a full
++ * snapshot, so reconnecting is the fix for everything.
++ *
++ * Outbound: newline-delimited JSON, one object per line, each with a
++ * "type" field. Strings are made valid UTF-8 (invalid bytes become <xx>,
++ * see u_to_utf8) and JSON-escaped. Events are composed and flushed at most
++ * once per main-loop iteration:
++ *
++ *   {"type":"hello","version":"..."}
++ *       first line after connect
++ *   {"type":"status","status":"stopped|playing|paused","file":...,
++ *    "duration":n,"position":n,"tags":{"key":"val",...}}
++ *       on connect and whenever the playback status, track, or metadata
++ *       changes; without a current track only "status" is present.
++ *       Tag keys are as stored in the file, lowercased by cmus, and may
++ *       repeat (e.g. multiple artists).
++ *   {"type":"position","position":n}
++ *       whole-seconds position advance/seek (<= 1/s while playing); only
++ *       sent when no status event is sent this flush (status carries
++ *       position too)
++ *   {"type":"volume","left":n,"right":n}
++ *       percent, -1 = unknown; on connect and on change
++ *   {"type":"options","options":{"name":"value",...}}
++ *       every cmus option as the string its getter returns (includes all
++ *       color_*); on connect and after any executed command, coalesced
++ *       per main-loop iteration (a colorscheme's ~40 sets = one event)
++ *
++ * Inbound: raw cmus command lines, newline-delimited — exactly what the
++ * server.c socket accepts ("player-pause", "seek +5", ...), including the
++ * "/" and "?" search prefixes. No acks; errors show in the TUI. State
++ * changes come back as events.
++ */
++
++#include "android.h"
++#include "command_mode.h"
++#include "debug.h"
++#include "gbuf.h"
++#include "keyval.h"
++#include "list.h"
++#include "options.h"
++#include "output.h"
++#include "player.h"
++#include "search_mode.h"
++#include "track_info.h"
++#include "uchar.h"
++#include "ui_curses.h"
++#include "utils.h"
++#include "xmalloc.h"
++
++#include <ctype.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++int android_fd = -1;
++int android_client_fd = -1;
++
++static char *android_socket_path;
++
++/* connect-dirty: next flush sends the full snapshot */
++static int android_dirty_all;
++static int android_dirty_options;
++
++/* last volume sent; -2 = never sent */
++static int android_vol_l = -2;
++static int android_vol_r = -2;
++
++/* inbound partial-line buffer, persists across android_process calls */
++static char android_rbuf[4096];
++static int android_rbuf_pos;
++
++static void android_close_client(void)
++{
++	if (android_client_fd == -1)
++		return;
++	close(android_client_fd);
++	android_client_fd = -1;
++	android_rbuf_pos = 0;
++}
++
++void android_init(void)
++{
++	struct sockaddr_un addr;
++	const char *path = getenv("CMUS_ANDROID_SOCKET");
++
++	if (!path || !path[0])
++		return;
++	if (strlen(path) >= sizeof(addr.sun_path)) {
++		error_msg("CMUS_ANDROID_SOCKET is too long for sun_path");
++		return;
++	}
++
++	memset(&addr, 0, sizeof(addr));
++	addr.sun_family = AF_UNIX;
++	strcpy(addr.sun_path, path);
++
++	/* the app owns the directory; a leftover socket is always stale */
++	unlink(path);
++
++	android_fd = socket(AF_UNIX, SOCK_STREAM, 0);
++	if (android_fd == -1) {
++		error_msg("android socket: %s", strerror(errno));
++		return;
++	}
++	if (bind(android_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1 ||
++			listen(android_fd, 1) == -1) {
++		error_msg("android socket %s: %s", path, strerror(errno));
++		close(android_fd);
++		android_fd = -1;
++		return;
++	}
++	fcntl(android_fd, F_SETFL, O_NONBLOCK);
++	android_socket_path = xstrdup(path);
++}
++
++void android_free(void)
++{
++	android_close_client();
++	if (android_fd != -1) {
++		close(android_fd);
++		android_fd = -1;
++	}
++	if (android_socket_path) {
++		unlink(android_socket_path);
++		free(android_socket_path);
++		android_socket_path = NULL;
++	}
++}
++
++void android_accept(void)
++{
++	int fd = accept(android_fd, NULL, NULL);
++	if (fd == -1)
++		return;
++
++	/* single client, new connection wins */
++	android_close_client();
++
++	fcntl(fd, F_SETFL, O_NONBLOCK);
++	android_client_fd = fd;
++	android_dirty_all = 1;
++}
++
++static void android_run_line(const char *line)
++{
++	char *cmd, *arg;
++
++	while (isspace((unsigned char)*line))
++		line++;
++
++	if (*line == '/' || *line == '?') {
++		int restricted = 0;
++		char prefix = *line++;
++		search_direction = prefix == '/' ?
++			SEARCH_FORWARD : SEARCH_BACKWARD;
++		if (*line == prefix) {
++			line++;
++			restricted = 1;
++		}
++		search_text(line, restricted, 1);
++	} else if (parse_command(line, &cmd, &arg)) {
++		run_parsed_command(cmd, arg);
++		free(cmd);
++		free(arg);
++	}
++}
++
++void android_process(void)
++{
++	while (1) {
++		int rc, s, i;
++
++		rc = read(android_client_fd, android_rbuf + android_rbuf_pos,
++				sizeof(android_rbuf) - android_rbuf_pos);
++		if (rc == -1) {
++			if (errno == EINTR)
++				continue;
++			if (errno == EAGAIN)
++				return;
++			android_close_client();
++			return;
++		}
++		if (rc == 0) {
++			android_close_client();
++			return;
++		}
++		android_rbuf_pos += rc;
++
++		s = 0;
++		for (i = 0; i < android_rbuf_pos; i++) {
++			if (android_rbuf[i] != '\n')
++				continue;
++			android_rbuf[i] = 0;
++			android_run_line(android_rbuf + s);
++			s = i + 1;
++			/* a command may close the socket (e.g. quit) */
++			if (android_client_fd == -1)
++				return;
++		}
++		memmove(android_rbuf, android_rbuf + s, android_rbuf_pos - s);
++		android_rbuf_pos -= s;
++
++		if (android_rbuf_pos == sizeof(android_rbuf)) {
++			d_print("android client sent an overlong line\n");
++			android_close_client();
++			return;
++		}
++	}
++}
++
++void android_options_changed(void)
++{
++	android_dirty_options = 1;
++}
++
++static void android_json_str(struct gbuf *buf, const char *str)
++{
++	/* tags aren't guaranteed UTF-8 and JSON requires it (mpris.c
++	 * precedent, including the VLA) */
++	char utf8[u_str_print_size(str)];
++	const char *s;
++
++	u_to_utf8(utf8, str);
++
++	gbuf_add_ch(buf, '"');
++	for (s = utf8; *s; s++) {
++		unsigned char ch = *s;
++		switch (ch) {
++		case '"':
++			gbuf_add_str(buf, "\\\"");
++			break;
++		case '\\':
++			gbuf_add_str(buf, "\\\\");
++			break;
++		default:
++			if (ch < 0x20)
++				gbuf_addf(buf, "\\u%04x", ch);
++			else
++				gbuf_add_ch(buf, ch);
++		}
++	}
++	gbuf_add_ch(buf, '"');
++}
++
++static void android_status_event(struct gbuf *buf)
++{
++	const struct track_info *ti = player_info.ti;
++	int i;
++
++	gbuf_addf(buf, "{\"type\":\"status\",\"status\":\"%s\"",
++			player_status_names[player_info.status]);
++	if (ti) {
++		gbuf_add_str(buf, ",\"file\":");
++		android_json_str(buf, ti->filename);
++		gbuf_addf(buf, ",\"duration\":%d,\"position\":%d,\"tags\":{",
++				ti->duration, player_info.pos);
++		for (i = 0; ti->comments[i].key; i++) {
++			if (i)
++				gbuf_add_ch(buf, ',');
++			android_json_str(buf, ti->comments[i].key);
++			gbuf_add_ch(buf, ':');
++			android_json_str(buf, ti->comments[i].val);
++		}
++		gbuf_add_ch(buf, '}');
++	}
++	gbuf_add_str(buf, "}\n");
++}
++
++static void android_options_event(struct gbuf *buf)
++{
++	char optbuf[OPTION_MAX_SIZE];
++	struct cmus_opt *opt;
++	int first = 1;
++
++	gbuf_add_str(buf, "{\"type\":\"options\",\"options\":{");
++	list_for_each_entry(opt, &option_head, node) {
++		opt->get(opt->data, optbuf, OPTION_MAX_SIZE);
++		if (!first)
++			gbuf_add_ch(buf, ',');
++		first = 0;
++		android_json_str(buf, opt->name);
++		gbuf_add_ch(buf, ':');
++		android_json_str(buf, optbuf);
++	}
++	gbuf_add_str(buf, "}}\n");
++}
++
++void android_flush(void)
++{
++	GBUF(buf);
++	int vol_l, vol_r;
++	int status_dirty;
++
++	if (android_client_fd == -1)
++		return;
++
++	/* same computation as server.c cmd_status */
++	if (soft_vol) {
++		vol_l = soft_vol_l;
++		vol_r = soft_vol_r;
++	} else if (!volume_max) {
++		vol_l = vol_r = -1;
++	} else {
++		vol_l = scale_to_percentage(volume_l, volume_max);
++		vol_r = scale_to_percentage(volume_r, volume_max);
++	}
++
++	/* player_info's *_changed flags are snapshotted at the top of the
++	 * main-loop iteration and stay valid until the next snapshot; this
++	 * runs right after update() and sees what mpris' callbacks see */
++	status_dirty = android_dirty_all || player_info.status_changed ||
++		player_info.file_changed || player_info.metadata_changed;
++
++	if (android_dirty_all)
++		gbuf_addf(&buf, "{\"type\":\"hello\",\"version\":\"%s\"}\n",
++				VERSION);
++	if (status_dirty)
++		android_status_event(&buf);
++	else if (player_info.position_changed)
++		gbuf_addf(&buf, "{\"type\":\"position\",\"position\":%d}\n",
++				player_info.pos);
++	if (android_dirty_all || vol_l != android_vol_l ||
++			vol_r != android_vol_r) {
++		gbuf_addf(&buf, "{\"type\":\"volume\",\"left\":%d,\"right\":%d}\n",
++				vol_l, vol_r);
++		android_vol_l = vol_l;
++		android_vol_r = vol_r;
++	}
++	if (android_dirty_all || android_dirty_options)
++		android_options_event(&buf);
++
++	android_dirty_all = 0;
++	android_dirty_options = 0;
++
++	if (buf.len) {
++		size_t off = 0;
++		while (off < buf.len) {
++			ssize_t rc = write(android_client_fd, buf.buffer + off,
++					buf.len - off);
++			if (rc == -1) {
++				if (errno == EINTR)
++					continue;
++				/* EAGAIN = stalled local reader with a full
++				 * socket buffer; drop it like a dead client,
++				 * a reconnect gets a fresh snapshot */
++				d_print("android client write: %s\n",
++						strerror(errno));
++				android_close_client();
++				break;
++			}
++			off += rc;
++		}
++	}
++	gbuf_free(&buf);
++}
+diff --git a/android.h b/android.h
+new file mode 100644
+index 0000000..d161a71
+--- /dev/null
++++ b/android.h
+@@ -0,0 +1,48 @@
++/*
++ * Copyright 2026 Various Authors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef CMUS_ANDROID_H
++#define CMUS_ANDROID_H
++
++/* CONFIG_ANDROID is a plain compile definition from the app build (not a
++ * generated config header): upstream builds never define it, keeping this
++ * inert. */
++#ifdef CONFIG_ANDROID
++
++extern int android_fd;
++extern int android_client_fd;
++void android_init(void);
++void android_free(void);
++void android_accept(void);
++void android_process(void);
++void android_flush(void);
++void android_options_changed(void);
++
++#else
++
++#define android_fd -1
++#define android_client_fd -1
++#define android_init() { }
++#define android_free() { }
++#define android_accept() { }
++#define android_process() { }
++#define android_flush() { }
++#define android_options_changed() { }
++
++#endif
++
++#endif
+diff --git a/command_mode.c b/command_mode.c
+index b794399..8528b8b 100644
+--- a/command_mode.c
++++ b/command_mode.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "command_mode.h"
++#include "android.h"
+ #include "search_mode.h"
+ #include "cmdline.h"
+ #include "options.h"
+@@ -2967,6 +2968,11 @@ void run_parsed_command(char *cmd, char *arg)
+ 		}
+ 		i++;
+ 	}
++
++	/* any command may have changed options (set/toggle/colorscheme,
++	 * which sources a file of sets); the once-per-iteration flush
++	 * coalesces the dirty flag into a single options event */
++	android_options_changed();
+ }
+ 
+ void run_command(const char *buf)
+diff --git a/ui_curses.c b/ui_curses.c
+index bdb766a..a462af9 100644
+--- a/ui_curses.c
++++ b/ui_curses.c
+@@ -50,6 +50,7 @@
+ #include "path.h"
+ #include "mixer.h"
+ #include "mpris.h"
++#include "android.h"
+ #include "locking.h"
+ #include "pl_env.h"
+ #ifdef HAVE_CONFIG
+@@ -2241,6 +2242,8 @@ static void main_loop(void)
+ 
+ 		update();
+ 
++		android_flush();
++
+ 		/* Timeout must be so small that screen updates seem instant.
+ 		 * Only affects changes done in other threads (player).
+ 		 *
+@@ -2264,6 +2267,10 @@ static void main_loop(void)
+ 		SELECT_ADD_FD(server_socket);
+ 		if (mpris_fd != -1)
+ 			SELECT_ADD_FD(mpris_fd);
++		if (android_fd != -1)
++			SELECT_ADD_FD(android_fd);
++		if (android_client_fd != -1)
++			SELECT_ADD_FD(android_client_fd);
+ 		list_for_each_entry(client, &client_head, node) {
+ 			SELECT_ADD_FD(client->fd);
+ 		}
+@@ -2344,6 +2351,12 @@ static void main_loop(void)
+ 		if (mpris_fd != -1 && FD_ISSET(mpris_fd, &set))
+ 			mpris_process();
+ 
++		if (android_client_fd != -1 && FD_ISSET(android_client_fd, &set))
++			android_process();
++
++		if (android_fd != -1 && FD_ISSET(android_fd, &set))
++			android_accept();
++
+ 		if (FD_ISSET(job_fd, &set))
+ 			job_handle();
+ 
+@@ -2471,6 +2484,7 @@ static void init_all(void)
+ 	pl_init_options();
+ 	if (mpris)
+ 		mpris_init();
++	android_init();
+ 
+ 	/* finally we can set the output plugin */
+ 	player_set_op(output_plugin);
+@@ -2540,6 +2554,7 @@ static void exit_all(void)
+ 	help_exit();
+ 	browser_exit();
+ 	mpris_free();
++	android_free();
+ }
+ 
+ enum {

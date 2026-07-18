@@ -8,11 +8,14 @@ set(gen "${CMAKE_CURRENT_BINARY_DIR}/generated")
 # upstream VERSION comes from git describe with a hand-made fallback
 # (Makefile:1-11); describe is unusable here (shallow clone, and patch.sh's
 # `base` tag would win --tags), so compose fallback + gitlink sha, reading
-# the fallback out of the Makefile so pin bumps stay correct.
+# the fallback out of the Makefile so pin bumps stay correct. The gitlink
+# is resolved from the parent repo: the submodule's HEAD is the patched
+# tip since stage 7, whose sha changes on every patch regen.
 file(STRINGS "${src}/Makefile" ver3 REGEX "^_ver3")
 string(REGEX REPLACE ".*= *" "" ver3 "${ver3}")
 execute_process(
-    COMMAND git -C "${src}" rev-parse --verify --short HEAD
+    COMMAND git -C "${THIRD_PARTY}/.." rev-parse --verify --short=7
+        ":third_party/cmus"
     OUTPUT_VARIABLE ver_sha
     OUTPUT_STRIP_TRAILING_WHITESPACE
     COMMAND_ERROR_IS_FATAL ANY)
@@ -78,6 +81,7 @@ set(cmus_cflags -std=gnu11 -pipe -Wall -Wshadow -Wcast-align
 # core = the Makefile's cmus-y list (mpris.o off) + file/path/prog/xmalloc;
 # main.c is cmus-remote's, not built (main() lives in ui_curses.c)
 add_executable(cmus
+    ${src}/android.c
     ${src}/ape.c
     ${src}/browser.c
     ${src}/buffer.c
@@ -156,14 +160,19 @@ if(CMAKE_LIBRARY_OUTPUT_DIRECTORY)
 endif()
 
 target_include_directories(cmus PRIVATE "${gen}")
-target_compile_definitions(cmus PRIVATE HAVE_CONFIG _FILE_OFFSET_BITS=64)
+# CONFIG_ANDROID enables the patches' app-only code (android.c IPC socket,
+# remote streams out); deliberately a plain definition, not a config/*.h,
+# so the patched tree still builds unchanged with the upstream Makefile.
+# Core only -- plugins don't need it.
+target_compile_definitions(cmus PRIVATE HAVE_CONFIG _FILE_OFFSET_BITS=64
+    CONFIG_ANDROID)
 target_compile_options(cmus PRIVATE ${cmus_cflags})
 # pthread is in bionic libc; the GNU iconv.h from the iconv target's
 # interface must (and does) precede bionic's own limited <iconv.h>
 target_link_libraries(cmus PRIVATE ncursesw iconv dl m)
 
 set_source_files_properties(
-    ${src}/command_mode.c ${src}/input.c ${src}/ui_curses.c
+    ${src}/android.c ${src}/command_mode.c ${src}/input.c ${src}/ui_curses.c
     PROPERTIES COMPILE_DEFINITIONS VERSION="${cmus_version}")
 set_source_files_properties(${src}/server.c
     PROPERTIES COMPILE_DEFINITIONS DEFAULT_PORT=3000)
