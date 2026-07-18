@@ -89,12 +89,14 @@ pick up where things left off.
 
 ## Next
 
-Stage 5: cmus build — cmus core as `libcmus.so` executable + ip/op plugin
-shared libs + CMake-generated config headers replacing ./configure
-output (see overview stage 5). Plan not yet drafted
-(notes/plans/05-cmus.md); write it first and get Patrick's approval.
-Verify target: cmus runs in adb shell. The stage-4 ncursesw/iconv/mad
-libs get their first real link test here.
+Stage 5: cmus build — cmus core as `libcmus.so` executable + 10 ip/op
+plugin shared libs + CMake-generated config headers replacing
+./configure output. Plan drafted at
+[plans/05-cmus.md](plans/05-cmus.md) (pending Patrick's approval);
+implementation in a fresh session. Verify target: cmus TUI runs in adb
+shell, plugins all load, playback via aaudio if shell uid allows. The
+stage-4 ncursesw/iconv/mad libs get their first real link test here.
+One flagged scope addition: ip/cue (upstream default-on, dep-free).
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
