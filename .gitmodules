@@ -1,0 +1,51 @@
+[submodule "third_party/cmus"]
+	path = third_party/cmus
+	url = https://github.com/cmus/cmus
+	shallow = true
+[submodule "third_party/termux-app"]
+	path = third_party/termux-app
+	url = https://github.com/termux/termux-app
+	shallow = true
+[submodule "third_party/ncurses"]
+	path = third_party/ncurses
+	url = https://github.com/mirror/ncurses
+	shallow = true
+[submodule "third_party/libogg"]
+	path = third_party/libogg
+	url = https://github.com/xiph/ogg
+	shallow = true
+[submodule "third_party/libvorbis"]
+	path = third_party/libvorbis
+	url = https://github.com/xiph/vorbis
+	shallow = true
+[submodule "third_party/opus"]
+	path = third_party/opus
+	url = https://github.com/xiph/opus
+	shallow = true
+[submodule "third_party/opusfile"]
+	path = third_party/opusfile
+	url = https://github.com/xiph/opusfile
+	shallow = true
+[submodule "third_party/flac"]
+	path = third_party/flac
+	url = https://github.com/xiph/flac
+	shallow = true
+[submodule "third_party/libmad"]
+	path = third_party/libmad
+	url = https://github.com/tenacityteam/libmad
+	shallow = true
+[submodule "third_party/wavpack"]
+	path = third_party/wavpack
+	url = https://github.com/dbry/WavPack
+	shallow = true
+[submodule "third_party/faad2"]
+	path = third_party/faad2
+	url = https://github.com/knik0/faad2
+	shallow = true
+[submodule "third_party/mp4v2"]
+	path = third_party/mp4v2
+	url = https://github.com/enzo1982/mp4v2
+	shallow = true
+[submodule "third_party/libiconv"]
+	path = third_party/libiconv
+	url = https://git.savannah.gnu.org/git/libiconv.git
