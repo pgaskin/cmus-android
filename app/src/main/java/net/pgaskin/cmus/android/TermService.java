@@ -91,6 +91,10 @@ public class TermService extends Service implements TerminalSessionClient {
                     "CMUS_HOME=" + new File(filesDir, "cmus-home"),
                     "CMUS_LIB_DIR=" + new File(filesDir, "cmus-lib"),
                     "CMUS_DATA_DIR=" + new File(filesDir, "cmus-data"),
+                    // app-facing IPC socket (patches/cmus/0001); filesDir
+                    // root, not cmus-home, so tar exports of the config
+                    // never pick up socket files. Java client is stage 8.
+                    "CMUS_ANDROID_SOCKET=" + new File(filesDir, "cmus-android.sock"),
             };
             // 100 transcript rows is the minimum honored (cmus is an
             // altscreen app; the transcript is never scrolled)
