@@ -3,6 +3,55 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 9: media control (done)
+
+- Per [plans/09-media.md](plans/09-media.md), no design deviations.
+  MediaControl (a CmusIpc.Listener the service registers beside its
+  debug logger): framework MediaSession/MediaStyle, PlaybackState off
+  Status events (position extrapolated by the system from
+  position+speed; Position events only checked against the
+  extrapolation and applied when >2s off, so no per-second binder
+  churn), metadata title/artist/album/duration off the tags multimap
+  (values joined ", ", filename fallback title), art on a
+  single-thread executor (embedded via MediaMetadataRetriever →
+  {cover,folder,front,album}.{jpg,jpeg,png} in the track dir, cached
+  per dir, power-of-2 downsample to ≤640px, stale-track guard),
+  onPlay = `player-pause` toggle when paused / `player-play` only
+  from stopped (player-play *restarts* a loaded track), onPause =
+  `player-pause-playback`, audio focus mirrored (request on PLAYING,
+  abandon on STOPPED, hold across PAUSED; LOSS→pause,
+  LOSS_TRANSIENT→pause+resume-flag, denied→log only — TUI playback
+  is user intent), becoming-noisy → pause. Stub "running"
+  notification replaced; channel stays `term`.
+- Trivial plan resolutions: notification notify() runs on every
+  status (events are main-thread messages, always after
+  onStartCommand's startForeground — no guard needed); largeIcon
+  also set for the shade fallback; STOPPED renders fine in the QS
+  card, kept as-is.
+- Verified on device (Pixel 8, root adb; ffmpeg-generated tagged/art
+  test tracks + albumdir with cover.jpg pushed to ~/music): QS/shade
+  card with title/artist, art-tinted background, live seekbar;
+  `cmd media_session dispatch play-pause` toggles both ways (headset
+  path); seekbar tap → seek (3→21 on a 30s flac; near-end tap
+  clamped to duration−5 upstream); steady playback leaves the
+  PlaybackState `updated` stamp untouched across dumps (no churn)
+  while `seek +15` bumps it; art: mp3 APIC + m4a covr + flac
+  embedded ok, ogg + wv (retriever throws, logged) fall back to
+  folder art, artless → placeholder, all confirmed via
+  dumpsys media_session metadata size; focus: Cromite playing an
+  http mp3 → cmus pauses (no auto-resume on permanent loss, our
+  stack entry dropped by the framework — matches the focusHeld
+  bookkeeping), TUI-unpause takes focus back (Cromite pauses);
+  player-stop → STOPPED + focus abandoned; `nc -U` steal →
+  instant reconnect, controls fully repopulated from the snapshot;
+  `quit` → one disconnect log, session + notification gone (dumpsys
+  archive sections still list them — grep "Current"/live sections),
+  service gone, relaunch re-inits clean. patch.sh check green (no
+  cmus changes).
+- Left for Patrick's hands-on (hardware): BT headset keys + AVRCP
+  metadata, unplug/BT-drop becoming-noisy pause, transient-loss
+  auto-resume via a real call/assistant.
+
 ## 2026-07-18 — Stage 8: Java IPC client (done)
 
 - Per [plans/08-ipc-client.md](plans/08-ipc-client.md), no design
@@ -258,15 +307,13 @@ pick up where things left off.
 
 ## Next
 
-Stage 9: media control (MediaSession + real media notification +
-cover art + headset/system keys) — needs its detailed plan written
-and approved first. CmusIpc events feed PlaybackState/metadata
-(status/position/volume are all there; tags carry artist/album/
-title); commands go back over `ipc.send` (player-pause, player-next,
-seek). Cover art per the overview: MediaMetadataRetriever
-.getEmbeddedPicture() off the status event's file path, folder-art
-fallback, Java-side. Bundled-font shortlist settled in the stage-8
-plan (Iosevka default; implementation stage 16).
+Stage 10: lifecycle (idle-quit timer, service/activity edge cases,
+process restart behavior) — needs its detailed plan written and
+approved first. Idle-quit per the overview: cmus stopped + app
+unfocused for X min → send `quit`, stop service; CmusIpc's cached
+Status has the play state, MediaControl's session already tracks
+engagement. This is also the earliest slot for Patrick's pl_env
+note below (external-storage path story permitting).
 
 Note from Patrick for later stages (stage 10 at the earliest — needs
 the external-storage path story): use cmus's own `pl_env_vars`

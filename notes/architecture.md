@@ -112,10 +112,10 @@ full plan and rationale; this file describes what currently exists.
   stable `TerminalSessionClient`, forwarding to the attached activity.
   Owns the `CmusIpc` client (created with the session, closed on
   session exit/destroy): forces `set mouse=true` on every (re)connect
-  and logs every event at DEBUG (stage 8's observable output; later
-  stages consume the events for real). Stub "running" notification
-  (real media notification is stage 9); session exit → stopSelf +
-  finish the activity.
+  and logs every event at DEBUG. Owns a `MediaControl` beside it
+  (registered as a second IPC listener, closed the same way); the
+  FGS notification is MediaControl's media notification. Session
+  exit → stopSelf + finish the activity.
 - `CmusIpc` — client for the android.c socket (the protocol comment
   there is the contract): sealed `Event` records
   (Hello/Status/Position/Volume/Options) parsed with JsonReader
@@ -124,6 +124,22 @@ full plan and rationale; this file describes what currently exists.
   for raw command lines (rejects newline/overlong), self-reconnecting
   (100ms → 1s; every connect gets a full snapshot, so no state
   crosses connections).
+- `MediaControl` — framework MediaSession + MediaStyle notification +
+  cover art + audio focus, a pure mirror of CmusIpc events (13+
+  renders system controls from PlaybackState actions + metadata; the
+  seekbar comes from DURATION + ACTION_SEEK_TO and the system
+  extrapolates position itself — Position events are only a seek
+  detector, >2s off the extrapolation). Controls map to commands:
+  onPlay = `player-pause` toggle when paused (player-play *restarts*
+  a loaded track) / `player-play` from stopped, onPause/focus-loss/
+  becoming-noisy = `player-pause-playback`, next/prev/seek/stop
+  likewise. Art: MediaMetadataRetriever embedded → folder
+  {cover,folder,front,album}.{jpg,jpeg,png} (per-dir cache, ogg has
+  no framework art support and wv none at all) on an executor,
+  ≤640px, stale-track guard. Focus: request on PLAYING (attributes
+  match op/aaudio: USAGE_MEDIA/CONTENT_TYPE_MUSIC), abandon on
+  STOPPED, hold across PAUSED, transient-loss resume flag; denied or
+  taken → never counter the TUI user.
 - `CmusDebugReceiver` — FLAG_DEBUGGABLE-gated broadcast receiver
   forwarding `-e cmd <cmus command>` from (root) adb through
   `CmusIpc.send`; permanent debug tool.
@@ -150,6 +166,5 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Media session (9: MediaSession + media notification + cover art +
-headset keys off CmusIpc events), lifecycle (10), then chrome/input/
-overlays/settings (11+).
+Lifecycle (10: idle-quit timer, service/activity edge cases, process
+restart), then chrome/input/overlays/settings (11+).
