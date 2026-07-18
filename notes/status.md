@@ -3,6 +3,81 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 10: lifecycle (done)
+
+- Per [plans/10-lifecycle.md](plans/10-lifecycle.md) with one design
+  change from Patrick mid-implementation: **idle-quit kills only the
+  cmus process, never the app**. Session death while the activity is
+  backgrounded (idle-quit, crash, anything) → service drops
+  session/ipc/mediaControl refs, stops the FGS, stopSelf (the record
+  lingers while the backgrounded activity holds its binding — fine);
+  the task stays in recents and the activity's next onStart respawns
+  via startForegroundService + getSession() + re-attach. Forced
+  resume=true makes the round trip invisible. Death while *visible*
+  keeps the plan's behavior: exit 0 → finish, nonzero → frozen
+  terminal + toast; the termux lib supplies its own "[Process
+  completed (signal N) - press Enter]" banner, so Enter closes it
+  too, beside tap.
+- Forced options (policy per plan): onConnected now sends mouse +
+  resume + pl_env_vars; all three verified persisted in autosave
+  after quit. Spawn env exports
+  CMUS_ANDROID_{EXT_FILES,EXT,FILES} (names now **locked** — they're
+  baked into saved libraries); lib.pl showed
+  `\x1F`-substituted entries for both EXT_FILES and FILES, cache too
+  (10 entries). Caveat learned: pl_env is exact-prefix, so paths
+  entered via the /data/data symlink stay literal (harmless) —
+  HOME/cwd use the real /data/user/0, so ~-adds and browser adds
+  substitute fine.
+- Verified on device (Pixel 8, wifi adb root; idle delay temporarily
+  45s for testing, shipped at 15 min): resume round-trips paused
+  position/view across quit; quit-while-playing resumes playing.
+  Idle-quit: arms only when (not PLAYING) && backgrounded; cancel on
+  refocus and on unpause-from-shade; rotation recreation = 27ms
+  armed/cancelled flicker, no quit; fire at exactly the delay →
+  session/FGS/notification gone, task stays, refocus respawns
+  seamlessly. Task swipe: playing → survives (FGS point proven);
+  idle → immediate lossless quit, everything gone. `kill -9` of the
+  app pid while playing → pty SIGHUP → cmus wrote resume + autosave
+  + lib.pl (8ms apart) but Android's cgroup kill raced the tail of
+  exit_all (socket unlink missed — harmless, android.c unlinks
+  before bind); relaunch resumed *playing* at position. `pm install
+  -r` (≈ force-stop: uid-wide SIGKILL, no pty grace) lost the
+  since-last-save state entirely — the documented loss window, which
+  Patrick's periodic-save note below closes. Crash path (`kill
+  -ABRT` cmus): frozen TUI + banner + toast, activity stays resumed,
+  tap closes everything. patch.sh check green (Java-only stage).
+- Second design addition from Patrick: **media keys resurrect a
+  background-quit cmus**. MediaControl registers a
+  setMediaButtonBroadcastReceiver fallback (MediaButtonReceiver);
+  after the session dies, a play/play-pause/headset key restarts the
+  FGS (`Background started FGS: Allowed`, MEDIA_SESSION_CALLBACK
+  temp-allowlist), which spawns cmus **headlessly** and unpauses the
+  resume-restored track via a pending-play flag consumed by the first
+  Status event. Two framework gotchas cost debug cycles: (1)
+  TerminalSession's constructor doesn't fork — only initializeEmulator
+  (normally reached via TerminalView attach) does — so getSession now
+  calls session.updateSize itself at the last attached size (saved to
+  prefs on every activity onStop, per Patrick, to avoid layout shift
+  on reopen; the attaching view just resizes the pty). (2)
+  `setMediaButtonBroadcastReceiver(null)` **crashes** on Android 16
+  (server-side NPE in MediaButtonReceiverHolder.create) and stale
+  archived-session registrations linger anyway, so foreground quits
+  are gated by a `resurrect` pref (set true on spawn, false on
+  visible-session death, checked in the receiver) instead of clearing
+  the registration. Headless receiver starts also mark
+  activityVisible=false so the idle timer can reap a paused
+  resurrected cmus. Verified: swipe-quit → MEDIA_PLAY → playing at
+  saved position on a 61×60 pty (last real size); TUI `:quit` in
+  foreground → key logged + ignored; activity attach onto a headless
+  session renders full-size.
+- Testing notes: adb-shell quoting eats multi-word `-e cmd` args
+  unless the *whole* am command is one quoted string — bare `seek`/
+  `add`/`view` land argument-less and the TUI shows "error: not
+  enough arguments" (that's what those errors were). softvol volume
+  had drifted to 0 during earlier stages; `vol 100` restored.
+  Leftover on device: ext.flac (tagged.flac copy) in the external
+  files music dir, in the library as a pl_env test entry.
+
 ## 2026-07-18 — Stage 9: media control (done)
 
 - Per [plans/09-media.md](plans/09-media.md), no design deviations.
@@ -307,13 +382,10 @@ pick up where things left off.
 
 ## Next
 
-Stage 10: lifecycle (idle-quit timer, service/activity edge cases,
-process restart behavior) — needs its detailed plan written and
-approved first. Idle-quit per the overview: cmus stopped + app
-unfocused for X min → send `quit`, stop service; CmusIpc's cached
-Status has the play state, MediaControl's session already tracks
-engagement. This is also the earliest slot for Patrick's pl_env
-note below (external-storage path story permitting).
+Stage 11: chrome A (theme color extraction from IPC options +
+view-selector tab bar + Android status/nav bar coloring) — needs its
+detailed plan written and approved first. CmusIpc's cached Options
+already carries all color_* values, replayed to late listeners.
 
 Future feature (Patrick, needs a cmus patch): periodically save cmus
 state — resume file, autosave/library, cache — during runtime, not

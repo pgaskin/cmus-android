@@ -108,15 +108,31 @@ full plan and rationale; this file describes what currently exists.
   TERMINFO/CMUS_{HOME,LIB_DIR,DATA_DIR} +
   `CMUS_ANDROID_SOCKET=<filesDir>/cmus-android.sock`, the app IPC
   socket — filesDir root so tar exports of cmus-home never pick up
-  socket files), and is the session's one
-  stable `TerminalSessionClient`, forwarding to the attached activity.
+  socket files, + `CMUS_ANDROID_{EXT_FILES,EXT,FILES}`, the pl_env
+  base vars — names permanent, most-specific first), and is the
+  session's one stable `TerminalSessionClient`, forwarding to the
+  attached activity. The spawn is headless (TerminalSession only
+  forks in initializeEmulator, so getSession sizes the pty itself
+  from the prefs-saved last attached size; a TerminalView attaching
+  later just resizes it). Idle-quit: when cmus is not PLAYING and no
+  activity is visible for 15 min (constant until stage 17), sends
+  `set resume=true` + `quit` — killing only cmus, never the task.
+  Session death tears down ipc/mediaControl/FGS and drops the
+  session ref so getSession can respawn; the backgrounded activity
+  stays in recents and respawns on refocus. onTaskRemoved: playing →
+  survive; idle → immediate lossless quit.
   Owns the `CmusIpc` client (created with the session, closed on
-  session exit/destroy): forces `set mouse=true` on every (re)connect
-  and logs every event at DEBUG. Policy (Patrick): overriding cmus
-  settings that core wrapper functionality depends on is desired —
-  force them over the socket on (re)connect (never touch user config
-  files; autosave persisting the forced value is fine), as with
-  `mouse` and stage 10's `resume`/`pl_env_vars`. Owns a `MediaControl` beside it
+  session exit/destroy): forces `set mouse=true` + `set resume=true`
+  + `set pl_env_vars=…` on every (re)connect and logs every event at
+  DEBUG. Policy (Patrick): overriding cmus settings that core wrapper
+  functionality depends on is desired — force them over the socket on
+  (re)connect (never touch user config files; autosave persisting the
+  forced value is fine). resume makes every quit lossless (track,
+  position, play state, view — even app-process death: pty SIGHUP is
+  a clean cmus exit, though force-stop's uid SIGKILL still loses
+  since-last-save state until the planned periodic-save patch);
+  pl_env makes saved library/cache paths portable across
+  reinstalls/storage moves. Owns a `MediaControl` beside it
   (registered as a second IPC listener, closed the same way); the
   FGS notification is MediaControl's media notification. Session
   exit → stopSelf + finish the activity.
@@ -144,6 +160,13 @@ full plan and rationale; this file describes what currently exists.
   match op/aaudio: USAGE_MEDIA/CONTENT_TYPE_MUSIC), abandon on
   STOPPED, hold across PAUSED, transient-loss resume flag; denied or
   taken → never counter the TUI user.
+- `MediaButtonReceiver` — media-key resurrection: registered as the
+  session's setMediaButtonBroadcastReceiver fallback, so once the
+  session is gone a play/play-pause/headset key restarts the FGS
+  headlessly and unpauses the resume-restored track. Gated by the
+  `resurrect` pref (true on spawn, false on a foreground TUI quit) —
+  the system-side registration can't be cleared (null NPEs
+  server-side on Android 16, archived registrations linger).
 - `CmusDebugReceiver` — FLAG_DEBUGGABLE-gated broadcast receiver
   forwarding `-e cmd <cmus command>` from (root) adb through
   `CmusIpc.send`; permanent debug tool.
@@ -158,6 +181,11 @@ full plan and rationale; this file describes what currently exists.
   is a no-op). Tap toggles the IME, pinch scales the font (5–36dp),
   back backgrounds the app (playback continues under the FGS);
   rotation recreates the activity and re-attaches the live session.
+  Reports onStart/onStop to the service (idle-quit + size saving);
+  onStart re-attaches or respawns a dead session. Session death while
+  visible: exit 0 → finish, nonzero → frozen terminal + the emulator's
+  "[Process completed]" banner + toast, tap or Enter closes; while
+  backgrounded: stays in recents for the respawn.
 - Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout);
   colors become cmus-theme-driven in a later stage.
 
@@ -170,5 +198,6 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Lifecycle (10: idle-quit timer, service/activity edge cases, process
-restart), then chrome/input/overlays/settings (11+).
+Chrome A (11: theme color extraction from IPC options, view-selector
+tab bar, status/nav bar coloring), then controls/input/overlays/
+settings (12+).
