@@ -112,7 +112,11 @@ full plan and rationale; this file describes what currently exists.
   stable `TerminalSessionClient`, forwarding to the attached activity.
   Owns the `CmusIpc` client (created with the session, closed on
   session exit/destroy): forces `set mouse=true` on every (re)connect
-  and logs every event at DEBUG. Owns a `MediaControl` beside it
+  and logs every event at DEBUG. Policy (Patrick): overriding cmus
+  settings that core wrapper functionality depends on is desired —
+  force them over the socket on (re)connect (never touch user config
+  files; autosave persisting the forced value is fine), as with
+  `mouse` and stage 10's `resume`/`pl_env_vars`. Owns a `MediaControl` beside it
   (registered as a second IPC listener, closed the same way); the
   FGS notification is MediaControl's media notification. Session
   exit → stopSelf + finish the activity.

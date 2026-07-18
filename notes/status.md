@@ -315,6 +315,14 @@ Status has the play state, MediaControl's session already tracks
 engagement. This is also the earliest slot for Patrick's pl_env
 note below (external-storage path story permitting).
 
+Future feature (Patrick, needs a cmus patch): periodically save cmus
+state — resume file, autosave/library, cache — during runtime, not
+just at exit, to protect against unexpected exits that skip the
+SIGHUP path entirely (force-stop SIGKILLs the whole uid, battery
+death, panics). Likely a small timer in the android.c patch or a
+`save`-ish IPC command the app triggers; stage 10 documents the loss
+window it would close.
+
 Note for later (stage 19 polish at the latest): ogg/opus embedded
 art — the framework extractor doesn't read METADATA_BLOCK_PICTURE,
 so MediaControl falls back to folder art for those; implement a
