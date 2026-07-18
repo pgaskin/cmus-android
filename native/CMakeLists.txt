@@ -68,6 +68,9 @@ add_subdirectory("${THIRD_PARTY}/libmad" libmad EXCLUDE_FROM_ALL)
 add_subdirectory(ports/ncurses)
 add_subdirectory(ports/libiconv)
 
+# cmus core + plugins + generated config headers
+add_subdirectory(cmus)
+
 # exactly the static libs cmus will link; gradle builds only this target,
 # keeping strays (vorbisenc, opusurl, faad_drm, ...) out of the build
 add_custom_target(cmus_deps)
