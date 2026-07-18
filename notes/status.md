@@ -315,6 +315,17 @@ Status has the play state, MediaControl's session already tracks
 engagement. This is also the earliest slot for Patrick's pl_env
 note below (external-storage path story permitting).
 
+Note for later (stage 19 polish at the latest): ogg/opus embedded
+art — the framework extractor doesn't read METADATA_BLOCK_PICTURE,
+so MediaControl falls back to folder art for those; implement a
+small Java-side parser (base64 FLAC PICTURE block in the vorbis
+comment header) as another step in MediaControl's art chain.
+
+Pending verification (hardware, Patrick): Bluetooth — headset keys
++ AVRCP metadata, BT-drop/unplug becoming-noisy pause, and
+transient-loss auto-resume via a real call/assistant (stage 9
+shipped these untested beyond the adb-drivable paths).
+
 Note from Patrick for later stages (stage 10 at the earliest — needs
 the external-storage path story): use cmus's own `pl_env_vars`
 mechanism (pl_env.c — Patrick's upstream feature: saved library/
