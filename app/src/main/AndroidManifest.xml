@@ -24,6 +24,11 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- debug-only (gated on FLAG_DEBUGGABLE); driven from root adb -->
+        <receiver
+            android:name=".CmusDebugReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>

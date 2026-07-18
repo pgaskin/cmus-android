@@ -9,8 +9,6 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
-import android.net.LocalSocket;
-import android.net.LocalSocketAddress;
 import android.os.Binder;
 import android.os.IBinder;
 import android.util.Log;
@@ -45,12 +43,16 @@ public class TermService extends Service implements TerminalSessionClient {
         }
     }
 
+    private static TermService instance; // for CmusDebugReceiver only
+
     private final IBinder binder = new LocalBinder();
     private TerminalSession session;
+    private CmusIpc ipc;
     private SessionCallback callback;
 
     @Override
     public void onCreate() {
+        instance = this;
         NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
                 getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
@@ -100,44 +102,61 @@ public class TermService extends Service implements TerminalSessionClient {
             // altscreen app; the transcript is never scrolled)
             session = new TerminalSession(exe, filesDir.getPath(),
                     new String[]{"cmus"}, env, 100, this);
-            forceMouseOption();
+            ipc = new CmusIpc(new File(filesDir, "cmus-android.sock"));
+            ipc.addListener(ipcListener);
         }
         return session;
+    }
+
+    /** The IPC client; non-null once {@link #getSession} has spawned cmus. */
+    public CmusIpc getIpc() {
+        return ipc;
+    }
+
+    /** For {@link CmusDebugReceiver}; null unless the service is running. */
+    static CmusIpc debugIpc() {
+        TermService service = instance;
+        return service != null ? service.ipc : null;
     }
 
     /**
      * Touch gestures only behave like termux (tap = click, drag = wheel
      * scroll) with cmus mouse tracking on, so force the option on every
-     * start, overriding autosave/rc — mouse is a core part of this app.
-     * Pushed over the cmus socket once it comes up, rather than touching
-     * the user's config files.
+     * (re)connect, overriding autosave/rc — mouse is a core part of this
+     * app; the command channel leaves user config files alone. The command
+     * echoes back as an options event showing mouse=true. The DEBUG event
+     * log is stage 8's observable output; later stages consume the events
+     * for real.
      */
-    private void forceMouseOption() {
-        String socketPath = new File(getFilesDir(), "cmus-home/socket").getPath();
-        Thread thread = new Thread(() -> {
-            for (int i = 0; i < 100; i++) {
-                try (LocalSocket socket = new LocalSocket()) {
-                    socket.connect(new LocalSocketAddress(socketPath,
-                            LocalSocketAddress.Namespace.FILESYSTEM));
-                    socket.getOutputStream().write("set mouse=true\n"
-                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    socket.getOutputStream().flush();
-                    // wait for the reply so the write isn't racing the close
-                    socket.getInputStream().read();
-                    return;
-                } catch (IOException e) {
-                    try {
-                        Thread.sleep(100);
-                    } catch (InterruptedException ie) {
-                        return;
-                    }
-                }
+    private final CmusIpc.Listener ipcListener = new CmusIpc.Listener() {
+        @Override
+        public void onConnected() {
+            Log.d(TAG, "ipc: connected");
+            ipc.send("set mouse=true");
+        }
+
+        @Override
+        public void onDisconnected() {
+            Log.d(TAG, "ipc: disconnected");
+        }
+
+        @Override
+        public void onEvent(CmusIpc.Event event) {
+            switch (event) {
+                case CmusIpc.Hello h -> Log.d(TAG, "ipc hello version=" + h.version());
+                case CmusIpc.Status s -> Log.d(TAG, "ipc status " + s.state()
+                        + " pos=" + s.position() + "/" + s.duration()
+                        + " file=" + s.file() + " tags=" + s.tags());
+                case CmusIpc.Position p -> Log.d(TAG, "ipc position " + p.position());
+                case CmusIpc.Volume v -> Log.d(TAG, "ipc volume " + v.left() + "/" + v.right());
+                case CmusIpc.Options o -> Log.d(TAG, "ipc options n=" + o.values().size()
+                        + " mouse=" + o.values().get("mouse")
+                        + " softvol=" + o.values().get("softvol")
+                        + " color_win_cur=" + o.values().get("color_win_cur")
+                        + " color_titleline_bg=" + o.values().get("color_titleline_bg"));
             }
-            Log.w(TAG, "cmus socket never came up; mouse option not set");
-        }, "CmusMouseOption");
-        thread.setDaemon(true);
-        thread.start();
-    }
+        }
+    };
 
     public void setSessionCallback(SessionCallback callback) {
         this.callback = callback;
@@ -145,6 +164,10 @@ public class TermService extends Service implements TerminalSessionClient {
 
     @Override
     public void onDestroy() {
+        instance = null;
+        if (ipc != null) {
+            ipc.close();
+        }
         if (session != null) {
             session.finishIfRunning();
         }
@@ -166,6 +189,9 @@ public class TermService extends Service implements TerminalSessionClient {
 
     @Override
     public void onSessionFinished(TerminalSession finishedSession) {
+        if (ipc != null) {
+            ipc.close(); // before the socket path goes stale; stops reconnects
+        }
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
         if (callback != null) {
