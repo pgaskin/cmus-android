@@ -110,8 +110,23 @@ full plan and rationale; this file describes what currently exists.
   socket — filesDir root so tar exports of cmus-home never pick up
   socket files), and is the session's one
   stable `TerminalSessionClient`, forwarding to the attached activity.
-  Stub "running" notification (real media notification is stage 9);
-  session exit → stopSelf + finish the activity.
+  Owns the `CmusIpc` client (created with the session, closed on
+  session exit/destroy): forces `set mouse=true` on every (re)connect
+  and logs every event at DEBUG (stage 8's observable output; later
+  stages consume the events for real). Stub "running" notification
+  (real media notification is stage 9); session exit → stopSelf +
+  finish the activity.
+- `CmusIpc` — client for the android.c socket (the protocol comment
+  there is the contract): sealed `Event` records
+  (Hello/Status/Position/Volume/Options) parsed with JsonReader
+  (JSONObject drops duplicate tag keys), listener callbacks on the
+  main thread with cached-state replay for late attachers, `send()`
+  for raw command lines (rejects newline/overlong), self-reconnecting
+  (100ms → 1s; every connect gets a full snapshot, so no state
+  crosses connections).
+- `CmusDebugReceiver` — FLAG_DEBUGGABLE-gated broadcast receiver
+  forwarding `-e cmd <cmus command>` from (root) adb through
+  `CmusIpc.send`; permanent debug tool.
 - `CmusFiles` — idempotent per-spawn filesDir layout: extracts the
   terminfo + cmus-data assets (stamped by versionCode + APK install
   time), rebuilds `cmus-lib/{ip,op}/NAME.so` symlinks into
@@ -135,6 +150,6 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Java IPC client (8: CmusIpc typed state + commands over the android.c
-socket), media session (9), then lifecycle/chrome/input/overlays/
-settings (10+).
+Media session (9: MediaSession + media notification + cover art +
+headset keys off CmusIpc events), lifecycle (10), then chrome/input/
+overlays/settings (11+).

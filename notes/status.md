@@ -3,6 +3,53 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 8: Java IPC client (done)
+
+- Per [plans/08-ipc-client.md](plans/08-ipc-client.md), no design
+  deviations. CmusIpc: sealed Event hierarchy (Hello/Status/Position/
+  Volume/Options records) parsed with android.util.JsonReader
+  (org.json's JSONObject silently drops duplicate keys), callbacks on
+  the main thread; cached Status/Volume/Options replayed to late
+  listeners; reader thread + write HandlerThread; reconnect every
+  100ms for ~10s then 1s until close(); send() drops+logs when
+  disconnected, throws on newline/overlong commands (android.c's
+  4096-byte line buffer drops the client on overflow).
+- forceMouseOption deleted: a service-owned listener sends
+  `set mouse=true` from onConnected — every (re)connect, and the
+  options event echoes mouse=true back, self-verifying — retiring the
+  last consumer of the legacy cmus-home/socket poll. The service logs
+  every event at DEBUG (tag `cmus`). CmusDebugReceiver
+  (exported=false, FLAG_DEBUGGABLE-gated) forwards `-e cmd` broadcasts
+  from root adb through the Java write path; kept as a permanent
+  debug tool.
+- Verified on device (Pixel 8, root adb + logcat): connect snapshot
+  (hello v2.12.0-<sha>, status, volume, options n=129) + mouse echo;
+  player-play/pause via broadcast → status events, position ~1/s only
+  while playing; `seek +3` on flac → position-only event;
+  `colorscheme night` → one coalesced options event with changed
+  color_*; `vol 50` → volume event; 5001-byte command rejected
+  client-side with the connection surviving; `toybox nc -U` stealing
+  the socket → disconnected + instant steal-back reconnect with a
+  fresh snapshot (nc gets the EOF); `quit` → one disconnect log, no
+  reconnect spam, socket unlinked, service gone. patch.sh check green
+  (no cmus changes this stage).
+- Learned: cmus itself refuses duplicate tag keys (comment.c
+  comments_add, "don't add duplicates" — first wins), so the
+  contract's "may repeat" can't actually occur through the standard
+  ips; the Map<String, List<String>> multimap stays as
+  protocol-faithful hedging. Seeking the raw-ADTS tone.aac yields a
+  status event at pos=0 (upstream ip/aac seek behavior, not an IPC
+  issue); flac seeks cleanly.
+- Reviewed github.com/Endg4meZer0/cmus 41e2557 (Patrick's pointer:
+  fixes MPRIS Seeked signals reporting the *old* position by moving
+  mpris_seeked() from player_seek() into update() behind a new
+  position_seeked snapshot flag): not a bug we share — android_flush
+  runs after player_info_snapshot()/update(), so positions we send
+  are always post-snapshot. If it merges upstream, expect trivial
+  0001 context churn in ui_curses.c around update() at the next pin
+  bump; its position_seeked flag could also distinguish seeks from
+  natural advance should stage 9's MediaSession want that.
+
 ## 2026-07-18 — Stage 7: cmus IPC patch (done)
 
 - Per [plans/07-ipc.md](plans/07-ipc.md), no deviations from the plan's
@@ -211,17 +258,18 @@ pick up where things left off.
 
 ## Next
 
-Stage 8: Java IPC client (CmusIpc: connect to the android.c socket,
-typed state — status/track/volume/options map — via listener, command
-sending; verify: app logs live status/track/options, commands work) —
-needs its detailed plan written and approved first. Code against the
-protocol comment at the top of android.c (patches/cmus/0001); events
-are complete-state, reconnect always yields a full snapshot, so the
-client can be stateless-reconnect-simple. LocalSocket to a filesystem
-path already works from Java (TermService.forceMouseOption is the
-stage-6 precedent).
+Stage 9: media control (MediaSession + real media notification +
+cover art + headset/system keys) — needs its detailed plan written
+and approved first. CmusIpc events feed PlaybackState/metadata
+(status/position/volume are all there; tags carry artist/album/
+title); commands go back over `ipc.send` (player-pause, player-next,
+seek). Cover art per the overview: MediaMetadataRetriever
+.getEmbeddedPicture() off the status event's file path, folder-art
+fallback, Java-side. Bundled-font shortlist settled in the stage-8
+plan (Iosevka default; implementation stage 16).
 
-Note from Patrick for later stages: use cmus's own `pl_env_vars`
+Note from Patrick for later stages (stage 10 at the earliest — needs
+the external-storage path story): use cmus's own `pl_env_vars`
 mechanism (pl_env.c — Patrick's upstream feature: saved library/
 playlist/cache paths get their base swapped for a named env var, so
 the library survives the base path moving) for the Android paths:
