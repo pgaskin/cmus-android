@@ -59,10 +59,14 @@ pick up where things left off.
 
 ## Next
 
-Stage 4: native deps B — handwritten CMake ports for ncurses (pregenerated
-config headers + terminfo asset), libmad, and libiconv. Plan to be drafted
-at plans/04-native-deps-b.md and approved before implementation. Also
-revisit the libiconv v1.18 → v1.19 pin question flagged at stage 2.
+Stage 4: native deps B — libmad submodule fix (github tenacityteam/libmad
+silently redirects to libid3tag; real fork is on codeberg and has usable
+CMake, so no port needed) + handwritten CMake ports for ncurses
+(pregenerated sources + terminfo asset) and libiconv (bump pin to v1.19,
+resolving the stage-2 flag). Plan drafted at
+[plans/04-native-deps-b.md](plans/04-native-deps-b.md) (pending Patrick's
+approval); implementation in a fresh session. Host prereq for that
+session: gperf (dnf install gperf).
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
