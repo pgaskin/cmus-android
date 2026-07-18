@@ -32,7 +32,7 @@
 	shallow = true
 [submodule "third_party/libmad"]
 	path = third_party/libmad
-	url = https://github.com/tenacityteam/libmad
+	url = https://codeberg.org/tenacityteam/libmad
 	shallow = true
 [submodule "third_party/wavpack"]
 	path = third_party/wavpack
