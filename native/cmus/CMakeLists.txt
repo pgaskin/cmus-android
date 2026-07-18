@@ -167,3 +167,47 @@ set_source_files_properties(
     PROPERTIES COMPILE_DEFINITIONS VERSION="${cmus_version}")
 set_source_files_properties(${src}/server.c
     PROPERTIES COMPILE_DEFINITIONS DEFAULT_PORT=3000)
+
+# ip/vorbis.c + ip/mp4.c include "../config/*.h"; relative to the source
+# that misses (pristine tree), and against -I dirs the lookup is textual
+# (<dir>/../config/...), so plugins get an empty anchor dir beside
+# gen/config that makes it land on the generated headers.
+file(MAKE_DIRECTORY "${gen}/ip")
+
+function(cmus_plugin target)
+    add_library(${target} SHARED ${ARGN})
+    target_include_directories(${target} PRIVATE "${gen}" "${gen}/ip")
+    target_compile_definitions(${target} PRIVATE HAVE_CONFIG _FILE_OFFSET_BITS=64)
+    target_compile_options(${target} PRIVATE ${cmus_cflags})
+    # core symbols stay undefined until dlopen(RTLD_NOW) from the
+    # executable; -z undefs overrides the NDK's default -Wl,--no-undefined
+    target_link_options(${target} PRIVATE -Wl,-z,undefs)
+endfunction()
+
+# codec deps statically linked into each plugin, per the Makefile's
+# ld_dl lines (mad also gets iconv; vorbis/cue also -lm)
+cmus_plugin(cmus_ip_flac "${src}/ip/flac.c")
+target_link_libraries(cmus_ip_flac PRIVATE FLAC)
+cmus_plugin(cmus_ip_vorbis "${src}/ip/vorbis.c")
+target_link_libraries(cmus_ip_vorbis PRIVATE vorbisfile m)
+cmus_plugin(cmus_ip_opus "${src}/ip/opus.c")
+target_link_libraries(cmus_ip_opus PRIVATE opusfile)
+cmus_plugin(cmus_ip_mad "${src}/ip/mad.c" "${src}/ip/nomad.c")
+target_link_libraries(cmus_ip_mad PRIVATE mad-static iconv m)
+cmus_plugin(cmus_ip_wavpack "${src}/ip/wavpack.c")
+target_link_libraries(cmus_ip_wavpack PRIVATE wavpack)
+# cmus includes <wavpack/wavpack.h> (installed layout); the in-tree header
+# is include/wavpack.h -- mirror it under the installed name
+file(MAKE_DIRECTORY "${gen}/compat/wavpack")
+file(COPY_FILE "${THIRD_PARTY}/wavpack/include/wavpack.h"
+    "${gen}/compat/wavpack/wavpack.h" ONLY_IF_DIFFERENT)
+target_include_directories(cmus_ip_wavpack PRIVATE "${gen}/compat")
+cmus_plugin(cmus_ip_aac "${src}/ip/aac.c")
+target_link_libraries(cmus_ip_aac PRIVATE faad)
+cmus_plugin(cmus_ip_mp4 "${src}/ip/mp4.c")
+target_link_libraries(cmus_ip_mp4 PRIVATE mp4v2 faad)
+cmus_plugin(cmus_ip_wav "${src}/ip/wav.c")
+cmus_plugin(cmus_ip_cue "${src}/ip/cue.c")
+target_link_libraries(cmus_ip_cue PRIVATE m)
+cmus_plugin(cmus_op_aaudio "${src}/op/aaudio.c")
+target_link_libraries(cmus_op_aaudio PRIVATE aaudio)
