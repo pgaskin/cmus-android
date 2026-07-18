@@ -58,8 +58,19 @@ set(BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${THIRD_PARTY}/mp4v2" mp4v2 EXCLUDE_FROM_ALL)
 
+# libmad (aarch64 -> FPM_64BIT; the ARM asm/ASO path is 32-bit-only; the
+# unconditional `mad` SHARED target is never built thanks to
+# EXCLUDE_FROM_ALL + cmus_deps)
+set(EXAMPLE OFF CACHE BOOL "" FORCE)
+add_subdirectory("${THIRD_PARTY}/libmad" libmad EXCLUDE_FROM_ALL)
+
+# handwritten ports (pregenerated sources under native/ports/*/gen/)
+add_subdirectory(ports/ncurses)
+add_subdirectory(ports/libiconv)
+
 # exactly the static libs cmus will link; gradle builds only this target,
 # keeping strays (vorbisenc, opusurl, faad_drm, ...) out of the build
 add_custom_target(cmus_deps)
 add_dependencies(cmus_deps
-    ogg vorbis vorbisfile opus opusfile FLAC wavpack faad mp4v2)
+    ogg vorbis vorbisfile opus opusfile FLAC wavpack faad mp4v2
+    mad-static ncursesw iconv)
