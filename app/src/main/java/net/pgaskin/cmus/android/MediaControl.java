@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -114,6 +115,13 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
         session = new MediaSession(service, "cmus");
         session.setSessionActivity(activityIntent);
         session.setCallback(callback, mainHandler);
+        // media-key fallback once the session is gone: resurrects cmus after
+        // an idle-quit. The registration is never cleared — passing null
+        // here NPEs server-side (MediaButtonReceiverHolder.create, Android
+        // 16) — so foreground quits are gated by TermService.PREF_RESURRECT
+        // in the receiver instead
+        session.setMediaButtonBroadcastReceiver(
+                new ComponentName(service, MediaButtonReceiver.class));
         session.setActive(true);
         updatePlaybackState(PlaybackState.PLAYBACK_POSITION_UNKNOWN);
         service.registerReceiver(noisyReceiver,

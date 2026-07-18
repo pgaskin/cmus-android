@@ -6,6 +6,7 @@ import android.app.Service;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.os.Binder;
 import android.os.Environment;
@@ -32,6 +33,19 @@ public class TermService extends Service implements TerminalSessionClient {
     private static final String TAG = "cmus";
     static final String CHANNEL_ID = "term";
     static final int NOTIFICATION_ID = 1;
+    /** From {@link MediaButtonReceiver}: respawn and continue playback. */
+    static final String ACTION_MEDIA_PLAY = "net.pgaskin.cmus.android.MEDIA_PLAY";
+    static final String PREFS = "term";
+    private static final String PREF_COLS = "cols";
+    private static final String PREF_ROWS = "rows";
+    /**
+     * Gates {@link MediaButtonReceiver}: true from every spawn, false after
+     * a foreground TUI quit. Deliberately our own flag — clearing the
+     * session's media-button receiver on release doesn't reliably clear the
+     * system's per-package fallback (older archived sessions' registrations
+     * linger), so the receiver checks this instead.
+     */
+    static final String PREF_RESURRECT = "resurrect";
 
     /** What the attached activity cares about; safe to leave unregistered. */
     public interface SessionCallback {
@@ -63,6 +77,7 @@ public class TermService extends Service implements TerminalSessionClient {
     private String plEnvVars;
     private boolean activityVisible = true; // the activity starts the service
     private boolean idleQuitArmed;
+    private boolean pendingMediaPlay;
 
     @Override
     public void onCreate() {
@@ -74,9 +89,20 @@ public class TermService extends Service implements TerminalSessionClient {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        boolean spawning = session == null;
         getSession(); // creates mediaControl on first start
         startForeground(NOTIFICATION_ID, mediaControl.buildNotification(),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+        // media-key resurrection: continue playback once the respawned cmus
+        // reports its resumed state (only for a fresh spawn — a live session
+        // gets its keys through the MediaSession, never this path). This
+        // start is headless, so don't presume an activity: without this the
+        // idle-quit timer could never arm and a paused resurrected cmus
+        // would hold the FGS forever
+        if (spawning && ACTION_MEDIA_PLAY.equals(intent.getAction())) {
+            pendingMediaPlay = true;
+            activityVisible = false;
+        }
         return START_NOT_STICKY;
     }
 
@@ -123,6 +149,15 @@ public class TermService extends Service implements TerminalSessionClient {
             // altscreen app; the transcript is never scrolled)
             session = new TerminalSession(exe, filesDir.getPath(),
                     new String[]{"cmus"}, env.toArray(new String[0]), 100, this);
+            // the constructor doesn't fork — TerminalSession only spawns in
+            // initializeEmulator, normally reached when a TerminalView
+            // attaches and sizes it. Spawn headlessly now (media-key
+            // resurrection has no activity) at the last attached size so a
+            // later reopen doesn't shift layout; an attaching view merely
+            // resizes the pty and cmus redraws on the WINCH
+            SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+            session.updateSize(prefs.getInt(PREF_COLS, 80), prefs.getInt(PREF_ROWS, 24), 8, 16);
+            prefs.edit().putBoolean(PREF_RESURRECT, true).apply();
             ipc = new CmusIpc(new File(filesDir, "cmus-android.sock"));
             ipc.addListener(ipcListener);
             mediaControl = new MediaControl(this, ipc);
@@ -177,6 +212,18 @@ public class TermService extends Service implements TerminalSessionClient {
                             + " pos=" + s.position() + "/" + s.duration()
                             + " file=" + s.file() + " tags=" + s.tags());
                     updateIdleQuit(); // ipc.status() already caches s
+                    if (pendingMediaPlay) {
+                        pendingMediaPlay = false;
+                        switch (s.state()) {
+                            // resume leaves the saved track paused at
+                            // position, so toggle; player-play would
+                            // restart it from the beginning
+                            case PAUSED -> ipc.send("player-pause");
+                            case STOPPED -> ipc.send("player-play");
+                            case PLAYING -> {
+                            }
+                        }
+                    }
                 }
                 case CmusIpc.Position p -> Log.d(TAG, "ipc position " + p.position());
                 case CmusIpc.Volume v -> Log.d(TAG, "ipc volume " + v.left() + "/" + v.right());
@@ -196,6 +243,13 @@ public class TermService extends Service implements TerminalSessionClient {
     /** Reported from the activity's onStart/onStop for the idle-quit timer. */
     public void setActivityVisible(boolean visible) {
         activityVisible = visible;
+        if (!visible && session != null && session.getEmulator() != null) {
+            // remember the attached size for the next headless spawn
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putInt(PREF_COLS, session.getEmulator().mColumns)
+                    .putInt(PREF_ROWS, session.getEmulator().mRows)
+                    .apply();
+        }
         updateIdleQuit();
     }
 
@@ -297,6 +351,14 @@ public class TermService extends Service implements TerminalSessionClient {
     public void onSessionFinished(TerminalSession finishedSession) {
         mainHandler.removeCallbacksAndMessages(null);
         idleQuitArmed = false;
+        pendingMediaPlay = false;
+        // a foreground quit is the user closing the app for real — gate the
+        // media-key resurrection off (background deaths keep it); before the
+        // teardown below so nothing can interrupt it
+        if (activityVisible) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(PREF_RESURRECT, false).apply();
+        }
         if (mediaControl != null) {
             mediaControl.close(); // session released before the FGS stops
             mediaControl = null;

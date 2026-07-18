@@ -24,6 +24,17 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- media-key resurrection target after the session is gone
+             (MediaSession#setMediaButtonBroadcastReceiver); the system
+             routes keys to the live session while one exists -->
+        <receiver
+            android:name=".MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
         <!-- debug-only (gated on FLAG_DEBUGGABLE); driven from root adb -->
         <receiver
             android:name=".CmusDebugReceiver"
