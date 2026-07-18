@@ -41,8 +41,8 @@ pick up where things left off.
 
 Stage 3: native deps A — CMake tree building the upstream-CMake deps
 (ogg, vorbis, opus, opusfile, flac, wavpack, faad2, mp4v2) as static
-arm64 libs. Plan not yet written (`notes/plans/03-*.md`); needs Patrick's
-approval before implementing.
+arm64 libs. Plan drafted at [plans/03-native-deps-a.md](plans/03-native-deps-a.md)
+(pending Patrick's approval); implementation in a fresh session.
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
