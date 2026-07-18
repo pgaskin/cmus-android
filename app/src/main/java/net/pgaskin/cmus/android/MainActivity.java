@@ -128,6 +128,15 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     @Override
     public void onSingleTapUp(MotionEvent e) {
+        // when cmus has mouse tracking on (TermService forces it), the tap
+        // was already sent as a click by TerminalView — same gate as termux
+        if (terminalView.mEmulator != null && terminalView.mEmulator.isMouseTrackingActive()) {
+            return;
+        }
+        toggleSoftKeyboard();
+    }
+
+    private void toggleSoftKeyboard() {
         terminalView.requestFocus();
         InputMethodManager imm = getSystemService(InputMethodManager.class);
         WindowInsets insets = terminalView.getRootWindowInsets();
@@ -175,6 +184,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     @Override
     public boolean onLongPress(MotionEvent event) {
+        // in mouse mode taps are clicks, so the keyboard needs another way
+        // in; interim until the stage-12 control bar gets a toggle (text
+        // selection is disabled in stage 14 anyway)
+        if (terminalView.mEmulator != null && terminalView.mEmulator.isMouseTrackingActive()) {
+            toggleSoftKeyboard();
+            return true;
+        }
         return false;
     }
 

@@ -9,6 +9,8 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.net.LocalSocket;
+import android.net.LocalSocketAddress;
 import android.os.Binder;
 import android.os.IBinder;
 import android.util.Log;
@@ -94,8 +96,43 @@ public class TermService extends Service implements TerminalSessionClient {
             // altscreen app; the transcript is never scrolled)
             session = new TerminalSession(exe, filesDir.getPath(),
                     new String[]{"cmus"}, env, 100, this);
+            forceMouseOption();
         }
         return session;
+    }
+
+    /**
+     * Touch gestures only behave like termux (tap = click, drag = wheel
+     * scroll) with cmus mouse tracking on, so force the option on every
+     * start, overriding autosave/rc — mouse is a core part of this app.
+     * Pushed over the cmus socket once it comes up, rather than touching
+     * the user's config files.
+     */
+    private void forceMouseOption() {
+        String socketPath = new File(getFilesDir(), "cmus-home/socket").getPath();
+        Thread thread = new Thread(() -> {
+            for (int i = 0; i < 100; i++) {
+                try (LocalSocket socket = new LocalSocket()) {
+                    socket.connect(new LocalSocketAddress(socketPath,
+                            LocalSocketAddress.Namespace.FILESYSTEM));
+                    socket.getOutputStream().write("set mouse=true\n"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    socket.getOutputStream().flush();
+                    // wait for the reply so the write isn't racing the close
+                    socket.getInputStream().read();
+                    return;
+                } catch (IOException e) {
+                    try {
+                        Thread.sleep(100);
+                    } catch (InterruptedException ie) {
+                        return;
+                    }
+                }
+            }
+            Log.w(TAG, "cmus socket never came up; mouse option not set");
+        }, "CmusMouseOption");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     public void setSessionCallback(SessionCallback callback) {

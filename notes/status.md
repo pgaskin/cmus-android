@@ -33,6 +33,15 @@ pick up where things left off.
   under the FGS; relaunch + rotation re-attach the live session;
   `:quit` → cmus exits, autosave written, service + activity gone.
   Pinch zoom confirmed by hand by Patrick (adb can't inject multitouch).
+- Post-verify fix from Patrick's hands-on: touch gestures now work like
+  termux — TermService forces `set mouse=true` over the cmus socket on
+  every spawn (Patrick: overriding user config is correct, mouse is a
+  core part of the app; socket write leaves user files alone), so tap =
+  click and drag/fling = wheel scroll, handled natively by TerminalView
+  when mouse tracking is on. Tap toggles the IME only when tracking is
+  off (termux's gate); interim keyboard access in mouse mode =
+  long-press (control-bar toggle lands stage 12, selection dies stage
+  14). Confirmed working by Patrick.
 - Flagged for later: our NDK-r28 libs + termux's NDK-21 libtermux.so
   trip Android 16's debug-only "not 16 KB aligned" dialog
   (useLegacyPackaging compresses libs, so the check can't verify
