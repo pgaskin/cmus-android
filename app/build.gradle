@@ -19,3 +19,12 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 }
+
+// fail early if third_party patches exist but haven't been applied
+def patchCheck = tasks.register('patchCheck', Exec) {
+    workingDir rootDir
+    commandLine './patch.sh', 'check'
+}
+tasks.named('preBuild') {
+    dependsOn patchCheck
+}
