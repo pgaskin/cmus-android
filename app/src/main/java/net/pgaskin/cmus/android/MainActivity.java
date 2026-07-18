@@ -14,6 +14,7 @@ import android.view.MotionEvent;
 import android.view.WindowInsets;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
+import android.widget.Toast;
 
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
@@ -24,7 +25,10 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     private TerminalView terminalView;
     private TermService service;
+    private TerminalSession session;
     private boolean bound;
+    private boolean visible;
+    private boolean crashScreen;
     private int fontSize;
     private int minFontSize;
     private int maxFontSize;
@@ -34,7 +38,10 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         public void onServiceConnected(ComponentName name, android.os.IBinder binder) {
             service = ((TermService.LocalBinder) binder).getService();
             service.setSessionCallback(MainActivity.this);
-            TerminalSession session = service.getSession();
+            // binding is async; the service defaults to visible, so only the
+            // launched-then-immediately-backgrounded window needs correcting
+            service.setActivityVisible(visible);
+            session = service.getSession();
             terminalView.attachSession(session);
             if (!session.isRunning()) {
                 finish();
@@ -87,6 +94,33 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        visible = true;
+        if (service != null) {
+            service.setActivityVisible(true);
+            // cmus died while we were backgrounded (idle-quit or otherwise):
+            // respawn it — restart the FGS (onStartCommand re-fronts it with
+            // the fresh MediaControl notification), spawn, re-attach; forced
+            // resume=true makes the round trip invisible
+            if (!crashScreen && (session == null || !session.isRunning())) {
+                startForegroundService(new Intent(this, TermService.class));
+                session = service.getSession();
+                terminalView.attachSession(session);
+            }
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        visible = false;
+        if (service != null) {
+            service.setActivityVisible(false);
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         if (service != null) {
@@ -111,7 +145,21 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     @Override
     public void onSessionFinished() {
-        finish();
+        // backgrounded (idle-quit or any other death): stay in recents on
+        // the frozen screen; onStart respawns cmus when the user comes back
+        if (!visible) {
+            return;
+        }
+        // a crash's last output should be readable: stay on the frozen
+        // terminal (service already tore down) until the user taps out
+        int exitStatus = session != null ? session.getExitStatus() : 0;
+        if (exitStatus == 0) {
+            finish();
+        } else {
+            crashScreen = true;
+            Toast.makeText(this, "cmus exited (" + exitStatus + ") — tap to close",
+                    Toast.LENGTH_LONG).show();
+        }
     }
 
     // TerminalViewClient
@@ -128,6 +176,10 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     @Override
     public void onSingleTapUp(MotionEvent e) {
+        if (session != null && !session.isRunning()) {
+            finish(); // frozen crash screen (back only backgrounds the task)
+            return;
+        }
         // when cmus has mouse tracking on (TermService forces it), the tap
         // was already sent as a click by TerminalView — same gate as termux
         if (terminalView.mEmulator != null && terminalView.mEmulator.isMouseTrackingActive()) {
@@ -174,6 +226,11 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent e, TerminalSession session) {
+        // the emulator's crash banner says "press Enter"; tap also works
+        if (keyCode == KeyEvent.KEYCODE_ENTER && session != null && !session.isRunning()) {
+            finish();
+            return true;
+        }
         return false;
     }
 

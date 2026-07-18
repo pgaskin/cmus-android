@@ -9,7 +9,9 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Binder;
 import android.os.Environment;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 
 import com.termux.terminal.TerminalSession;
@@ -44,14 +46,23 @@ public class TermService extends Service implements TerminalSessionClient {
         }
     }
 
+    // stage-17 setting replaces the constant; postDelayed counts
+    // uptimeMillis, so deep doze stretches the delay — accepted (hygiene
+    // feature, fires on next wake, no AlarmManager machinery)
+    private static final long IDLE_QUIT_DELAY_MS = 15 * 60 * 1000;
+    private static final long IDLE_QUIT_GRACE_MS = 30 * 1000;
+
     private static TermService instance; // for CmusDebugReceiver only
 
     private final IBinder binder = new LocalBinder();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private TerminalSession session;
     private CmusIpc ipc;
     private MediaControl mediaControl;
     private SessionCallback callback;
     private String plEnvVars;
+    private boolean activityVisible = true; // the activity starts the service
+    private boolean idleQuitArmed;
 
     @Override
     public void onCreate() {
@@ -161,9 +172,12 @@ public class TermService extends Service implements TerminalSessionClient {
         public void onEvent(CmusIpc.Event event) {
             switch (event) {
                 case CmusIpc.Hello h -> Log.d(TAG, "ipc hello version=" + h.version());
-                case CmusIpc.Status s -> Log.d(TAG, "ipc status " + s.state()
-                        + " pos=" + s.position() + "/" + s.duration()
-                        + " file=" + s.file() + " tags=" + s.tags());
+                case CmusIpc.Status s -> {
+                    Log.d(TAG, "ipc status " + s.state()
+                            + " pos=" + s.position() + "/" + s.duration()
+                            + " file=" + s.file() + " tags=" + s.tags());
+                    updateIdleQuit(); // ipc.status() already caches s
+                }
                 case CmusIpc.Position p -> Log.d(TAG, "ipc position " + p.position());
                 case CmusIpc.Volume v -> Log.d(TAG, "ipc volume " + v.left() + "/" + v.right());
                 case CmusIpc.Options o -> Log.d(TAG, "ipc options n=" + o.values().size()
@@ -179,9 +193,81 @@ public class TermService extends Service implements TerminalSessionClient {
         this.callback = callback;
     }
 
+    /** Reported from the activity's onStart/onStop for the idle-quit timer. */
+    public void setActivityVisible(boolean visible) {
+        activityVisible = visible;
+        updateIdleQuit();
+    }
+
+    /**
+     * Arms the idle-quit timer when cmus is not playing and no activity is
+     * visible, cancels it when either flips back (Status events and the
+     * visibility setter both land here). PAUSED counts as idle only because
+     * resume=true is forced — quitting loses nothing. A missing Status
+     * snapshot is not idle: never quit on state we never saw.
+     */
+    private void updateIdleQuit() {
+        CmusIpc.Status status = ipc != null ? ipc.status() : null;
+        boolean arm = status != null && status.state() != CmusIpc.PlayState.PLAYING
+                && !activityVisible && session != null && session.isRunning();
+        if (arm == idleQuitArmed) {
+            return;
+        }
+        idleQuitArmed = arm;
+        if (arm) {
+            Log.d(TAG, "idle-quit: armed");
+            mainHandler.postDelayed(idleQuit, IDLE_QUIT_DELAY_MS);
+        } else {
+            Log.d(TAG, "idle-quit: cancelled");
+            mainHandler.removeCallbacks(idleQuit);
+        }
+    }
+
+    private final Runnable idleQuit = () -> {
+        idleQuitArmed = false;
+        CmusIpc.Status status = ipc != null ? ipc.status() : null;
+        if (status == null || status.state() == CmusIpc.PlayState.PLAYING
+                || activityVisible || session == null || !session.isRunning()) {
+            return;
+        }
+        Log.i(TAG, "idle-quit: quitting cmus");
+        quitCmus();
+    };
+
+    /**
+     * Lossless quit: re-force resume in case the user disabled it
+     * mid-session (the connect-time force only covers the last connect).
+     * Never SIGKILLs a wedged cmus — that's exactly what loses state — so
+     * if the session somehow survives (send dropped while disconnected),
+     * a grace recheck re-evaluates and the timer re-arms.
+     */
+    private void quitCmus() {
+        ipc.send("set resume=true");
+        ipc.send("quit");
+        mainHandler.postDelayed(this::updateIdleQuit, IDLE_QUIT_GRACE_MS);
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        // swiping the task away: playback outliving the task is the FGS's
+        // whole point, but an idle app the user closed should die now
+        // (lossless via resume) instead of waiting out the idle timer
+        if (session == null || !session.isRunning()) {
+            stopSelf();
+            return;
+        }
+        CmusIpc.Status status = ipc.status();
+        if (status != null && status.state() == CmusIpc.PlayState.PLAYING) {
+            return;
+        }
+        Log.i(TAG, "task removed while idle: quitting cmus");
+        quitCmus();
+    }
+
     @Override
     public void onDestroy() {
         instance = null;
+        mainHandler.removeCallbacksAndMessages(null);
         if (mediaControl != null) {
             mediaControl.close();
         }
@@ -209,12 +295,21 @@ public class TermService extends Service implements TerminalSessionClient {
 
     @Override
     public void onSessionFinished(TerminalSession finishedSession) {
+        mainHandler.removeCallbacksAndMessages(null);
+        idleQuitArmed = false;
         if (mediaControl != null) {
             mediaControl.close(); // session released before the FGS stops
+            mediaControl = null;
         }
         if (ipc != null) {
             ipc.close(); // before the socket path goes stale; stops reconnects
+            ipc = null;
         }
+        // dropping the session lets getSession() respawn cmus: after an
+        // idle-quit (or any death while backgrounded) the activity stays in
+        // recents and its next onStart restarts the service; resume=true
+        // makes the round trip invisible
+        session = null;
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
         if (callback != null) {
