@@ -32,7 +32,7 @@ pick up where things left off.
   stage-5 aaudio-from-nonroot question. Home-away → playback continues
   under the FGS; relaunch + rotation re-attach the live session;
   `:quit` → cmus exits, autosave written, service + activity gone.
-  Untested by hand: pinch zoom (no adb multitouch) — eyeball later.
+  Pinch zoom confirmed by hand by Patrick (adb can't inject multitouch).
 - Flagged for later: our NDK-r28 libs + termux's NDK-21 libtermux.so
   trip Android 16's debug-only "not 16 KB aligned" dialog
   (useLegacyPackaging compresses libs, so the check can't verify
@@ -166,6 +166,14 @@ removal as patches via patch.sh; verify with socat/adb) — needs its
 detailed plan written and approved first. The cmus socket at
 `$CMUS_HOME/socket` was driven successfully with `toybox nc -U` from
 adb during stages 5–6, so the transport baseline is proven.
+
+Note from Patrick for later stages: use cmus's own `pl_env_vars`
+mechanism (pl_env.c — Patrick's upstream feature: saved library/
+playlist/cache paths get their base swapped for a named env var, so
+the library survives the base path moving) for the Android paths:
+have TermService export env vars for the android data dir, the
+external storage path, the external data path, etc., and put them in
+`pl_env_vars`, so saved paths survive reinstalls / storage moves.
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
