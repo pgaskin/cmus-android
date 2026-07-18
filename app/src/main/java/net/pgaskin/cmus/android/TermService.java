@@ -1,9 +1,7 @@
 package net.pgaskin.cmus.android;
 
-import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.app.Service;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -27,8 +25,8 @@ import java.io.IOException;
  */
 public class TermService extends Service implements TerminalSessionClient {
     private static final String TAG = "cmus";
-    private static final String CHANNEL_ID = "term";
-    private static final int NOTIFICATION_ID = 1;
+    static final String CHANNEL_ID = "term";
+    static final int NOTIFICATION_ID = 1;
 
     /** What the attached activity cares about; safe to leave unregistered. */
     public interface SessionCallback {
@@ -48,6 +46,7 @@ public class TermService extends Service implements TerminalSessionClient {
     private final IBinder binder = new LocalBinder();
     private TerminalSession session;
     private CmusIpc ipc;
+    private MediaControl mediaControl;
     private SessionCallback callback;
 
     @Override
@@ -60,18 +59,9 @@ public class TermService extends Service implements TerminalSessionClient {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Notification notification = new Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setContentTitle(getString(R.string.app_name))
-                .setContentText("running")
-                .setOngoing(true)
-                .setContentIntent(PendingIntent.getActivity(this, 0,
-                        new Intent(this, MainActivity.class),
-                        PendingIntent.FLAG_IMMUTABLE))
-                .build();
-        startForeground(NOTIFICATION_ID, notification,
+        getSession(); // creates mediaControl on first start
+        startForeground(NOTIFICATION_ID, mediaControl.buildNotification(),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-        getSession();
         return START_NOT_STICKY;
     }
 
@@ -104,6 +94,8 @@ public class TermService extends Service implements TerminalSessionClient {
                     new String[]{"cmus"}, env, 100, this);
             ipc = new CmusIpc(new File(filesDir, "cmus-android.sock"));
             ipc.addListener(ipcListener);
+            mediaControl = new MediaControl(this, ipc);
+            ipc.addListener(mediaControl);
         }
         return session;
     }
@@ -165,6 +157,9 @@ public class TermService extends Service implements TerminalSessionClient {
     @Override
     public void onDestroy() {
         instance = null;
+        if (mediaControl != null) {
+            mediaControl.close();
+        }
         if (ipc != null) {
             ipc.close();
         }
@@ -189,6 +184,9 @@ public class TermService extends Service implements TerminalSessionClient {
 
     @Override
     public void onSessionFinished(TerminalSession finishedSession) {
+        if (mediaControl != null) {
+            mediaControl.close(); // session released before the FGS stops
+        }
         if (ipc != null) {
             ipc.close(); // before the socket path goes stale; stops reconnects
         }
