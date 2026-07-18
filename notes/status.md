@@ -22,5 +22,9 @@ pick up where things left off.
 
 ## Next
 
-Stage 2: submodules + vncpatch-style `patch.sh` (plan to write:
-`plans/02-submodules.md`).
+Stage 2: submodules + vncpatch-style `patch.sh` — plan approved at
+[plans/02-submodules.md](plans/02-submodules.md), implementation not
+started.
+
+Workflow note: each stage runs in a fresh session — read status.md,
+architecture.md, the overview plan, and the current stage plan first.
