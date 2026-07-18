@@ -8,6 +8,7 @@ import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Binder;
+import android.os.Environment;
 import android.os.IBinder;
 import android.util.Log;
 
@@ -16,6 +17,8 @@ import com.termux.terminal.TerminalSessionClient;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Foreground service owning the cmus pty session so playback continues while
@@ -48,6 +51,7 @@ public class TermService extends Service implements TerminalSessionClient {
     private CmusIpc ipc;
     private MediaControl mediaControl;
     private SessionCallback callback;
+    private String plEnvVars;
 
     @Override
     public void onCreate() {
@@ -75,7 +79,7 @@ public class TermService extends Service implements TerminalSessionClient {
             }
             File filesDir = getFilesDir();
             String exe = new File(getApplicationInfo().nativeLibraryDir, "libcmus.so").getPath();
-            String[] env = {
+            List<String> env = new ArrayList<>(List.of(
                     "HOME=" + filesDir,
                     "TMPDIR=" + getCacheDir(),
                     "TERM=xterm-256color",
@@ -86,12 +90,28 @@ public class TermService extends Service implements TerminalSessionClient {
                     // app-facing IPC socket (patches/cmus/0001); filesDir
                     // root, not cmus-home, so tar exports of the config
                     // never pick up socket files. Java client is stage 8.
-                    "CMUS_ANDROID_SOCKET=" + new File(filesDir, "cmus-android.sock"),
-            };
+                    "CMUS_ANDROID_SOCKET=" + new File(filesDir, "cmus-android.sock")));
+            // base-path vars for pl_env_vars (saved library/playlist/cache
+            // paths keep the var, not the base, so libraries survive
+            // reinstalls/storage moves). Order matters twice over: pl_env
+            // takes the first var whose value prefixes the path, so more
+            // specific bases go first, and the names are baked into saved
+            // files forever.
+            List<String> plEnv = new ArrayList<>();
+            File extFiles = getExternalFilesDir(null);
+            if (extFiles != null) { // null only when shared storage is unavailable
+                env.add("CMUS_ANDROID_EXT_FILES=" + extFiles);
+                plEnv.add("CMUS_ANDROID_EXT_FILES");
+            }
+            env.add("CMUS_ANDROID_EXT=" + Environment.getExternalStorageDirectory());
+            plEnv.add("CMUS_ANDROID_EXT");
+            env.add("CMUS_ANDROID_FILES=" + filesDir);
+            plEnv.add("CMUS_ANDROID_FILES");
+            plEnvVars = String.join(",", plEnv);
             // 100 transcript rows is the minimum honored (cmus is an
             // altscreen app; the transcript is never scrolled)
             session = new TerminalSession(exe, filesDir.getPath(),
-                    new String[]{"cmus"}, env, 100, this);
+                    new String[]{"cmus"}, env.toArray(new String[0]), 100, this);
             ipc = new CmusIpc(new File(filesDir, "cmus-android.sock"));
             ipc.addListener(ipcListener);
             mediaControl = new MediaControl(this, ipc);
@@ -112,19 +132,24 @@ public class TermService extends Service implements TerminalSessionClient {
     }
 
     /**
-     * Touch gestures only behave like termux (tap = click, drag = wheel
-     * scroll) with cmus mouse tracking on, so force the option on every
-     * (re)connect, overriding autosave/rc — mouse is a core part of this
-     * app; the command channel leaves user config files alone. The command
-     * echoes back as an options event showing mouse=true. The DEBUG event
-     * log is stage 8's observable output; later stages consume the events
-     * for real.
+     * Options core wrapper functionality depends on are forced on every
+     * (re)connect, overriding autosave/rc (policy in architecture.md: the
+     * command channel leaves user config files alone; autosave persisting
+     * the forced value is the point). mouse: touch gestures only behave
+     * like termux (tap = click, drag = wheel scroll) with mouse tracking
+     * on. resume: every quit — user, idle-quit, task-swipe, even SIGHUP
+     * from app-process death — writes track/position/playback state/view
+     * for the next launch to restore. pl_env_vars: saved paths keep the
+     * env var, not the base path (see the spawn env). Each command echoes
+     * back as an options event, self-verifying.
      */
     private final CmusIpc.Listener ipcListener = new CmusIpc.Listener() {
         @Override
         public void onConnected() {
             Log.d(TAG, "ipc: connected");
             ipc.send("set mouse=true");
+            ipc.send("set resume=true");
+            ipc.send("set pl_env_vars=" + plEnvVars);
         }
 
         @Override
