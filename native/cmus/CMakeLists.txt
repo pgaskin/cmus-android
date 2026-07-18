@@ -105,7 +105,6 @@ add_executable(cmus
     ${src}/glob.c
     ${src}/help.c
     ${src}/history.c
-    ${src}/http.c
     ${src}/id3.c
     ${src}/input.c
     ${src}/job.c

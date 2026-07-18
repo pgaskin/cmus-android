@@ -1,0 +1,75 @@
+From d14f9c9600b6c598f58da5d4a589ed4545a50152 Mon Sep 17 00:00:00 2001
+From: Claude Fable 5 <noreply@anthropic.com>
+Date: Sat, 18 Jul 2026 16:29:26 -0400
+Subject: [PATCH 2/2] drop remote stream support under CONFIG_ANDROID
+
+Guard input.c's remote machinery (do_http_get through open_remote plus
+the timeouts/playlist-mime statics) behind #ifndef CONFIG_ANDROID with a
+stub open_remote returning -IP_ERROR_FUNCTION_NOT_SUPPORTED, and keep
+only the is_cue_url half of cmus_detect_ft's URL branch, so http:// adds
+fail cleanly as invalid and stale library entries fail at open. No
+http.c symbol stays referenced, so the app build drops http.c entirely.
+Inert for upstream builds, which never define CONFIG_ANDROID.
+
+diff --git a/cmus.c b/cmus.c
+index 2b5ccf6..14213c1 100644
+--- a/cmus.c
++++ b/cmus.c
+@@ -154,7 +154,13 @@ enum file_type cmus_detect_ft(const char *name, char **ret)
+ 	char *absolute;
+ 	struct stat st;
+ 
++#ifdef CONFIG_ANDROID
++	/* remote streams removed: http:// falls through to stat() below and
++	 * comes back FILE_TYPE_INVALID (cue "URLs" are local files) */
++	if (is_cue_url(name)) {
++#else
+ 	if (is_http_url(name) || is_cue_url(name)) {
++#endif
+ 		*ret = xstrdup(name);
+ 		return FILE_TYPE_URL;
+ 	}
+diff --git a/input.c b/input.c
+index ed07656..0f5e5b9 100644
+--- a/input.c
++++ b/input.c
+@@ -103,6 +103,7 @@ static pthread_rwlock_t ip_lock = CMUS_RWLOCK_INITIALIZER;
+ #define ip_wrlock() cmus_rwlock_wrlock(&ip_lock)
+ #define ip_unlock() cmus_rwlock_unlock(&ip_lock)
+ 
++#ifndef CONFIG_ANDROID
+ /* timeouts (ms) */
+ static int http_connection_timeout = 5e3;
+ static int http_read_timeout = 5e3;
+@@ -112,6 +113,7 @@ static const char *pl_mime_types[] = {
+ 	"audio/x-scpls",
+ 	"audio/x-mpegurl"
+ };
++#endif
+ 
+ static const struct input_plugin_ops *
+ get_ops_by_extension_locked(const char *ext, struct list_head **headp)
+@@ -178,6 +180,7 @@ get_ops_by_mime_type(const char *mime_type)
+ 	return rv;
+ }
+ 
++#ifndef CONFIG_ANDROID
+ static void keyvals_add_basic_auth(struct growing_keyvals *c,
+ 				   const char *user,
+ 				   const char *pass,
+@@ -410,6 +413,15 @@ static int open_remote(struct input_plugin *ip)
+ 	http_get_free(&hg);
+ 	return rc;
+ }
++#else
++/* remote streams removed for the Android app: stale library entries and
++ * pasted URLs fail cleanly at open; no http.c symbol stays referenced, so
++ * http.c drops from the link */
++static int open_remote(struct input_plugin *ip)
++{
++	return -IP_ERROR_FUNCTION_NOT_SUPPORTED;
++}
++#endif
+ 
+ static void ip_init(struct input_plugin *ip, char *filename)
+ {
