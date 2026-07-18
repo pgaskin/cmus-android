@@ -2,10 +2,6 @@
 	path = third_party/cmus
 	url = https://github.com/cmus/cmus
 	shallow = true
-[submodule "third_party/termux-app"]
-	path = third_party/termux-app
-	url = https://github.com/termux/termux-app
-	shallow = true
 [submodule "third_party/ncurses"]
 	path = third_party/ncurses
 	url = https://github.com/mirror/ncurses

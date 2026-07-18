@@ -11,6 +11,16 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // termux terminal-view/-emulator only (the com.termux custom-domain
+        // group does not serve artifacts; use the com.github one)
+        exclusiveContent {
+            forRepository {
+                maven { url = 'https://jitpack.io' }
+            }
+            filter {
+                includeGroup 'com.github.termux.termux-app'
+            }
+        }
     }
 }
 
