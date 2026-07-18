@@ -8,6 +8,9 @@ full plan and rationale; this file describes what currently exists.
 ```
 ├── notes/            spec, plans/, status.md, this file
 ├── app/              Android app module (Java 21, no androidx/deps)
+├── native/           CMake source root (AGP externalNativeBuild)
+│   ├── CMakeLists.txt  upstream-CMake deps via add_subdirectory
+│   └── cmake/          Find{Ogg,Opus}.cmake shims → in-tree targets
 ├── third_party/      13 pinned submodules (cmus, termux-app, ncurses,
 │                     libogg, libvorbis, opus, opusfile, flac, libmad,
 │                     wavpack, faad2, mp4v2, libiconv)
@@ -34,6 +37,25 @@ full plan and rationale; this file describes what currently exists.
   5.9.0, faad2 2.11.2, mp4v2 v2.1.3, libiconv v1.18 (plan-pinned; v1.19
   exists).
 
+## Native build
+
+- `native/CMakeLists.txt` is the CMake project AGP drives
+  (`externalNativeBuild`, SDK cmake pinned 3.30.5 — not 4.x, which
+  rejects the <3.5 minimums in libvorbis/wavpack/mp4v2; ndk r28c
+  28.2.13676358, arm64-v8a only, default c++_static STL).
+- Upstream-CMake deps (libogg, libvorbis, opus, opusfile, flac, wavpack,
+  faad2, mp4v2) added with `add_subdirectory(... EXCLUDE_FROM_ALL)`,
+  forced static, programs/tests/docs off; gradle builds only the
+  `cmus_deps` custom target = the 9 libs cmus links (ogg vorbis
+  vorbisfile opus opusfile FLAC wavpack faad mp4v2), keeping strays
+  (vorbisenc, opusurl, faad_drm…) out.
+- `native/cmake/Find{Ogg,Opus}.cmake` (prepended to CMAKE_MODULE_PATH)
+  satisfy find_package in libvorbis/opusfile with the in-tree targets.
+  `CMAKE_SKIP_INSTALL_RULES=ON` because opusfile/flac install(EXPORT)
+  sets otherwise fail generate on the unexported in-tree ogg.
+- Static libs land under `app/.cxx/` only; nothing is packaged into the
+  APK yet (cmus + plugins in stages 4–5).
+
 ## App module
 
 - `net.pgaskin.cmus.android`, minSdk 34 (Android 14), target/compileSdk 36.
@@ -45,12 +67,13 @@ full plan and rationale; this file describes what currently exists.
 
 ## Build requirements
 
-- Android SDK at `~/sdk/android` (`local.properties`, gitignored), host JDK
-  25, network for gradle/AGP resolution.
+- Android SDK at `~/sdk/android` (`local.properties`, gitignored) with
+  ndk;28.2.13676358 + cmake;3.30.5 installed, host JDK 25, network for
+  gradle/AGP resolution.
 - `./gradlew assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Coming next (see overview stages)
 
-Native CMake build of deps + cmus (3–5),
+Native ports for ncurses/libmad/libiconv (4), cmus itself (5),
 terminal UI via termux terminal-emulator/-view (6), cmus unix-socket IPC
 (7–8), media session (9), then chrome/input/overlays/settings (10+).

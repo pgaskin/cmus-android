@@ -3,6 +3,26 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 3: native deps A (done)
+
+- `native/CMakeLists.txt` builds the 8 upstream-CMake deps per
+  [plans/03-native-deps-a.md](plans/03-native-deps-a.md); `cmus_deps`
+  custom target pulls exactly the 9 libs cmus will link (ogg vorbis
+  vorbisfile opus opusfile FLAC wavpack faad mp4v2 — table's assumed
+  names were all correct). Find{Ogg,Opus} shims as planned; flac turned
+  out to short-circuit on `TARGET Ogg::ogg` itself, so only
+  libvorbis/opusfile need them.
+- Deviations from plan: added `BUILD_CXXLIBS=OFF` for flac (tidiness);
+  needed `CMAKE_SKIP_INSTALL_RULES=ON` — opusfile/flac have
+  unconditional `install(EXPORT)` sets that fail CMake's generate step
+  because the in-tree `ogg` they link isn't in any export set.
+- SDK cmake 3.30.5 installed via sdkmanager and pinned in gradle;
+  ndkVersion 28.2.13676358 (r28c). wavpack aarch64 asm was a non-issue:
+  its ARM64 asm is MSVC-only, plain C elsewhere.
+- Verified: clean `./gradlew clean assembleDebug` from scratch (~14s);
+  9 .a files under `app/.cxx`, all AArch64, real symbol content; APK
+  contents unchanged; patchCheck still gates preBuild.
+
 ## 2026-07-18 — Stage 2: submodules + patch.sh (done)
 
 - 13 submodules added under `third_party/` per
@@ -39,10 +59,10 @@ pick up where things left off.
 
 ## Next
 
-Stage 3: native deps A — CMake tree building the upstream-CMake deps
-(ogg, vorbis, opus, opusfile, flac, wavpack, faad2, mp4v2) as static
-arm64 libs. Plan drafted at [plans/03-native-deps-a.md](plans/03-native-deps-a.md)
-(pending Patrick's approval); implementation in a fresh session.
+Stage 4: native deps B — handwritten CMake ports for ncurses (pregenerated
+config headers + terminfo asset), libmad, and libiconv. Plan to be drafted
+at plans/04-native-deps-b.md and approved before implementation. Also
+revisit the libiconv v1.18 → v1.19 pin question flagged at stage 2.
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
