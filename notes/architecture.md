@@ -10,7 +10,9 @@ full plan and rationale; this file describes what currently exists.
 ├── app/              Android app module (Java 21, no androidx/deps)
 ├── native/           CMake source root (AGP externalNativeBuild)
 │   ├── CMakeLists.txt  upstream-CMake deps via add_subdirectory
-│   └── cmake/          Find{Ogg,Opus}.cmake shims → in-tree targets
+│   ├── cmake/          Find{Ogg,Opus}.cmake shims → in-tree targets
+│   └── ports/          handwritten CMake ports (ncurses, libiconv), each
+│                       with gen.sh + committed gen/ outputs
 ├── third_party/      13 pinned submodules (cmus, termux-app, ncurses,
 │                     libogg, libvorbis, opus, opusfile, flac, libmad,
 │                     wavpack, faad2, mp4v2, libiconv)
@@ -33,9 +35,9 @@ full plan and rationale; this file describes what currently exists.
   builds fail with a hint when patches exist but aren't applied.
 - Pins (2026-07-18): cmus master d335e90, termux-app v0.118.3, ncurses
   snapshot 87c2c84, libogg v1.3.6, libvorbis v1.3.7, opus v1.6.1, opusfile
-  master 6dfd29e, flac 1.5.0, libmad (tenacityteam) main 0637016, wavpack
-  5.9.0, faad2 2.11.2, mp4v2 v2.1.3, libiconv v1.18 (plan-pinned; v1.19
-  exists).
+  master 6dfd29e, flac 1.5.0, libmad 0.16.4 be34ec9 (the codeberg
+  tenacityteam fork — the github URL silently redirects to libid3tag),
+  wavpack 5.9.0, faad2 2.11.2, mp4v2 v2.1.3, libiconv v1.19.
 
 ## Native build
 
@@ -44,17 +46,27 @@ full plan and rationale; this file describes what currently exists.
   rejects the <3.5 minimums in libvorbis/wavpack/mp4v2; ndk r28c
   28.2.13676358, arm64-v8a only, default c++_static STL).
 - Upstream-CMake deps (libogg, libvorbis, opus, opusfile, flac, wavpack,
-  faad2, mp4v2) added with `add_subdirectory(... EXCLUDE_FROM_ALL)`,
+  faad2, mp4v2, libmad) added with `add_subdirectory(... EXCLUDE_FROM_ALL)`,
   forced static, programs/tests/docs off; gradle builds only the
-  `cmus_deps` custom target = the 9 libs cmus links (ogg vorbis
-  vorbisfile opus opusfile FLAC wavpack faad mp4v2), keeping strays
-  (vorbisenc, opusurl, faad_drm…) out.
+  `cmus_deps` custom target = the 12 libs cmus links (ogg vorbis
+  vorbisfile opus opusfile FLAC wavpack faad mp4v2 mad-static ncursesw
+  iconv), keeping strays (vorbisenc, opusurl, faad_drm, the shared mad…)
+  out.
 - `native/cmake/Find{Ogg,Opus}.cmake` (prepended to CMAKE_MODULE_PATH)
   satisfy find_package in libvorbis/opusfile with the in-tree targets.
   `CMAKE_SKIP_INSTALL_RULES=ON` because opusfile/flac install(EXPORT)
   sets otherwise fail generate on the unexported in-tree ogg.
-- Static libs land under `app/.cxx/` only; nothing is packaged into the
-  APK yet (cmus + plugins in stages 4–5).
+- `native/ports/{ncurses,libiconv}`: handwritten CMake over pristine
+  submodule sources + committed pregenerated files in `gen/`, produced by
+  each port's documented, rerunnable `gen.sh` (host prereqs: cc, tic,
+  gperf, the NDK; reruns must be byte-identical, rerun after pin bumps).
+  ncursesw is the configured NORMAL_OBJS module set (wide-char,
+  ext-colors, no trace/ticlib/driver); iconv is lib/iconv.c +
+  localcharset.c with a handwritten bionic config.h.
+- Static libs land under `app/.cxx/` only. The APK carries one native
+  asset so far: `assets/terminfo/x/xterm-256color`, compiled by
+  ncurses' gen.sh with host tic (verified loadable on-device by the
+  in-tree ncurses; runtime extraction comes in stage 6).
 
 ## App module
 
@@ -74,6 +86,6 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Native ports for ncurses/libmad/libiconv (4), cmus itself (5),
-terminal UI via termux terminal-emulator/-view (6), cmus unix-socket IPC
-(7–8), media session (9), then chrome/input/overlays/settings (10+).
+cmus itself (5), terminal UI via termux terminal-emulator/-view (6),
+cmus unix-socket IPC (7–8), media session (9), then
+chrome/input/overlays/settings (10+).

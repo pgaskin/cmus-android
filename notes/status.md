@@ -3,6 +3,36 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 4: native deps B (done)
+
+- libmad repointed to codeberg.org/tenacityteam/libmad @ be34ec9 (0.16.4)
+  per [plans/04-native-deps-b.md](plans/04-native-deps-b.md); codeberg
+  serves sha-in-want so shallow=true stays; `base` tag force-moved (no
+  patches existed). libiconv bumped to v1.19 (stage-2 flag resolved).
+- ncurses port: gen.sh runs the submodule's own configure (NDK clang,
+  android34) + `make sources` in a scratch dir and commits outputs under
+  gen/ with absolute paths sed-stripped. Deviations from plan:
+  expanded.c is a real NORMAL_OBJS member (not QA-only; only link_test
+  is excluded), and termcap.h/unctrl.h/ncurses_dll.h are generated from
+  .in too → 9 headers + 9 sources + init_keytry.h committed. CMake list
+  = the 162-object NORMAL_OBJS set (termlib+ext_tinfo+base+widechar+
+  ext_funcs; ext-colors/ext-funcs on).
+- libiconv port: git tree has no ./configure (autotools bootstrap
+  output), so gen.sh drives the Makefile.devel generator programs
+  directly (host cc + gperf -m 10; quirk: canonical*.sh read the gperf
+  output via the literal filename tmp.h) and seds iconv.h.in
+  substitutions by hand; config.h handwritten, minimal. localcharset.c
+  is modern gnulib — nl_langinfo only, the plan's LIBDIR/charset.alias
+  concern no longer exists in the code.
+- Verified: clean `./gradlew clean assembleDebug` (~19s), 12 .a all
+  AArch64, right symbols (initscr/resizeterm/use_default_colors,
+  libiconv_open, mad_decoder_init); APK diff = exactly the terminfo
+  asset; both gen.sh reruns byte-identical (sha256); patchCheck still
+  gates. Flagged tic-6.6-vs-lib-6.4 risk retired with an on-device
+  setupterm test: 256 colors, 65536 pairs, -x extended caps load fine.
+- Host prereq note: gperf 3.2.1 (Patrick installed it mid-session;
+  recorded in gen.sh comments since gperf version affects table format).
+
 ## 2026-07-18 — Stage 3: native deps A (done)
 
 - `native/CMakeLists.txt` builds the 8 upstream-CMake deps per
@@ -59,14 +89,12 @@ pick up where things left off.
 
 ## Next
 
-Stage 4: native deps B — libmad submodule fix (github tenacityteam/libmad
-silently redirects to libid3tag; real fork is on codeberg and has usable
-CMake, so no port needed) + handwritten CMake ports for ncurses
-(pregenerated sources + terminfo asset) and libiconv (bump pin to v1.19,
-resolving the stage-2 flag). Plan drafted at
-[plans/04-native-deps-b.md](plans/04-native-deps-b.md) (pending Patrick's
-approval); implementation in a fresh session. Host prereq for that
-session: gperf (dnf install gperf).
+Stage 5: cmus build — cmus core as `libcmus.so` executable + ip/op plugin
+shared libs + CMake-generated config headers replacing ./configure
+output (see overview stage 5). Plan not yet drafted
+(notes/plans/05-cmus.md); write it first and get Patrick's approval.
+Verify target: cmus runs in adb shell. The stage-4 ncursesw/iconv/mad
+libs get their first real link test here.
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
