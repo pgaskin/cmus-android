@@ -34,7 +34,8 @@ import java.util.Map;
 public final class CmusIpc implements AutoCloseable {
     private static final String TAG = "cmus";
 
-    public sealed interface Event permits Hello, Status, Position, Volume, View, Options {
+    public sealed interface Event permits Hello, Status, Position, Volume, View, Options,
+            Selected {
     }
 
     /** First line after connect. */
@@ -79,6 +80,17 @@ public final class CmusIpc implements AutoCloseable {
      * command, coalesced per cmus main-loop iteration.
      */
     public record Options(Map<String, String> values) implements Event {
+    }
+
+    /**
+     * A right-click resolved to a list row (the selection has already moved
+     * to it): the exact file set win-remove would act on, marked-tracks
+     * rule included. cmus only emits this where win-remove acts without a
+     * confirmation prompt (tree/sorted/queue + the playlist track pane),
+     * so any Selected is a remove offer the app may safely accept.
+     * Transient like Position — not cached or replayed.
+     */
+    public record Selected(String view, List<String> files) implements Event {
     }
 
     public enum PlayState { STOPPED, PLAYING, PAUSED }
@@ -334,6 +346,8 @@ public final class CmusIpc implements AutoCloseable {
             case Options o -> options = o;
             case Position ignored -> {
             }
+            case Selected ignored -> {
+            }
         }
         for (Listener l : List.copyOf(listeners)) {
             l.onEvent(event);
@@ -355,6 +369,7 @@ public final class CmusIpc implements AutoCloseable {
         int right = -1;
         Map<String, List<String>> tags = Map.of();
         Map<String, String> options = Map.of();
+        List<String> files = List.of();
         try (JsonReader r = new JsonReader(new StringReader(line))) {
             r.beginObject();
             while (r.hasNext()) {
@@ -370,6 +385,7 @@ public final class CmusIpc implements AutoCloseable {
                     case "view" -> viewName = r.nextString();
                     case "tags" -> tags = readTags(r);
                     case "options" -> options = readOptions(r);
+                    case "files" -> files = readStrings(r);
                     default -> r.skipValue();
                 }
             }
@@ -382,6 +398,7 @@ public final class CmusIpc implements AutoCloseable {
             case "volume" -> new Volume(left, right);
             case "view" -> new View(viewName);
             case "options" -> new Options(options);
+            case "selected" -> new Selected(viewName, files);
             case null -> throw new IOException("event without a type");
             default -> null;
         };
@@ -406,6 +423,16 @@ public final class CmusIpc implements AutoCloseable {
         r.endObject();
         tags.replaceAll((k, v) -> Collections.unmodifiableList(v));
         return Collections.unmodifiableMap(tags);
+    }
+
+    private static List<String> readStrings(JsonReader r) throws IOException {
+        List<String> values = new ArrayList<>();
+        r.beginArray();
+        while (r.hasNext()) {
+            values.add(r.nextString());
+        }
+        r.endArray();
+        return Collections.unmodifiableList(values);
     }
 
     private static Map<String, String> readOptions(JsonReader r) throws IOException {
