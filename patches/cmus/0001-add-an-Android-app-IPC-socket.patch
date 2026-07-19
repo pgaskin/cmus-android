@@ -1,4 +1,4 @@
-From f8479b17a917bb5c1cf86c7898289a6bc2068a9d Mon Sep 17 00:00:00 2001
+From 9df36b280e88c03c642bf39f4d09f679135884bb Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..a011a26
+index 0000000..953cf68
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,508 @@
+@@ -0,0 +1,519 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -113,6 +113,7 @@ index 0000000..a011a26
 +#include "uchar.h"
 +#include "ui_curses.h"
 +#include "utils.h"
++#include "window.h"
 +#include "xmalloc.h"
 +
 +#include <ctype.h>
@@ -222,15 +223,25 @@ index 0000000..a011a26
 +static void android_nav(int right)
 +{
 +	int in_left_pane = -1; /* single-pane view */
++	struct window *right_win = NULL;
++	struct iter it;
 +
-+	if (cur_view == TREE_VIEW)
++	if (cur_view == TREE_VIEW) {
 +		in_left_pane = lib_cur_win == lib_tree_win;
-+	else if (cur_view == PLAYLIST_VIEW)
++		right_win = lib_track_win;
++	} else if (cur_view == PLAYLIST_VIEW) {
 +		in_left_pane = pl_cursor_win() != pl_editable_shared.win;
++		right_win = pl_editable_shared.win;
++	}
 +
-+	if (in_left_pane == right)
++	/* an empty track pane is a dead end, not a stop (pl's win-next
++	 * refuses to enter it anyway): fall through to the view switch */
++	if (in_left_pane == right &&
++			(!right || window_get_top(right_win, &it))) {
 +		run_command("win-next");
-+	else if (right)
++		return;
++	}
++	if (right)
 +		run_command("right-view -n");
 +	else
 +		run_command("left-view -n");
