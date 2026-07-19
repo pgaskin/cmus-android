@@ -169,7 +169,19 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // automatically as the wrapper shrinks
         // the view is bigger than the dot so the knob can travel; only
         // touches starting on the dot itself are consumed
-        joyDot = new JoyDot(this, this::injectKey);
+        joyDot = new JoyDot(this, new JoyDot.Callback() {
+            @Override
+            public void sendKey(int keyCode) {
+                injectKey(keyCode);
+            }
+
+            @Override
+            public void nav(boolean right) {
+                // pane-aware: cmus resolves it to win-next or the
+                // adjacent view (android.c's android-nav-* input lines)
+                sendCommand(right ? "android-nav-right" : "android-nav-left");
+            }
+        });
         FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(
                 dp(120), dp(120), Gravity.BOTTOM | Gravity.END);
         // center sits well inside the corner so a far-right tab drag has

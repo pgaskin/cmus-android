@@ -14,13 +14,17 @@ import android.view.ViewConfiguration;
 /**
  * Faint minecraft-style joystick dot floating over the terminal's
  * bottom-right: tap = enter, slide up/down = repeating arrows (deeper =
- * faster), slide far left or right = tab (once per crossing). Keys inject through
+ * faster), slide far left or right = directional navigation (once per
+ * crossing) — panes then views, resolved by cmus. Keys inject through
  * the same TerminalView path as the key row, so its sticky modifiers merge
  * here too. Fixed dp size — it's a control, not TUI-flush chrome.
  */
 public final class JoyDot extends View {
     public interface Callback {
         void sendKey(int keyCode);
+
+        /** Far horizontal slide: go this way (pane, then adjacent view). */
+        void nav(boolean right);
     }
 
     // knob alphas over the terminal; faint at rest, firmer under a finger
@@ -46,16 +50,16 @@ public final class JoyDot extends View {
     private final int vertThreshold = dp(15);
     /** Vertical displacement where the repeat reaches full speed. */
     private final int vertFull = dp(60);
-    /** "Far left"/"far right": where tab fires... */
-    private final int tabThreshold = dp(40);
+    /** "Far left"/"far right": where the nav gesture fires... */
+    private final int navThreshold = dp(40);
     /** ...and where it re-arms on the way back (hysteresis). */
-    private final int tabRearm = dp(30);
+    private final int navRearm = dp(30);
     private final int touchSlop;
     private int fg = 0xFFFFFFFF;
 
     private boolean tracking;
     private boolean fired;
-    private boolean tabArmed;
+    private boolean navArmed;
     private int repeatDir;
     private float downX;
     private float downY;
@@ -97,7 +101,7 @@ public final class JoyDot extends View {
                 dy = 0;
                 tracking = true;
                 fired = false;
-                tabArmed = true;
+                navArmed = true;
                 repeatDir = 0;
                 invalidate();
             }
@@ -107,17 +111,19 @@ public final class JoyDot extends View {
                 }
                 dx = e.getX() - downX;
                 dy = e.getY() - downY;
-                if (Math.abs(dx) >= tabThreshold) {
-                    // far left/right = tab, once per crossing; arrows
-                    // pause here
+                if (Math.abs(dx) >= navThreshold) {
+                    // far left/right = go that way, once per crossing;
+                    // arrows pause here
                     stopRepeat();
-                    if (tabArmed) {
-                        tabArmed = false;
-                        sendKey(KeyEvent.KEYCODE_TAB);
+                    if (navArmed) {
+                        navArmed = false;
+                        fired = true;
+                        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                        callback.nav(dx > 0);
                     }
                 } else {
-                    if (Math.abs(dx) <= tabRearm) {
-                        tabArmed = true;
+                    if (Math.abs(dx) <= navRearm) {
+                        navArmed = true;
                     }
                     int dir = dy <= -vertThreshold ? -1 : dy >= vertThreshold ? 1 : 0;
                     if (dir != repeatDir) {
