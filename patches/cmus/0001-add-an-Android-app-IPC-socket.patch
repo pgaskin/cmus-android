@@ -1,4 +1,4 @@
-From 05376bff997ed1d0b1749dbeeffca06ffbe259d9 Mon Sep 17 00:00:00 2001
+From 5941463b283cd0110d688fe342c7b7cf0b1c9723 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -836,7 +836,7 @@ index c2e60e9..2a28261 100644
  int pl_playing_pl_row(void);
  
 diff --git a/player.c b/player.c
-index 383fd94..c7d179e 100644
+index 383fd94..d575069 100644
 --- a/player.c
 +++ b/player.c
 @@ -1280,11 +1280,19 @@ void player_seek(double offset, int relative, int start_playing)
@@ -859,22 +859,37 @@ index 383fd94..c7d179e 100644
  		}
  /* 		d_print("seeking %g/%g (%g from eof)\n", new_pos, duration, duration - new_pos); */
  		rc = ip_seek(ip, new_pos);
-@@ -1309,6 +1317,22 @@ void player_seek(double offset, int relative, int start_playing)
+@@ -1309,6 +1317,37 @@ void player_seek(double offset, int relative, int start_playing)
  	player_unlock();
  }
  
 +#ifdef CONFIG_ANDROID
-+/* exact playing position for the android IPC; player_info.pos is whole
++/* Exact playing position for the android IPC; player_info.pos is whole
 + * seconds, which makes a client animating between position events jump
-+ * back on rebase (e.g. pause) */
++ * back on rebase (e.g. pause).
++ *
++ * This runs in the main loop every flush and must NEVER block: at a track
++ * boundary the consumer thread holds consumer_mutex across its blocking
++ * get_next callback (cmus_get_next_track cond-waits), and only the main
++ * loop can answer that request — a plain player_lock() here deadlocks the
++ * whole player. Trylock instead, falling back to the snapshot's
++ * whole-second position for the rare contended iteration (the next event
++ * rebases fractionally again; clients never notice). */
 +double player_pos_exact(void)
 +{
-+	double pos = 0;
++	double pos;
 +
-+	player_lock();
++	if (pthread_mutex_trylock(&consumer_mutex) != 0)
++		return (double)player_info.pos;
++	if (pthread_mutex_trylock(&producer_mutex) != 0) {
++		pthread_mutex_unlock(&consumer_mutex);
++		return (double)player_info.pos;
++	}
++	pos = (double)player_info.pos;
 +	if (consumer_status == CS_PLAYING || consumer_status == CS_PAUSED)
 +		pos = (double)consumer_pos / (double)buffer_second_size();
-+	player_unlock();
++	pthread_mutex_unlock(&producer_mutex);
++	pthread_mutex_unlock(&consumer_mutex);
 +	return pos;
 +}
 +#endif
