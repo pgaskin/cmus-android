@@ -1,7 +1,7 @@
-From c252ec5a7d09ef86a8b3216eee8ff4527cee16ae Mon Sep 17 00:00:00 2001
+From b907f44f4f0dceb7de8f292da2e543947fbc866e Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
-Subject: [PATCH 1/2] add an Android app IPC socket
+Subject: [PATCH 1/3] add an Android app IPC socket
 
 A unix stream socket at $CMUS_ANDROID_SOCKET (unset = disabled) for the
 Android wrapper app: pushes newline-delimited JSON events (status,
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..dd2ca1a
+index 0000000..057d49f
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,706 @@
+@@ -0,0 +1,736 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -103,6 +103,9 @@ index 0000000..dd2ca1a
 + *       promptness-wise because job activity itself wakes the main loop
 + *       (job_fd is in the select set), so transitions always reach the
 + *       next flush.
++ *   {"type":"saved"}
++ *       the android-save line below finished writing; the app's cue to
++ *       read the state files (zip export).
 + *   {"type":"colorscheme","name":"..."}
 + *       a `colorscheme` command successfully sourced the named theme
 + *       file (either search dir; a failed lookup emits nothing).
@@ -141,6 +144,11 @@ index 0000000..dd2ca1a
 + *       answered immediately with a jobs event — a fresh authoritative
 + *       check at decision time for the app's idle-quit guard (which
 + *       must never quit mid-import and re-polls while a job runs).
++ *   android-save
++ *       write the exit path's whole save set (resume, autosave, queue,
++ *       library, playlists, histories, cache) without exiting, answered
++ *       with a saved event once the files are on disk — so the app can
++ *       zip a fresh CMUS_HOME while cmus keeps running.
 + */
 +
 +#include "android.h"
@@ -201,6 +209,7 @@ index 0000000..dd2ca1a
 +static int android_rbuf_pos;
 +
 +static void android_jobs_event(void);
++static void android_saved_event(void);
 +
 +static void android_close_client(void)
 +{
@@ -385,6 +394,11 @@ index 0000000..dd2ca1a
 +	}
 +	if (strcmp(line, "android-jobs") == 0) {
 +		android_jobs_event();
++		return;
++	}
++	if (strcmp(line, "android-save") == 0) {
++		android_save_state();
++		android_saved_event();
 +		return;
 +	}
 +
@@ -590,6 +604,22 @@ index 0000000..dd2ca1a
 +}
 +
 +/*
++ * The android-save line's ack: android_save_state has returned, so the
++ * state files are written and renamed into place.
++ */
++static void android_saved_event(void)
++{
++	GBUF(buf);
++
++	if (android_client_fd == -1)
++		return;
++
++	gbuf_add_str(&buf, "{\"type\":\"saved\"}\n");
++	android_write(&buf);
++	gbuf_free(&buf);
++}
++
++/*
 + * A colorscheme command sourced a theme file (command_mode.c hooks the
 + * success path only). The name is the app's theme-selector highlight;
 + * the color options themselves follow in the flushed options event.
@@ -786,7 +816,7 @@ index 0000000..3563a86
 +
 +#endif
 diff --git a/command_mode.c b/command_mode.c
-index b794399..75edd91 100644
+index b794399..b11aa62 100644
 --- a/command_mode.c
 +++ b/command_mode.c
 @@ -17,6 +17,7 @@
@@ -823,6 +853,35 @@ index b794399..75edd91 100644
  }
  
  void run_command(const char *buf)
+@@ -3179,6 +3188,14 @@ void commands_init(void)
+ 	history_load(&cmd_history, cmd_history_filename, 2000);
+ }
+ 
++#ifdef CONFIG_ANDROID
++/* cmd_history is static; android_save_state's minimal wrapper */
++void commands_save(void)
++{
++	history_save(&cmd_history);
++}
++#endif
++
+ void commands_exit(void)
+ {
+ 	view_clear(TREE_VIEW);
+diff --git a/command_mode.h b/command_mode.h
+index a017954..cdbd1be 100644
+--- a/command_mode.h
++++ b/command_mode.h
+@@ -62,6 +62,9 @@ void command_mode_key(int key);
+ void command_mode_mouse(MEVENT *event);
+ void commands_init(void);
+ void commands_exit(void);
++#ifdef CONFIG_ANDROID
++void commands_save(void);
++#endif
+ int parse_command(const char *buf, char **cmdp, char **argp);
+ char **parse_cmd(const char *cmd, int *args_idx, int *ac);
+ void run_parsed_command(char *cmd, char *arg);
 diff --git a/keys.c b/keys.c
 index a4862e8..c6894a8 100644
 --- a/keys.c
@@ -960,19 +1019,57 @@ index 9a7b39b..9d72654 100644
  void player_set_op(const char *name);
  void player_set_buffer_chunks(unsigned int nr_chunks);
  int player_get_buffer_chunks(void);
+diff --git a/search_mode.c b/search_mode.c
+index f8d8fd5..b8e837d 100644
+--- a/search_mode.c
++++ b/search_mode.c
+@@ -325,6 +325,14 @@ void search_mode_init(void)
+ 	history_load(&search_history, search_history_filename, 100);
+ }
+ 
++#ifdef CONFIG_ANDROID
++/* search_history is static; android_save_state's minimal wrapper */
++void search_mode_save(void)
++{
++	history_save(&search_history);
++}
++#endif
++
+ void search_mode_exit(void)
+ {
+ 	history_save(&search_history);
+diff --git a/search_mode.h b/search_mode.h
+index 9b55874..4a0643c 100644
+--- a/search_mode.h
++++ b/search_mode.h
+@@ -40,6 +40,9 @@ void search_mode_key(int key);
+ void search_mode_mouse(MEVENT *event);
+ void search_mode_init(void);
+ void search_mode_exit(void);
++#ifdef CONFIG_ANDROID
++void search_mode_save(void);
++#endif
+ 
+ void search_text(const char *text, int restricted, int beginning);
+ 
 diff --git a/ui_curses.c b/ui_curses.c
-index bdb766a..ebd77fc 100644
+index bdb766a..6765652 100644
 --- a/ui_curses.c
 +++ b/ui_curses.c
-@@ -50,6 +50,7 @@
+@@ -50,8 +50,12 @@
  #include "path.h"
  #include "mixer.h"
  #include "mpris.h"
 +#include "android.h"
  #include "locking.h"
  #include "pl_env.h"
++#ifdef CONFIG_ANDROID
++#include "cache.h"
++#endif
  #ifdef HAVE_CONFIG
-@@ -1688,6 +1689,7 @@ void set_view(int view)
+ #include "config/curses.h"
+ #include "config/iconv.h"
+@@ -1688,6 +1692,7 @@ void set_view(int view)
  
  	prev_view = cur_view;
  	cur_view = view;
@@ -980,7 +1077,7 @@ index bdb766a..ebd77fc 100644
  	switch (cur_view) {
  	case TREE_VIEW:
  		searchable = tree_searchable;
-@@ -2241,6 +2243,8 @@ static void main_loop(void)
+@@ -2241,6 +2246,8 @@ static void main_loop(void)
  
  		update();
  
@@ -989,7 +1086,7 @@ index bdb766a..ebd77fc 100644
  		/* Timeout must be so small that screen updates seem instant.
  		 * Only affects changes done in other threads (player).
  		 *
-@@ -2264,6 +2268,10 @@ static void main_loop(void)
+@@ -2264,6 +2271,10 @@ static void main_loop(void)
  		SELECT_ADD_FD(server_socket);
  		if (mpris_fd != -1)
  			SELECT_ADD_FD(mpris_fd);
@@ -1000,7 +1097,7 @@ index bdb766a..ebd77fc 100644
  		list_for_each_entry(client, &client_head, node) {
  			SELECT_ADD_FD(client->fd);
  		}
-@@ -2344,6 +2352,12 @@ static void main_loop(void)
+@@ -2344,6 +2355,12 @@ static void main_loop(void)
  		if (mpris_fd != -1 && FD_ISSET(mpris_fd, &set))
  			mpris_process();
  
@@ -1013,7 +1110,7 @@ index bdb766a..ebd77fc 100644
  		if (FD_ISSET(job_fd, &set))
  			job_handle();
  
-@@ -2471,6 +2485,7 @@ static void init_all(void)
+@@ -2471,6 +2488,7 @@ static void init_all(void)
  	pl_init_options();
  	if (mpris)
  		mpris_init();
@@ -1021,7 +1118,39 @@ index bdb766a..ebd77fc 100644
  
  	/* finally we can set the output plugin */
  	player_set_op(output_plugin);
-@@ -2540,6 +2555,7 @@ static void exit_all(void)
+@@ -2512,6 +2530,31 @@ static void init_all(void)
+ 	worker_start();
+ }
+ 
++#ifdef CONFIG_ANDROID
++/*
++ * exit_all's save set (resume, autosave, queue, library, playlists,
++ * histories, cache) without exiting or freeing anything — every callee
++ * is a plain write-tmp-and-rename writer, safe to repeat. Backs the
++ * android-save input line (zip export wants fresh files; also the
++ * building block for periodic state saves).
++ */
++void android_save_state(void)
++{
++	if (resume_cmus)
++		resume_exit();
++	options_exit();
++	if (resume_cmus)
++		cmus_save(play_queue_for_each, play_queue_autosave_filename,
++				NULL);
++	cmus_save(lib_for_each, lib_autosave_filename, NULL);
++	pl_save();
++	commands_save();
++	search_mode_save();
++	if (cache_close())
++		d_print("saving cache: %s\n", strerror(errno));
++}
++#endif
++
+ static void exit_all(void)
+ {
+ 	endwin();
+@@ -2540,6 +2583,7 @@ static void exit_all(void)
  	help_exit();
  	browser_exit();
  	mpris_free();
@@ -1029,3 +1158,17 @@ index bdb766a..ebd77fc 100644
  }
  
  enum {
+diff --git a/ui_curses.h b/ui_curses.h
+index 5b2a24d..bafcab2 100644
+--- a/ui_curses.h
++++ b/ui_curses.h
+@@ -59,6 +59,9 @@ void update_filterline(void);
+ void update_colors(void);
+ void update_full(void);
+ void update_size(void);
++#ifdef CONFIG_ANDROID
++void android_save_state(void);
++#endif
+ void info_msg(const char *format, ...) CMUS_FORMAT(1, 2);
+ void error_msg(const char *format, ...) CMUS_FORMAT(1, 2);
+ enum ui_query_answer yes_no_query(const char *format, ...) CMUS_FORMAT(1, 2);
