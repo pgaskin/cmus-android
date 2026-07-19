@@ -1,4 +1,4 @@
-From 9df36b280e88c03c642bf39f4d09f679135884bb Mon Sep 17 00:00:00 2001
+From 8ae047f02371a66ed01345544e6d61237bd96efb Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..953cf68
+index 0000000..5142918
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,519 @@
+@@ -0,0 +1,595 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -72,27 +72,41 @@ index 0000000..953cf68
 + *       every cmus option as the string its getter returns (includes all
 + *       color_*); on connect and after any executed command, coalesced
 + *       per main-loop iteration (a colorscheme's ~40 sets = one event)
-+ *   {"type":"selected","view":"...","files":["/path",...]}
-+ *       sent when a right-click resolves to a list row (the selection has
-+ *       already moved to it): the exact file set win-remove would act on,
-+ *       marked-tracks rule included. Only emitted where win-remove acts
-+ *       without a confirmation prompt — tree/sorted/queue plus the
-+ *       playlist view's track pane; everywhere else cmd_win_remove goes
-+ *       through yes_no_query, which blocks the main loop reading the pty.
-+ *       That's what makes this usable as the app's confirm-remove trigger.
++ *   {"type":"selected","view":"...","files":["/path",...],
++ *    "playlists":["name",...]}
++ *       sent when a right-click resolves to a track-list row (the
++ *       selection has already moved to it): the exact file set win-remove
++ *       would act on, marked-tracks rule included, plus the current
++ *       playlist names for an add-to-playlist chooser. Only emitted where
++ *       win-remove acts without a confirmation prompt — tree/sorted/queue
++ *       plus the playlist view's track pane; browser/filters/settings
++ *       removes go through yes_no_query, which blocks the main loop
++ *       reading the pty. That's what makes this usable as the app's
++ *       item-action trigger.
++ *   {"type":"selected","view":"playlist","playlist":"name"}
++ *       the playlist-view list pane variant: a right-click there selects
++ *       (and shows) that playlist, and this carries its name so the app
++ *       can offer android-pl-delete — win-remove would prompt.
 + *
 + * Inbound: raw cmus command lines, newline-delimited — exactly what the
 + * server.c socket accepts ("player-pause", "seek +5", ...), including the
 + * "/" and "?" search prefixes. No acks; errors show in the TUI. State
 + * changes come back as events.
 + *
-+ * Two app-intent lines are resolved here instead of being cmus commands
-+ * (the decision needs the active-pane state only cmus has):
++ * App-intent lines are resolved here instead of being cmus commands
++ * (they need state only cmus has, or take a verbatim name where command
++ * tokenization would need quoting):
 + *   android-nav-left / android-nav-right
 + *       directional navigation for the app's joystick: the inner pane in
 + *       the two-pane views (win-next), or the adjacent view once at that
 + *       side's edge / in a single-pane view (left-view/right-view -n — a
 + *       spatial gesture shouldn't wrap around).
++ *   android-pl-add <name>
++ *       add the current view's selection (the selected event's file set)
++ *       to the named playlist; rest of line = name, verbatim.
++ *   android-pl-delete <name>
++ *       delete the named playlist (the selected event's playlist
++ *       variant); rest of line = name, verbatim.
 + */
 +
 +#include "android.h"
@@ -216,6 +230,54 @@ index 0000000..953cf68
 +}
 +
 +/*
++ * The selection the app acts on: the same per-view for-each-sel the
++ * multi-track commands use, so the set matches what win-remove would
++ * remove (marked tracks and all). Views whose win-remove prompts return
++ * nothing — but the playlist-view list pane is handled separately by
++ * android_selected_event.
++ */
++static int android_for_each_sel(track_info_cb cb, void *data)
++{
++	switch (cur_view) {
++	case TREE_VIEW:
++		return _tree_for_each_sel(cb, data, 0);
++	case SORTED_VIEW:
++		return _editable_for_each_sel(&lib_editable, cb, data, 0);
++	case PLAYLIST_VIEW:
++		if (pl_cursor_win() == pl_editable_shared.win)
++			return _pl_for_each_sel(cb, data, 0);
++		return 0;
++	case QUEUE_VIEW:
++		return _editable_for_each_sel(&pq_editable, cb, data, 0);
++	}
++	return 0;
++}
++
++static int android_pl_add_cb(void *data, struct track_info *ti)
++{
++	pl_add_track_to_marked_pl(ti);
++	return 0;
++}
++
++/*
++ * The android-pl-add input line: cmus can only add to the *marked*
++ * playlist, so mark the target by name, add the selection, and put the
++ * mark back where the user had it.
++ */
++static void android_pl_add(const char *name)
++{
++	char *saved = xstrdup(pl_marked_pl_name());
++
++	pl_set_marked_pl_by_name(name);
++	if (strcmp(pl_marked_pl_name(), name) == 0)
++		android_for_each_sel(android_pl_add_cb, NULL);
++	else
++		error_msg("couldn't find a playlist named '%s' to add to", name);
++	pl_set_marked_pl_by_name(saved);
++	free(saved);
++}
++
++/*
 + * The android-nav-* input lines: a far joystick slide means "go this
 + * way", which is the inner pane in the two-pane views and the adjacent
 + * view once at that side's edge (or in a single-pane view).
@@ -260,6 +322,14 @@ index 0000000..953cf68
 +	}
 +	if (strcmp(line, "android-nav-right") == 0) {
 +		android_nav(1);
++		return;
++	}
++	if (strncmp(line, "android-pl-add ", 15) == 0) {
++		android_pl_add(line + 15);
++		return;
++	}
++	if (strncmp(line, "android-pl-delete ", 18) == 0) {
++		pl_delete_by_name((char *)(line + 18));
 +		return;
 +	}
 +
@@ -398,13 +468,21 @@ index 0000000..953cf68
 +	return 0;
 +}
 +
++static void android_pl_name_cb(const char *name, void *data)
++{
++	struct android_sel_ctx *ctx = data;
++
++	if (ctx->count++)
++		gbuf_add_ch(ctx->buf, ',');
++	android_json_str(ctx->buf, name);
++}
++
 +/*
 + * Right-click resolved to a list row (normal_mode_mouse; the selection has
 + * already moved there). Emits the "selected" event per the protocol
-+ * comment: the same per-view for-each-sel the multi-track commands use, so
-+ * the file set matches what win-remove would remove, marked tracks and
-+ * all. Views whose win-remove prompts are excluded here so the app can
-+ * treat any event as an offer it may safely accept.
++ * comment: the win-remove target set + the playlist names for the app's
++ * add-to chooser, or the playlist-name variant for the playlist view's
++ * list pane (where the selected playlist is the visible one).
 + */
 +void android_selected_event(void)
 +{
@@ -414,26 +492,24 @@ index 0000000..953cf68
 +	if (android_client_fd == -1)
 +		return;
 +
++	if (cur_view == PLAYLIST_VIEW &&
++			pl_cursor_win() != pl_editable_shared.win) {
++		gbuf_add_str(&buf, "{\"type\":\"selected\","
++				"\"view\":\"playlist\",\"playlist\":");
++		android_json_str(&buf, pl_visible_get_name());
++		gbuf_add_str(&buf, "}\n");
++		android_write(&buf);
++		gbuf_free(&buf);
++		return;
++	}
++
 +	gbuf_addf(&buf, "{\"type\":\"selected\",\"view\":\"%s\",\"files\":[",
 +			view_names[cur_view]);
-+	switch (cur_view) {
-+	case TREE_VIEW:
-+		_tree_for_each_sel(android_sel_cb, &ctx, 0);
-+		break;
-+	case SORTED_VIEW:
-+		_editable_for_each_sel(&lib_editable, android_sel_cb, &ctx, 0);
-+		break;
-+	case PLAYLIST_VIEW:
-+		/* the list pane's remove (a whole playlist) prompts; only
-+		 * the track pane's selection is fair game */
-+		if (pl_cursor_win() == pl_editable_shared.win)
-+			_pl_for_each_sel(android_sel_cb, &ctx, 0);
-+		break;
-+	case QUEUE_VIEW:
-+		_editable_for_each_sel(&pq_editable, android_sel_cb, &ctx, 0);
-+		break;
-+	}
++	android_for_each_sel(android_sel_cb, &ctx);
 +	if (ctx.count) {
++		gbuf_add_str(&buf, "],\"playlists\":[");
++		ctx.count = 0;
++		pl_android_for_each_name(android_pl_name_cb, &ctx);
 +		gbuf_add_str(&buf, "]}\n");
 +		android_write(&buf);
 +	}
@@ -644,6 +720,43 @@ index a4862e8..c6894a8 100644
  	/* view-specific key */
  	if (handle_key(key_bindings[c], k))
  		return;
+diff --git a/pl.c b/pl.c
+index 2d15d19..3f63b27 100644
+--- a/pl.c
++++ b/pl.c
+@@ -1010,6 +1010,17 @@ void pl_set_marked_pl_by_name(const char *name)
+ 	}
+ }
+ 
++#ifdef CONFIG_ANDROID
++/* minimal wrapper for android.c: struct playlist and pl_head are private */
++void pl_android_for_each_name(void (*cb)(const char *name, void *data),
++		void *data)
++{
++	struct playlist *pl;
++	list_for_each_entry(pl, &pl_head, node)
++		cb(pl->name, data);
++}
++#endif
++
+ const char *pl_playing_pl_name(void)
+ {
+ 	return pl_playing ? pl_playing->name : NULL;
+diff --git a/pl.h b/pl.h
+index c2e60e9..2a28261 100644
+--- a/pl.h
++++ b/pl.h
+@@ -72,6 +72,10 @@ int pl_get_cursor_in_track_window(void);
+ int pl_visible_is_marked(void);
+ const char *pl_marked_pl_name(void);
+ void pl_set_marked_pl_by_name(const char *name);
++#ifdef CONFIG_ANDROID
++void pl_android_for_each_name(void (*cb)(const char *name, void *data),
++		void *data);
++#endif
+ const char *pl_playing_pl_name(void);
+ int pl_playing_pl_row(void);
+ 
 diff --git a/player.c b/player.c
 index 383fd94..c7d179e 100644
 --- a/player.c
