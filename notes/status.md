@@ -3,13 +3,14 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
-## 2026-07-19 — Stage 18: Music-folder refresh + import guard (done)
+## 2026-07-19 — Stage 17: Music-folder refresh + import guard (done)
 
-- Per [plans/18-data.md](plans/18-data.md), same session as stage 16.
-  **Reordered before stage 17** (Patrick); what was stage 18's tar
-  import/export moves into the settings stage as **zip** — this stage is
-  the popover **Refresh** action plus the import guard designed with
-  Patrick mid-session.
+- Per [plans/17-refresh.md](plans/17-refresh.md), same session as stage
+  16. This is the overview's data stage renumbered 17 and done ahead of
+  the settings screen (Patrick's reorder; its tar import/export moves
+  into the settings stage — now 18 — as **zip**): the popover
+  **Refresh** action plus the import guard designed with Patrick
+  mid-session.
 - **Refresh:** popover gains Refresh (Theme / Font / Refresh / Settings)
   → READ_MEDIA_AUDIO (runtime request resuming the action on grant;
   manifest + direct paths, no SAF) → toast "Adding tracks from Music
@@ -43,7 +44,7 @@ pick up where things left off.
 
 - Per [plans/16-theme-font.md](plans/16-theme-font.md) with two Patrick
   redesigns mid-stage: (1) the settings icon's *tap* opens a popover
-  (Theme / Font / Settings — Settings toasts until stage 17) instead of
+  (Theme / Font / Settings — Settings toasts until stage 18) instead of
   the planned single two-column overlay; the selectors are separate
   centered single-column overlays (long-press still jumps straight to
   the theme selector). (2) The Material You palette was restyled live
@@ -816,19 +817,19 @@ pick up where things left off.
 
 ## Next
 
-Stage 17: settings screen (the popover's Settings entry currently
+Stage 18: settings screen (the popover's Settings entry currently
 toasts; control visibility toggles, curated cmus settings — aaudio op
 options, pause_on_output_change, softvol —, idle-quit minutes, plus the
-**zip** import/export of CMUS_HOME that moved here from stage 18) —
-needs its detailed plan written and approved first.
+**zip** import/export of CMUS_HOME that moved here from the data
+stage) — needs its detailed plan written and approved first.
 
-TODO from Patrick (stage 18 follow-up, wherever it fits): tracks
+TODO from Patrick (stage 17 follow-up, wherever it fits): tracks
 deleted on disk linger in the library — cmus has no prune-missing
 command. Needs design: maybe an android.c intent line
 access(2)-checking lib entries (worker job, like update-cache), or an
 app-side diff of the saved library against the filesystem.
 
-After 17 comes stage 19 (new, Patrick): continuous state save —
+After 18 comes stage 19 (new, Patrick): continuous state save —
 periodic resume/autosave/library/cache saves during runtime, closing
 the stage-10 loss window for exits that skip SIGHUP entirely
 (force-stop's uid SIGKILL, battery death, panics); then stage 20

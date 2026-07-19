@@ -203,11 +203,13 @@ Authorship:
 15. **Quick filter + sleep timer** (tab-bar morphing search box; duration
     selector with countdown icon).
 16. **Theme/font selector overlay** + bundled fonts.
-17. **Settings screen**: control visibility toggles, curated cmus settings
+17. **Data** (renumbered from 18 and done before the settings screen,
+    amended): Music-folder refresh action (READ_MEDIA_AUDIO) + the jobs
+    event/poll import guard.
+18. **Settings screen**: control visibility toggles, curated cmus settings
     (aaudio op options, pause_on_output_change, softvol), idle-quit
-    minutes, zip import/export of CMUS_HOME (moved from 18, tar → zip).
-18. **Data** (done *before* 17, amended): Music-folder refresh action
-    (READ_MEDIA_AUDIO) + the jobs event/poll import guard.
+    minutes, zip import/export of CMUS_HOME (moved from the data stage,
+    tar → zip).
 19. **Continuous state save**: periodically save cmus state (resume
     file, autosave/library, cache) during runtime, not just at exit —
     closes the loss window of exits that skip the SIGHUP path entirely

@@ -150,7 +150,7 @@ full plan and rationale; this file describes what currently exists.
   forks in initializeEmulator, so getSession sizes the pty itself
   from the prefs-saved last attached size; a TerminalView attaching
   later just resizes it). Idle-quit: when cmus is not PLAYING and no
-  activity is visible for 15 min (constant until stage 17), sends
+  activity is visible for 15 min (constant until stage 18), sends
   `set resume=true` + `quit` — killing only cmus, never the task. The
   fire never quits mid-import (it would truncate the scan): it asks
   cmus about worker jobs first (`android-jobs`, answered immediately)
@@ -299,8 +299,8 @@ full plan and rationale; this file describes what currently exists.
   pause reverts it promptly); tap = preset list (15–90 min) +
   Custom… + Turn off; the service owns the countdown.
   Settings icon (faint, rightmost): tap = popover (Theme / Font /
-  Refresh / Settings — the last toasts until stage 17), long-press =
-  theme selector directly. Refresh (stage 18): READ_MEDIA_AUDIO
+  Refresh / Settings — the last toasts until stage 18), long-press =
+  theme selector directly. Refresh (stage 17): READ_MEDIA_AUDIO
   (runtime request resuming the action on grant) → "Adding tracks from
   Music folder" toast → `add` of the shared Music dir — cmus's own
   recursive add job imports, re-taps dedupe (library keyed by
@@ -429,4 +429,4 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Settings screen (17), then data import/export (18), polish/verify (19).
+Settings screen (18), then continuous state save (19), polish/verify (20).

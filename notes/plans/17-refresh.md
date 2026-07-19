@@ -1,8 +1,9 @@
-# Stage 18 — Refresh: add tracks from the Music folder
+# Stage 17 — Refresh: add tracks from the Music folder
 
-Done *before* stage 17 (Patrick's reorder); the overview's stage-18 tar
-import/export moves into the settings stage as **zip**. What remains of
-stage 18 is deliberately small: a **Refresh** entry in the settings
+The overview's data stage, renumbered 17 and done ahead of the settings
+screen (Patrick's reorder); its tar import/export moves into the
+settings stage (now 18) as **zip**. What remains here is deliberately
+small: a **Refresh** entry in the settings
 popover that toasts "Adding tracks from Music folder" and adds the shared
 Music folder to the library.
 
@@ -78,4 +79,4 @@ Music folder to the library.
 
 1. `cmus: android-jobs poll line for the idle-quit import guard (patch 0001)`
 2. `app: refresh — add Music-folder tracks from the settings popover`
-3. `notes: stage 18 status + architecture (+ overview reorder)`
+3. `notes: stage 17 status + architecture (+ overview reorder)`
