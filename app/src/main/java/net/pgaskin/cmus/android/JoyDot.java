@@ -14,8 +14,9 @@ import android.view.ViewConfiguration;
 /**
  * Faint minecraft-style joystick dot floating over the terminal's
  * bottom-right: tap = enter, slide up/down = repeating arrows (deeper =
- * faster), slide far left or right = directional navigation (once per
- * crossing) — panes then views, resolved by cmus. Keys inject through
+ * faster), slide far left or right = directional navigation — panes then
+ * views, resolved by cmus — repeating slowly while held (deeper = faster
+ * here too). Keys inject through
  * the same TerminalView path as the key row, so its sticky modifiers merge
  * here too. Fixed dp size — it's a control, not TUI-flush chrome.
  */
@@ -35,6 +36,9 @@ public final class JoyDot extends View {
     /** Repeat cadence bounds; displacement interpolates between them. */
     private static final long REPEAT_SLOW_MS = 300;
     private static final long REPEAT_FAST_MS = 75;
+    /** Nav (pane/view) repeat bounds — much slower, it changes context. */
+    private static final long NAV_SLOW_MS = 750;
+    private static final long NAV_FAST_MS = 250;
 
     private final Callback callback;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -43,7 +47,7 @@ public final class JoyDot extends View {
     /** Touches must start this close to the center; the view is bigger
      * than the dot so the knob can travel, and everything outside the
      * grab area falls through to the terminal. */
-    private final int grabRadius = dp(26);
+    private final int grabRadius = dp(39);
     /** How far the knob visually follows the finger (past the base). */
     private final int knobTravel = dp(44);
     /** Vertical displacement where the arrows start. */
@@ -52,15 +56,17 @@ public final class JoyDot extends View {
     private final int vertFull = dp(60);
     /** "Far left"/"far right": where the nav gesture fires... */
     private final int navThreshold = dp(40);
-    /** ...and where it re-arms on the way back (hysteresis). */
+    /** ...and where it lets go on the way back (hysteresis). */
     private final int navRearm = dp(30);
+    /** Nav displacement where its repeat reaches full speed. */
+    private final int navFull = dp(100);
     private final int touchSlop;
     private int fg = 0xFFFFFFFF;
 
     private boolean tracking;
     private boolean fired;
-    private boolean navArmed;
     private int repeatDir;
+    private int navDir;
     private float downX;
     private float downY;
     private float dx;
@@ -71,6 +77,14 @@ public final class JoyDot extends View {
         public void run() {
             sendKey(repeatDir < 0 ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN);
             postDelayed(this, repeatInterval());
+        }
+    };
+
+    private final Runnable navRepeater = new Runnable() {
+        @Override
+        public void run() {
+            fireNav();
+            postDelayed(this, navInterval());
         }
     };
 
@@ -101,8 +115,8 @@ public final class JoyDot extends View {
                 dy = 0;
                 tracking = true;
                 fired = false;
-                navArmed = true;
                 repeatDir = 0;
+                navDir = 0;
                 invalidate();
             }
             case MotionEvent.ACTION_MOVE -> {
@@ -111,20 +125,22 @@ public final class JoyDot extends View {
                 }
                 dx = e.getX() - downX;
                 dy = e.getY() - downY;
-                if (Math.abs(dx) >= navThreshold) {
-                    // far left/right = go that way, once per crossing;
-                    // arrows pause here
+                // far left/right = go that way, repeating slowly while
+                // held (hysteresis holds the state between rearm and
+                // threshold); arrows pause while navigating
+                int nd = dx >= navThreshold ? 1 : dx <= -navThreshold ? -1
+                        : Math.abs(dx) > navRearm ? navDir : 0;
+                if (nd != navDir) {
+                    removeCallbacks(navRepeater);
+                    navDir = nd;
+                    if (nd != 0) {
+                        fireNav();
+                        postDelayed(navRepeater, navInterval());
+                    }
+                }
+                if (navDir != 0) {
                     stopRepeat();
-                    if (navArmed) {
-                        navArmed = false;
-                        fired = true;
-                        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                        callback.nav(dx > 0);
-                    }
                 } else {
-                    if (Math.abs(dx) <= navRearm) {
-                        navArmed = true;
-                    }
                     int dir = dy <= -vertThreshold ? -1 : dy >= vertThreshold ? 1 : 0;
                     if (dir != repeatDir) {
                         // fire on crossing (or reversal), then repeat; the
@@ -179,10 +195,22 @@ public final class JoyDot extends View {
         callback.sendKey(keyCode);
     }
 
+    private void fireNav() {
+        fired = true;
+        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+        callback.nav(navDir > 0);
+    }
+
     private long repeatInterval() {
         float t = (Math.abs(dy) - vertThreshold) / (float) (vertFull - vertThreshold);
         t = Math.max(0f, Math.min(t, 1f));
         return Math.round(REPEAT_SLOW_MS + t * (REPEAT_FAST_MS - REPEAT_SLOW_MS));
+    }
+
+    private long navInterval() {
+        float t = (Math.abs(dx) - navThreshold) / (float) (navFull - navThreshold);
+        t = Math.max(0f, Math.min(t, 1f));
+        return Math.round(NAV_SLOW_MS + t * (NAV_FAST_MS - NAV_SLOW_MS));
     }
 
     private void stopRepeat() {
@@ -193,6 +221,8 @@ public final class JoyDot extends View {
     private void reset() {
         tracking = false;
         stopRepeat();
+        navDir = 0;
+        removeCallbacks(navRepeater);
         dx = 0;
         dy = 0;
         invalidate();
@@ -202,6 +232,7 @@ public final class JoyDot extends View {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         removeCallbacks(repeater);
+        removeCallbacks(navRepeater);
     }
 
     private int dp(int dp) {

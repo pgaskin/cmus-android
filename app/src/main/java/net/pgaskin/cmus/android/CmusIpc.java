@@ -84,13 +84,17 @@ public final class CmusIpc implements AutoCloseable {
 
     /**
      * A right-click resolved to a list row (the selection has already moved
-     * to it): the exact file set win-remove would act on, marked-tracks
-     * rule included. cmus only emits this where win-remove acts without a
-     * confirmation prompt (tree/sorted/queue + the playlist track pane),
-     * so any Selected is a remove offer the app may safely accept.
-     * Transient like Position — not cached or replayed.
+     * to it). Track rows: the exact file set win-remove would act on
+     * (marked-tracks rule included) plus the current playlist names for an
+     * add-to chooser; playlist == null. The playlist-view list pane
+     * instead carries the selected playlist's name in playlist (files and
+     * playlists empty) for android-pl-delete. cmus only emits this where
+     * the offered action runs without a TUI confirmation prompt, so any
+     * Selected may be safely accepted. Transient like Position — not
+     * cached or replayed.
      */
-    public record Selected(String view, List<String> files) implements Event {
+    public record Selected(String view, List<String> files, List<String> playlists,
+            String playlist) implements Event {
     }
 
     public enum PlayState { STOPPED, PLAYING, PAUSED }
@@ -370,6 +374,8 @@ public final class CmusIpc implements AutoCloseable {
         Map<String, List<String>> tags = Map.of();
         Map<String, String> options = Map.of();
         List<String> files = List.of();
+        List<String> playlists = List.of();
+        String playlist = null;
         try (JsonReader r = new JsonReader(new StringReader(line))) {
             r.beginObject();
             while (r.hasNext()) {
@@ -386,6 +392,8 @@ public final class CmusIpc implements AutoCloseable {
                     case "tags" -> tags = readTags(r);
                     case "options" -> options = readOptions(r);
                     case "files" -> files = readStrings(r);
+                    case "playlists" -> playlists = readStrings(r);
+                    case "playlist" -> playlist = r.nextString();
                     default -> r.skipValue();
                 }
             }
@@ -398,7 +406,7 @@ public final class CmusIpc implements AutoCloseable {
             case "volume" -> new Volume(left, right);
             case "view" -> new View(viewName);
             case "options" -> new Options(options);
-            case "selected" -> new Selected(viewName, files);
+            case "selected" -> new Selected(viewName, files, playlists, playlist);
             case null -> throw new IOException("event without a type");
             default -> null;
         };

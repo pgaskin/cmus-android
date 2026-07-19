@@ -21,6 +21,7 @@ import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
@@ -32,6 +33,7 @@ import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 import com.termux.view.TerminalViewClient;
 
+import java.util.List;
 import java.util.Objects;
 
 public class MainActivity extends Activity implements TerminalViewClient, TermService.SessionCallback {
@@ -572,22 +574,33 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     }
 
     /**
-     * cmus only emits Selected where win-remove acts without its own
-     * confirmation prompt, and the files are the exact set it would
-     * remove (marked-tracks rule included) — so the dialog just presents
-     * them. Gated on a recent long-press: right-clicks are the only
-     * source today, but the event is a broadcast, not an answer.
+     * cmus only emits Selected where the offered actions run without a
+     * TUI confirmation prompt, and the files are the exact set win-remove
+     * would act on (marked-tracks rule included) — so the dialogs just
+     * present them. Gated on a recent long-press: right-clicks are the
+     * only source today, but the event is a broadcast, not an answer.
      */
     private void onSelected(CmusIpc.Selected s) {
         if (SystemClock.uptimeMillis() > pendingRemoveUntil) {
             return;
         }
         pendingRemoveUntil = 0;
+        dismissRemoveDialog();
+        // the playlist-view list pane: the item is the playlist itself
+        if (s.playlist() != null) {
+            removeDialog = new AlertDialog.Builder(this)
+                    .setTitle("Remove playlist?")
+                    .setMessage(s.playlist())
+                    .setPositiveButton("Remove", (d, w) ->
+                            sendCommand("android-pl-delete " + s.playlist()))
+                    .setNegativeButton("Cancel", null)
+                    .show();
+            return;
+        }
         if (s.files().isEmpty()) {
             return;
         }
         String view = s.view();
-        dismissRemoveDialog();
         removeDialog = new AlertDialog.Builder(this)
                 .setTitle(s.files().size() == 1 ? "Remove?"
                         : "Remove " + s.files().size() + " tracks?")
@@ -597,6 +610,49 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                     // retarget win-remove; cmus is the source of truth
                     if (Objects.equals(view, viewName)) {
                         sendCommand("win-remove");
+                    }
+                })
+                .setNeutralButton("Add to playlist", (d, w) ->
+                        showAddToPlaylist(s.playlists()))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /** The chooser behind the item dialog's "Add to playlist" action. */
+    private void showAddToPlaylist(List<String> playlists) {
+        String[] items = new String[playlists.size() + 1];
+        for (int i = 0; i < playlists.size(); i++) {
+            items[i] = playlists.get(i);
+        }
+        items[items.length - 1] = "New playlist…";
+        removeDialog = new AlertDialog.Builder(this)
+                .setTitle("Add to playlist")
+                .setItems(items, (d, which) -> {
+                    if (which < playlists.size()) {
+                        // android-pl-add: verbatim rest-of-line name, no
+                        // command-tokenizer quoting to get wrong
+                        sendCommand("android-pl-add " + playlists.get(which));
+                    } else {
+                        promptNewPlaylist();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void promptNewPlaylist() {
+        EditText input = new EditText(this);
+        input.setHint("Playlist name");
+        removeDialog = new AlertDialog.Builder(this)
+                .setTitle("New playlist")
+                .setView(input)
+                .setPositiveButton("Create", (d, w) -> {
+                    String name = input.getText().toString().trim();
+                    if (!name.isEmpty()) {
+                        // pl-create takes the rest of the line as the name;
+                        // ordered writes make the add see the new list
+                        sendCommand("pl-create " + name);
+                        sendCommand("android-pl-add " + name);
                     }
                 })
                 .setNegativeButton("Cancel", null)
