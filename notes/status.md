@@ -3,6 +3,89 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Stage 18: settings screen + riders (implemented; Patrick's device pass pending)
+
+- Per [plans/18-settings.md](plans/18-settings.md) (committed and amended
+  live this session — SettingsActivity instead of an overlay, stock
+  Material day/night with a muted blue-grey accent instead of purple,
+  file-only resets, zoom setting, pre-save checkbox, backup rules,
+  IPC-log toggle, floating sleep slot — all Patrick's calls mid-session).
+  Commit split differs from the plan's list (work interleaved): cmus
+  patches, dotfolder, core sync+primitives, SettingsActivity, visibility,
+  backup rules, then follow-ups.
+- **cmus patch**: 0001 gained the `android-save` line + `saved` event —
+  exit_all's save set (resume, autosave, queue, lib, playlists,
+  histories, cache) via a new `android_save_state()` in ui_curses.c (all
+  callees are write-tmp-and-rename, repeat-safe; cmd/search histories
+  are statics, so command_mode/search_mode grew minimal `*_save`
+  wrappers). New **0003** (upstream candidate, not yet submitted):
+  `op_aaudio_get_sharing_mode` switched on `op_aaudio_opt_performance_mode`
+  and always echoed "shared" — found while planning; without the fix the
+  settings sync-back would clobber an `exclusive` pick on reconnect.
+- **Dotfolder**: everything app-managed now under `filesDir/.cmus/`
+  ({terminfo,data,home,lib,assets.stamp,android.sock}); browser at $HOME
+  shows a clean dir unless show_hidden. Migration renames old cmus-home
+  in (verified live: filter/softvol state survived), deletes the rest.
+- **Sync (the load-bearing design)**: `CmusSettings` — curated options
+  in a `cmus_opts` prefs file; every stored key forced with `set` on
+  each connect (prefs override cmus), every Options echo synced back
+  idempotently. progress_bar excluded from sync-back: app-managed with
+  `auto` (control bar visible → disabled, hidden → line). Settings rows
+  render only from echoes (stage-11 rule; bad lib_sort input snaps
+  back). Verified on device: first echo populated all 24 keys;
+  `set dsp.aaudio.sharing_mode=exclusive` → pref updated (0003 proof);
+  after an autosave delete the fresh session's autosave carried
+  sharing_mode=exclusive + progress_bar=disabled + softvol=true — the
+  override contract holds through a settings wipe.
+- **SettingsActivity**: app / audio / cmus / data / debug, hand-rolled
+  rows, stock Material day/night (values-night parent swap, framework
+  has no DayNight; accent #546E7A / night #90A4AE — tune live if
+  wanted). Binds the service, own IPC listener (re-attached after
+  resets), reports into the service's new visible-activity *count*
+  (Main↔Settings transitions overlap, a bool would end wrong).
+- **Data tools** (file-only, Patrick's troubleshooting stance):
+  TermService.resetData = kill→mutate→respawn (SIGKILL deliberately;
+  file op on a worker thread; FGS kept). Partial deletes carry the
+  default-on "save current state first" checkbox → bounded (5s)
+  android-save. Zip export = android-save → Saved ack → zip on a worker
+  thread (cmus's server socket in home is skipped — found live, a
+  FileInputStream on it would fail the export); import clears home
+  before unzip (replace, never merge; zip-slip guarded). Verified the
+  whole delete-saved-settings cycle on device via injected taps: saved
+  → SIGKILL → respawn+reconnect in ~150ms, exactly `autosave` gone.
+  **Caveat**: deleting autosave resets softvol_state to `0 0` (silent
+  until vol is raised) — inherent to a defaults reset; I restored
+  `vol 100` on the device after testing.
+- **Riders**: Material You default (explicit colorscheme picks already
+  store false, untouched); hue-rotation setting (0–359°, 180 default)
+  re-pushed live; sleep-timer exit mode (clears `resurrect` so a BT key
+  can't undo the sleep); always-resume-paused (first-Status pause,
+  media-key resurrection wins); idle-quit minutes pref (0 = off);
+  debug receiver pref-gated for release builds (row shows the adb
+  example); IPC event logging toggle at INFO (default on only in
+  debuggable builds); zoom slider sharing the font pref with pinch
+  (applyFontSize factored, applied on onStart); visibility toggles for
+  top bar / bottom bar / joystick — hidden bars hand insets to the
+  wrapper, the row-remainder goes to whichever bars remain, popover
+  gains Keyboard when the bottom bar hides, and a faint overlay row
+  (sleep slot + settings) floats top-right when the top bar hides
+  (verified on device: layout correct, tabs return on re-enable).
+  Backup: dataExtractionRules scoping prefs +
+  home/{lib.pl,playlists,search-history,command-history,autosave,cache}
+  (resume/queue.pl deliberately out — restored installs start stopped).
+- Verified by me on device (Pixel 8, wifi adb root, injected taps):
+  migration, sync round-trips, android-save ack + fresh files,
+  progress_bar auto in autosave, the reset cycle, top-bar-hidden
+  layout + floating button, settings screen rendering with live
+  values, IPC info logs. patch.sh check green; clean assembleDebug.
+- **Left for Patrick (his call — bulk of the settings matrix)**: every
+  row's round-trip feel, audio options against real playback, zip
+  export/import through SAF, delete library/playlists/all, reset app
+  prefs → recreate, sleep exit + resume-paused end-to-end, hue/zoom
+  slider feel, day/night + accent look, Keyboard popover entry,
+  floating sleep slot, `bmgr` backup round-trip, 0003 upstream
+  submission.
+
 ## 2026-07-19 — Joystick: hold-to-drag repositioning + nav angle gate (done)
 
 - JoyDot: resting on the center 2s (Patrick tuned down from 3) fires a

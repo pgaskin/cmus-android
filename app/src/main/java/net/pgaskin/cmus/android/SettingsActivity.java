@@ -223,7 +223,7 @@ public class SettingsActivity extends Activity {
                 : "Not granted. Tap to allow reading the Music folder."));
 
         switchPrefRow("Show top bar", "The view tabs, filter, and sleep timer. When "
-                        + "hidden, floating buttons keep settings and the timer reachable.",
+                        + "hidden, the sleep timer and settings are shown as floating buttons.",
                 TermService.PREF_SHOW_TOP_BAR, true, null);
         switchPrefRow("Show bottom bar", "Playback controls and seek bar",
                 TermService.PREF_SHOW_CONTROL_BAR, true, () -> {

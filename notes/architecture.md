@@ -140,17 +140,19 @@ full plan and rationale; this file describes what currently exists.
 - `TermService` — mediaPlayback foreground service owning the cmus
   `TerminalSession`: runs `CmusFiles.prepare`, spawns
   `nativeLibraryDir/libcmus.so` in a pty (env: HOME/TMPDIR/TERM/
-  TERMINFO/CMUS_{HOME,LIB_DIR,DATA_DIR} +
-  `CMUS_ANDROID_SOCKET=<filesDir>/cmus-android.sock`, the app IPC
-  socket — filesDir root so tar exports of cmus-home never pick up
-  socket files, + `CMUS_ANDROID_{EXT_FILES,EXT,FILES}`, the pl_env
-  base vars — names permanent, most-specific first), and is the
+  TERMINFO/CMUS_{HOME,LIB_DIR,DATA_DIR} pointing into the
+  `filesDir/.cmus/` dotfolder (stage 18) +
+  `CMUS_ANDROID_SOCKET=<filesDir>/.cmus/android.sock`, the app IPC
+  socket — beside home, not in it, so zip exports of the config never
+  pick up socket files, + `CMUS_ANDROID_{EXT_FILES,EXT,FILES}`, the
+  pl_env base vars — names permanent, most-specific first), and is the
   session's one stable `TerminalSessionClient`, forwarding to the
   attached activity. The spawn is headless (TerminalSession only
   forks in initializeEmulator, so getSession sizes the pty itself
   from the prefs-saved last attached size; a TerminalView attaching
   later just resizes it). Idle-quit: when cmus is not PLAYING and no
-  activity is visible for 15 min (constant until stage 18), sends
+  activity is visible (a *count* — Main/Settings transitions overlap)
+  for the pref'd minutes (default 15, 0 = off; stage 18), sends
   `set resume=true` + `quit` — killing only cmus, never the task. The
   fire never quits mid-import (it would truncate the scan): it asks
   cmus about worker jobs first (`android-jobs`, answered immediately)
@@ -167,14 +169,21 @@ full plan and rationale; this file describes what currently exists.
   partial wakelock, and a dozed device wasn't playing — the idle-quit
   stance); after the expiry pause a backgrounded app falls into the
   normal idle-quit. Session death clears the deadline
-  (removeCallbacksAndMessages silently drops the fire).
+  (removeCallbacksAndMessages silently drops the fire). The stage-18
+  sleep-timer-action pref flips the fire to a full exit instead:
+  clear `resurrect` (a pocketed BT play key must not undo the sleep),
+  `set resume=true` + `quit` — the normal session-death teardown, a
+  visible activity finishing through its usual path.
   Owns the `CmusIpc` client (created with the session, closed on
   session exit/destroy): forces `set mouse=true` + `set resume=true`
   + `set pl_env_vars=…` plus an `android-winch` size re-check on every
   (re)connect (an attach can resize the pty before cmus installs its
-  WINCH handler; the connect is after init by definition) and logs
-  every event at DEBUG. Owns the Material You scheme (it owns the
-  emulator and outlives the activity): pushes the MaterialYouTheme
+  WINCH handler; the connect is after init by definition), then
+  forces the `CmusSettings`-managed options, and logs every event —
+  at INFO behind the stage-18 debug toggle (default on in debuggable
+  builds only), so steady-state logcat stays quiet. Owns the Material You scheme — the *default* theme since stage 18
+  (an explicit colorscheme pick stores the pref false, so existing
+  picks stand) — (it owns the emulator and outlives the activity): pushes the MaterialYouTheme
   entries into `mColors.mCurrentColors` on spawn and on
   onConfigurationChanged while active (light/dark + wallpaper changes,
   headless included — palette-push only, no cmus traffic), re-forces
@@ -189,7 +198,8 @@ full plan and rationale; this file describes what currently exists.
   forced value is fine). resume makes every quit lossless (track,
   position, play state, view — even app-process death: pty SIGHUP is
   a clean cmus exit, though force-stop's uid SIGKILL still loses
-  since-last-save state until the planned periodic-save patch);
+  since-last-save state until stage 19's periodic save — its
+  `android-save` building block landed in stage 18);
   pl_env makes saved library/cache paths portable across
   reinstalls/storage moves. Owns a `MediaControl` beside it
   (registered as a second IPC listener, closed the same way); the
@@ -198,8 +208,8 @@ full plan and rationale; this file describes what currently exists.
 - `CmusIpc` — client for the android.c socket (the protocol comment
   there is the contract): sealed `Event` records
   (Hello/Status/Position/Volume/View/Filter/Options/Jobs + transient
-  Selected and Colorscheme — right-click resolutions and sourced-theme
-  names, not cached/replayed) parsed with JsonReader
+  Selected, Colorscheme and Saved — right-click resolutions,
+  sourced-theme names and the android-save ack, not cached/replayed) parsed with JsonReader
   (JSONObject drops duplicate tag keys), listener callbacks on the
   main thread with cached-state replay for late attachers, `send()`
   for raw command lines (rejects newline/overlong), self-reconnecting
@@ -226,7 +236,8 @@ full plan and rationale; this file describes what currently exists.
   the top bar darker still, one shared title accent, and a
   *complemented* status accent — the five system ramps are all
   harmonized near the seed hue, so a different hue is synthesized by
-  180° HSV rotation; list hierarchy playing &gt; selected &gt;
+  HSV rotation — 180° complement by default, the degrees are a
+  stage-18 setting re-pushed live; list hierarchy playing &gt; selected &gt;
   half-desaturated unselected). Direct color-setting is reserved for
   generated schemes; file-based themes go through `colorscheme`.
 - `MediaControl` — framework MediaSession + MediaStyle notification +
@@ -252,13 +263,54 @@ full plan and rationale; this file describes what currently exists.
   `resurrect` pref (true on spawn, false on a foreground TUI quit) —
   the system-side registration can't be cleared (null NPEs
   server-side on Android 16, archived registrations linger).
-- `CmusDebugReceiver` — FLAG_DEBUGGABLE-gated broadcast receiver
-  forwarding `-e cmd <cmus command>` from (root) adb through
-  `CmusIpc.send`; permanent debug tool.
-- `CmusFiles` — idempotent per-spawn filesDir layout: extracts the
-  terminfo + cmus-data assets (stamped by versionCode + APK install
-  time), rebuilds `cmus-lib/{ip,op}/NAME.so` symlinks into
-  nativeLibraryDir, creates `cmus-home/`.
+- `CmusDebugReceiver` — broadcast receiver forwarding
+  `-e cmd <cmus command>` from (root) adb through `CmusIpc.send`;
+  fires when the build is debuggable *or* the stage-18 debug-settings
+  toggle is on (the settings row shows the example command).
+- `CmusFiles` — idempotent per-spawn layout under `filesDir/.cmus/`
+  ({terminfo,data,home,lib,assets.stamp,android.sock} — a dotfolder so
+  the file browser at $HOME = filesDir shows a clean home unless
+  show_hidden; stage 18): extracts the terminfo + cmus-data assets
+  (stamped by versionCode + APK install time), rebuilds
+  `lib/{ip,op}/NAME.so` symlinks into nativeLibraryDir, creates
+  `home/`; migrates pre-18 installs (old cmus-home renamed in — state
+  kept, pl_env prefixes don't move — the regenerated trees deleted).
+- `CmusSettings` — the app-managed cmus options (Patrick's curated
+  settings-screen set) in a `cmus_opts` prefs file keyed by option
+  name: every stored key is re-forced with `set` on each (re)connect
+  (prefs override cmus — autosave loads first, prefs win) and every
+  Options echo is synced back idempotently (TUI `:set` persists
+  across the force-stop loss window; our own echoes don't loop).
+  `progress_bar` is the exception: app-managed with an `auto` value
+  (control bar visible → disabled — its slider replaces cmus's line —
+  hidden → line), never synced back so auto survives its own writes.
+- `SettingsActivity` — stage 18: app / audio / cmus / data / debug
+  sections, stock Material day/night (values-night parent swap; muted
+  blue-grey accent, deliberately not cmus-themed — Patrick), launched
+  from the popover. Hand-rolled rows; the cmus rows render only from
+  the replayed/live Options echoes and taps only send `set` (bad
+  input snaps back on the next echo); app rows write prefs applied by
+  MainActivity.onStart on return. Binds TermService with its own IPC
+  listener (re-attached after resets — respawn = fresh CmusIpc) and
+  reports visibility into the service's count. Data section
+  (troubleshooting, file-level only): zip export (`android-save` →
+  Saved ack, bounded 5s, then CMUS_HOME zipped on a worker thread,
+  cmus's server socket skipped) / zip import (home cleared first —
+  restore replaces, never merges; zip-slip guarded) / delete
+  library|playlists|autosave|everything / reset app prefs (clears
+  term + cmus_opts; RESULT_RESET_PREFS → MainActivity recreates),
+  all through TermService.resetData = kill→mutate→respawn (SIGKILL
+  deliberately — no exit save can rewrite a delete, a wedged cmus
+  can't block; file op on a worker thread; the respawn keeps the
+  FGS), the partial deletes behind a default-on "save current state
+  first" checkbox (bounded android-save — SIGKILL would otherwise
+  lose everything else unsaved). Deleting autosave resets cmus state
+  like softvol volume to defaults (softvol_state 0) — inherent.
+  Backup: `dataExtractionRules` scopes Auto Backup/device-transfer to
+  the shared prefs + `.cmus/home/{lib.pl,playlists,search-history,
+  command-history,autosave,cache}` (resume/queue.pl deliberately out:
+  a restored install starts stopped; pl_env keeps restored paths
+  valid, the cmus_opts force re-applies managed settings).
 - `MainActivity` — vertical LinearLayout: top bar over a
   FrameLayout-wrapped `TerminalView` (focusableInTouchMode — required
   for IME/keys; set in code, easy to miss; sizes from raw bounds, so
@@ -299,8 +351,17 @@ full plan and rationale; this file describes what currently exists.
   pause reverts it promptly); tap = preset list (15–90 min) +
   Custom… + Turn off; the service owns the countdown.
   Settings icon (faint, rightmost): tap = popover (Theme / Font /
-  Refresh / Settings — the last toasts until stage 18), long-press =
-  theme selector directly. Refresh (stage 17): READ_MEDIA_AUDIO
+  Refresh / Settings, + Keyboard while the bottom bar is hidden — its
+  IME toggle went with it), long-press = theme selector directly.
+  Stage-18 visibility toggles: top bar / bottom bar / joystick prefs
+  re-applied on every onStart (returning from settings) — hidden bars
+  hand their insets to the terminal wrapper, the row-quantization
+  remainder goes to whichever bars remain, and a faint fg-tinted
+  overlay row (the sleep slot, icon or minutes text, plus the settings
+  button anchoring the same popover) floats over the terminal's
+  top-right whenever the top bar is hidden (hidden with the joystick
+  on the crash screen). Zoom (the font pref) is shared by
+  pinch and the settings slider through one applyFontSize. Refresh (stage 17): READ_MEDIA_AUDIO
   (runtime request resuming the action on grant) → "Adding tracks from
   Music folder" toast → `add` of the shared Music dir — cmus's own
   recursive add job imports, re-taps dedupe (library keyed by
@@ -310,7 +371,7 @@ full plan and rationale; this file describes what currently exists.
   closed on onStop/crash), sharing one PopupWindow slot + a refresh
   lambda that re-tints rows when the selection moves. Theme column:
   Material You pinned first (service state), then the sorted union of
-  cmus-home/cmus-data theme files (whitespace names skipped —
+  the home/data theme files (whitespace names skipped —
   `colorscheme` takes one arg); picks send `colorscheme <name>` and the
   highlight follows the echoed Colorscheme event (name persisted in a
   pref). Font column: System + the five bundled fonts (assets/fonts,
@@ -435,4 +496,4 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Settings screen (18), then continuous state save (19), ogg/opus embedded art (20), polish/verify (21).
+Continuous state save (19; android-save landed in 18, the timer remains), ogg/opus embedded art (20), polish/verify (21).
