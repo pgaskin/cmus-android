@@ -1,4 +1,4 @@
-From 812e48668ddbc947dce569acb393f8047430688c Mon Sep 17 00:00:00 2001
+From 9b8df570cda4736d005daa7dd768a30f11ab421c Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..1b3e289
+index 0000000..885a4fc
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,396 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -52,15 +52,17 @@ index 0000000..1b3e289
 + *   {"type":"hello","version":"..."}
 + *       first line after connect
 + *   {"type":"status","status":"stopped|playing|paused","file":...,
-+ *    "duration":n,"position":n,"tags":{"key":"val",...}}
++ *    "duration":n,"position":n.nnn,"tags":{"key":"val",...}}
 + *       on connect and whenever the playback status, track, or metadata
 + *       changes; without a current track only "status" is present.
 + *       Tag keys are as stored in the file, lowercased by cmus, and may
 + *       repeat (e.g. multiple artists).
-+ *   {"type":"position","position":n}
-+ *       whole-seconds position advance/seek (<= 1/s while playing); only
-+ *       sent when no status event is sent this flush (status carries
-+ *       position too)
++ *   {"type":"position","position":n.nnn}
++ *       position advance/seek, sent when the whole second changes
++ *       (<= 1/s while playing) but carrying the exact fractional
++ *       position so clients animating between events don't jump on
++ *       rebase; only sent when no status event is sent this flush
++ *       (status carries position too)
 + *   {"type":"volume","left":n,"right":n}
 + *       percent, -1 = unknown; on connect and on change
 + *   {"type":"view","view":"tree|sorted|playlist|queue|browser|filters|settings"}
@@ -308,8 +310,8 @@ index 0000000..1b3e289
 +	if (ti) {
 +		gbuf_add_str(buf, ",\"file\":");
 +		android_json_str(buf, ti->filename);
-+		gbuf_addf(buf, ",\"duration\":%d,\"position\":%d,\"tags\":{",
-+				ti->duration, player_info.pos);
++		gbuf_addf(buf, ",\"duration\":%d,\"position\":%.3f,\"tags\":{",
++				ti->duration, player_pos_exact());
 +		for (i = 0; ti->comments[i].key; i++) {
 +			if (i)
 +				gbuf_add_ch(buf, ',');
@@ -373,8 +375,8 @@ index 0000000..1b3e289
 +	if (status_dirty)
 +		android_status_event(&buf);
 +	else if (player_info.position_changed)
-+		gbuf_addf(&buf, "{\"type\":\"position\",\"position\":%d}\n",
-+				player_info.pos);
++		gbuf_addf(&buf, "{\"type\":\"position\",\"position\":%.3f}\n",
++				player_pos_exact());
 +	if (android_dirty_all || vol_l != android_vol_l ||
 +			vol_r != android_vol_r) {
 +		gbuf_addf(&buf, "{\"type\":\"volume\",\"left\":%d,\"right\":%d}\n",
@@ -493,6 +495,47 @@ index b794399..8528b8b 100644
  }
  
  void run_command(const char *buf)
+diff --git a/player.c b/player.c
+index 383fd94..2d8235b 100644
+--- a/player.c
++++ b/player.c
+@@ -1309,6 +1309,22 @@ void player_seek(double offset, int relative, int start_playing)
+ 	player_unlock();
+ }
+ 
++#ifdef CONFIG_ANDROID
++/* exact playing position for the android IPC; player_info.pos is whole
++ * seconds, which makes a client animating between position events jump
++ * back on rebase (e.g. pause) */
++double player_pos_exact(void)
++{
++	double pos = 0;
++
++	player_lock();
++	if (consumer_status == CS_PLAYING || consumer_status == CS_PAUSED)
++		pos = (double)consumer_pos / (double)buffer_second_size();
++	player_unlock();
++	return pos;
++}
++#endif
++
+ /*
+  * change output plugin without stopping playback
+  */
+diff --git a/player.h b/player.h
+index 9a7b39b..9d72654 100644
+--- a/player.h
++++ b/player.h
+@@ -101,6 +101,9 @@ void player_stop(void);
+ void player_pause(void);
+ void player_pause_playback(void);
+ void player_seek(double offset, int relative, int start_playing);
++#ifdef CONFIG_ANDROID
++double player_pos_exact(void);
++#endif
+ void player_set_op(const char *name);
+ void player_set_buffer_chunks(unsigned int nr_chunks);
+ int player_get_buffer_chunks(void);
 diff --git a/ui_curses.c b/ui_curses.c
 index bdb766a..ebd77fc 100644
 --- a/ui_curses.c
