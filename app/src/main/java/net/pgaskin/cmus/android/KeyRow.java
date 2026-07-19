@@ -139,6 +139,13 @@ public final class KeyRow extends HorizontalScrollView {
         }
     }
 
+    /** The selected terminal typeface (stage 16), like the tabs. */
+    public void setTypeface(Typeface typeface) {
+        for (TextView t : allKeys) {
+            t.setTypeface(typeface);
+        }
+    }
+
     public void applyTheme(int bg, int fg) {
         this.bg = bg;
         this.fg = fg;

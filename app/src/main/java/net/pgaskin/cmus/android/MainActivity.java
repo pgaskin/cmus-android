@@ -63,6 +63,17 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private static final String PREF_FONT = "font";
     /** Last colorscheme name echoed by cmus (the selector highlight). */
     private static final String PREF_COLORSCHEME = "colorscheme";
+    /** Selected terminal font: an asset path from FONT_ASSETS, absent = system. */
+    private static final String PREF_TYPEFACE = "typeface";
+
+    /** The bundled monospace fonts (assets/fonts, OFL texts beside them). */
+    private static final String[] FONT_NAMES = {
+            "System", "JetBrains Mono", "Fira Mono", "IBM Plex Mono"};
+    private static final String[] FONT_ASSETS = {
+            null,
+            "fonts/JetBrainsMono-Regular.ttf",
+            "fonts/FiraMono-Regular.ttf",
+            "fonts/IBMPlexMono-Regular.ttf"};
 
     private TerminalView terminalView;
     private FrameLayout terminalWrapper;
@@ -126,6 +137,11 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private int fontSize;
     private int minFontSize;
     private int maxFontSize;
+    // the selected terminal font, worn by all the chrome text too (the
+    // blend-with-TUI rule) and by every row-metrics computation — the
+    // flushness mirror is only exact measuring what the renderer measures
+    private String fontAsset; // null = system monospace
+    private Typeface activeTypeface = Typeface.MONOSPACE;
 
     private final ServiceConnection connection = new ServiceConnection() {
         @Override
@@ -164,10 +180,16 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 maxFontSize));
         colorschemeName = getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
                 .getString(PREF_COLORSCHEME, null);
+        // restore the font before anything measures: the saved headless pty
+        // grid was sized under it (the same reasoning as the font size)
+        fontAsset = getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
+                .getString(PREF_TYPEFACE, null);
+        activeTypeface = loadTypeface(fontAsset);
 
         terminalView = new TerminalView(this, null);
         terminalView.setTerminalViewClient(this);
         terminalView.setTextSize(fontSize);
+        terminalView.setTypeface(activeTypeface);
         terminalView.setKeepScreenOn(false);
         terminalView.setFocusable(true);
         terminalView.setFocusableInTouchMode(true);
@@ -185,7 +207,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             String name = VIEW_NAMES[i];
             TextView tab = new TextView(this);
             tab.setText(name);
-            tab.setTypeface(Typeface.MONOSPACE);
+            tab.setTypeface(activeTypeface);
             // matches the terminal font size, including pinch-zoom (onScale)
             tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             tab.setPadding(dp(5), dp(8), dp(5), dp(8));
@@ -209,7 +231,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         filterBtn = topBarButton(R.drawable.ic_search, this::toggleFilterBox);
         filterBox = new EditText(this);
         filterBox.setSingleLine(true);
-        filterBox.setTypeface(Typeface.MONOSPACE);
+        filterBox.setTypeface(activeTypeface);
         filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
         filterBox.setPadding(dp(5), dp(8), dp(5), dp(8));
         filterBox.setBackground(null); // no material underline; the bar is the chrome
@@ -258,7 +280,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // while armed (the service owns the countdown; this only renders it)
         sleepBtn = topBarButton(R.drawable.ic_sleep, this::showSleepDialog);
         sleepText = new TextView(this);
-        sleepText.setTypeface(Typeface.MONOSPACE);
+        sleepText.setTypeface(activeTypeface);
         sleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
         sleepText.setPadding(dp(5), dp(8), dp(5), dp(8));
         sleepText.setOnClickListener(v -> showSleepDialog());
@@ -304,7 +326,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // through a non-clickable View)
         titleStrip = new View(this);
         terminalWrapper.addView(titleStrip, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ControlBar.firstRowOffset(fontSize)));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ControlBar.firstRowOffset(fontSize, activeTypeface)));
 
         // enter/arrows/tab without reaching for the IME: the joystick dot
         // floats over the terminal's bottom-right, riding above the IME
@@ -342,10 +365,11 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 toggleSoftKeyboard();
             }
         });
-        controlBar.setFontSize(fontSize);
+        controlBar.setFontSize(fontSize, activeTypeface);
 
         keyRow = new KeyRow(this, this::injectKey);
         keyRow.setFontSize(fontSize);
+        keyRow.setTypeface(activeTypeface);
         keyRow.setVisibility(View.GONE); // until the IME shows
 
         LinearLayout root = rootLayout = new LinearLayout(this);
@@ -516,9 +540,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // the remainder the terminal would leave with no extras (TerminalView
         // rows = (height - firstRowOffset) / lineSpacing); adding the current
         // extras back makes this a fixed point across relayouts
-        int spacing = ControlBar.lineSpacing(fontSize);
+        int spacing = ControlBar.lineSpacing(fontSize, activeTypeface);
         int avail = terminalWrapper.getHeight() + tabExtra + barExtra
-                - ControlBar.firstRowOffset(fontSize);
+                - ControlBar.firstRowOffset(fontSize, activeTypeface);
         if (avail <= 0) {
             return;
         }
@@ -719,10 +743,11 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             filterClose.setLayoutParams(topBarButtonParams());
             sleepBtn.setLayoutParams(topBarButtonParams());
             settingsBtn.setLayoutParams(topBarButtonParams());
-            controlBar.setFontSize(fontSize);
+            controlBar.setFontSize(fontSize, activeTypeface);
             keyRow.setFontSize(fontSize);
             titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ControlBar.firstRowOffset(fontSize)));
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ControlBar.firstRowOffset(fontSize, activeTypeface)));
             getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
                     .putInt(PREF_FONT, fontSize).apply();
             return 1.0f;
@@ -838,10 +863,11 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         if (theme == null || crashScreen) {
             return;
         }
-        showListPopup(settingsBtn, new String[]{"Theme", "Settings"}, () -> -1, true,
+        showListPopup(settingsBtn, new String[]{"Theme", "Font", "Settings"}, () -> -1, true,
                 which -> {
                     switch (which) {
                         case 0 -> showThemeSelector();
+                        case 1 -> showFontSelector();
                         default -> Toast.makeText(this, "Not yet implemented",
                                 Toast.LENGTH_SHORT).show();
                     }
@@ -879,6 +905,66 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                         sendCommand("colorscheme " + names.get(which - 1));
                     }
                 });
+    }
+
+    private void showFontSelector() {
+        if (theme == null || crashScreen) {
+            return;
+        }
+        showListPopup(null, FONT_NAMES,
+                () -> {
+                    for (int i = 0; i < FONT_ASSETS.length; i++) {
+                        if (Objects.equals(FONT_ASSETS[i], fontAsset)) {
+                            return i;
+                        }
+                    }
+                    return -1;
+                }, false,
+                which -> applyFont(FONT_ASSETS[which]));
+    }
+
+    /**
+     * Pure app state, unlike the colorschemes (cmus knows nothing about
+     * fonts): applies + persists immediately. The renderer swap resizes the
+     * pty like a pinch-zoom (the winch nudge and the flushness fixed point
+     * both re-run on the resulting relayout).
+     */
+    private void applyFont(String asset) {
+        if (Objects.equals(asset, fontAsset)) {
+            return;
+        }
+        fontAsset = asset;
+        activeTypeface = loadTypeface(asset);
+        getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_TYPEFACE, asset).apply();
+        terminalView.setTypeface(activeTypeface);
+        for (TextView tab : viewTabs) {
+            tab.setTypeface(activeTypeface);
+        }
+        filterBox.setTypeface(activeTypeface);
+        sleepText.setTypeface(activeTypeface);
+        keyRow.setTypeface(activeTypeface);
+        controlBar.setFontSize(fontSize, activeTypeface);
+        titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ControlBar.firstRowOffset(fontSize, activeTypeface)));
+        if (selectorRefresh != null) {
+            // moves the highlight; the open selector's rows keep their
+            // construction-time face until the next open — acceptable
+            selectorRefresh.run();
+        }
+    }
+
+    /** null/missing asset (e.g. a renamed bundle) falls back to system. */
+    private Typeface loadTypeface(String asset) {
+        if (asset != null) {
+            try {
+                return Typeface.createFromAsset(getAssets(), asset);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "font: failed to load " + asset, e);
+            }
+        }
+        return Typeface.MONOSPACE;
     }
 
     /**
@@ -924,7 +1010,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             int which = i;
             TextView t = new TextView(this);
             t.setText(items[i]);
-            t.setTypeface(Typeface.MONOSPACE);
+            t.setTypeface(activeTypeface);
             t.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             t.setPadding(dp(14), dp(8), dp(14), dp(8));
             // ripple as the foreground; the popup bg stays the win color

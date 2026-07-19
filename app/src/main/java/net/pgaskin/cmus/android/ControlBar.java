@@ -133,9 +133,9 @@ public final class ControlBar extends LinearLayout {
                 getResources().getDisplayMetrics()));
     }
 
-    /** Bar = 3 terminal rows tall, icons = 2; tracks pinch-zoom. */
-    public void setFontSize(int px) {
-        int line = lineSpacing(px);
+    /** Bar = 3 terminal rows tall, icons = 2; tracks pinch-zoom + the font. */
+    public void setFontSize(int px, Typeface typeface) {
+        int line = lineSpacing(px, typeface);
         barHeight = 3 * line;
         int pad = line / 2; // (3 lines - 2-line icon) / 2
         for (ImageButton b : buttons) {
@@ -279,23 +279,24 @@ public final class ControlBar extends LinearLayout {
     }
 
     /**
-     * TerminalRenderer's row metrics, mirrored (MONOSPACE paint — what
-     * TerminalView keeps through setTextSize) so chrome sizing and the
-     * row-remainder math quantize exactly like the terminal.
+     * TerminalRenderer's row metrics, mirrored at the *active* typeface —
+     * the mirror is only exact measuring what the renderer measures, and
+     * since stage 16 the terminal font is selectable — so chrome sizing
+     * and the row-remainder math quantize exactly like the terminal.
      */
-    public static int lineSpacing(int textSizePx) {
-        return (int) Math.ceil(paintFor(textSizePx).getFontSpacing());
+    public static int lineSpacing(int textSizePx, Typeface typeface) {
+        return (int) Math.ceil(paintFor(textSizePx, typeface).getFontSpacing());
     }
 
     /** The renderer's mFontLineSpacingAndAscent: the first row's top offset. */
-    public static int firstRowOffset(int textSizePx) {
-        Paint p = paintFor(textSizePx);
+    public static int firstRowOffset(int textSizePx, Typeface typeface) {
+        Paint p = paintFor(textSizePx, typeface);
         return (int) Math.ceil(p.getFontSpacing()) + (int) Math.ceil(p.ascent());
     }
 
-    private static Paint paintFor(int textSizePx) {
+    private static Paint paintFor(int textSizePx, Typeface typeface) {
         Paint p = new Paint();
-        p.setTypeface(Typeface.MONOSPACE);
+        p.setTypeface(typeface);
         p.setTextSize(textSizePx);
         return p;
     }
