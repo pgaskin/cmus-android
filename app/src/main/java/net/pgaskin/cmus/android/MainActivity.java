@@ -106,10 +106,17 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private ImageButton sleepBtn;
     private TextView sleepText;
     private ImageButton settingsBtn;
+    /** With the top bar hidden, settings stays reachable via this faint
+     * overlay in the terminal's top-right (stage 18). */
+    private ImageButton floatSettingsBtn;
     private final Runnable sleepTick = this::updateSleepSlot;
     private ControlBar controlBar;
     private KeyRow keyRow;
     private JoyDot joyDot;
+    // stage-18 visibility toggles, re-read from prefs on every onStart
+    private boolean topBarShown = true;
+    private boolean controlBarShown = true;
+    private boolean joyShown = true;
     /** Joystick center in wrapper px, kept clamped by applyJoyPos. */
     private float joyCx;
     private float joyCy;
@@ -410,6 +417,18 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // and keeps riding above the IME as the wrapper shrinks
         terminalWrapper.addView(joyDot, new FrameLayout.LayoutParams(
                 dp(120), dp(120), Gravity.TOP | Gravity.START));
+
+        // the floating settings entry for the hidden-top-bar mode; sits
+        // below the status-bar inset because the wrapper wears that inset
+        // as top padding whenever the bar is gone
+        floatSettingsBtn = topBarButton(R.drawable.ic_settings, this::showSettingsPopover);
+        floatSettingsBtn.setVisibility(View.GONE);
+        FrameLayout.LayoutParams floatLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        floatLp.topMargin = dp(6);
+        floatLp.setMarginEnd(dp(6));
+        terminalWrapper.addView(floatSettingsBtn, floatLp);
         terminalWrapper.addOnLayoutChangeListener(
                 (v, l, t, r, b, ol, ot, or, ob) -> {
                     if (r - l != or - ol || b - t != ob - ot) {
@@ -492,6 +511,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         root.addOnLayoutChangeListener(
                 (v, l, t, r, b, ol, ot, or, ob) -> updateRowGapPadding());
         setContentView(root);
+        applyBarVisibility();
 
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -507,6 +527,12 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     protected void onStart() {
         super.onStart();
         visible = true;
+        // returning from SettingsActivity: its pref changes (bars, zoom)
+        // apply here; no-ops when nothing moved
+        applyBarVisibility();
+        applyFontSize(Math.max(minFontSize, Math.min(
+                getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
+                        .getInt(PREF_FONT, dp(13)), maxFontSize)));
         if (service != null) {
             service.setActivityVisible(true);
             // cmus died while we were backgrounded (idle-quit or otherwise):
@@ -629,11 +655,16 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     private void applyChromePadding() {
         topBar.setPadding(chromeInsets.left, chromeInsets.top, chromeInsets.right, tabExtra);
-        terminalWrapper.setPadding(chromeInsets.left, 0, chromeInsets.right, 0);
         // the bottom-most visible chrome wears the bottom inset (the IME
         // height while the IME is (still) treated as visible)
         int bottom = imeVisible ? Math.max(chromeInsets.bottom, imeInset) : chromeInsets.bottom;
         boolean rowVisible = keyRow.getVisibility() == View.VISIBLE;
+        // hidden bars (stage 18) hand their inset to the wrapper: the top
+        // inset pushes the terminal (and the floating settings button)
+        // below the status bar, the bottom one keeps it above the nav strip
+        terminalWrapper.setPadding(chromeInsets.left,
+                topBarShown ? 0 : chromeInsets.top, chromeInsets.right,
+                controlBarShown || rowVisible ? 0 : bottom);
         controlBar.setPadding(chromeInsets.left, barExtra, chromeInsets.right,
                 rowVisible ? 0 : bottom);
         keyRow.setPadding(chromeInsets.left, 0, chromeInsets.right,
@@ -642,20 +673,62 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     private void updateRowGapPadding() {
         // the remainder the terminal would leave with no extras (TerminalView
-        // rows = (height - firstRowOffset) / lineSpacing); adding the current
-        // extras back makes this a fixed point across relayouts
+        // rows = (height - firstRowOffset) / lineSpacing); adding back the
+        // extras currently worn by *visible* bars makes this a fixed point
+        // across relayouts (a hidden bar's padding doesn't shape the wrapper)
         int spacing = ControlBar.lineSpacing(fontSize, activeTypeface);
-        int avail = terminalWrapper.getHeight() + tabExtra + barExtra
+        int avail = terminalWrapper.getHeight()
+                + (topBarShown ? tabExtra : 0) + (controlBarShown ? barExtra : 0)
                 - ControlBar.firstRowOffset(fontSize, activeTypeface);
         if (avail <= 0) {
             return;
         }
         int rem = avail % spacing;
-        if (rem / 2 != tabExtra || rem - rem / 2 != barExtra) {
-            tabExtra = rem / 2;
-            barExtra = rem - rem / 2;
+        // the remainder goes to whichever bars are visible; with neither,
+        // the gap stays under the terminal wearing the wrapper's win bg
+        int wantTab, wantBar;
+        if (topBarShown && controlBarShown) {
+            wantTab = rem / 2;
+            wantBar = rem - rem / 2;
+        } else if (topBarShown) {
+            wantTab = rem;
+            wantBar = 0;
+        } else if (controlBarShown) {
+            wantTab = 0;
+            wantBar = rem;
+        } else {
+            wantTab = 0;
+            wantBar = 0;
+        }
+        if (wantTab != tabExtra || wantBar != barExtra) {
+            tabExtra = wantTab;
+            barExtra = wantBar;
             applyChromePadding();
         }
+    }
+
+    /**
+     * The stage-18 visibility toggles, (re)read from prefs — at attach and
+     * on every onStart, so a change made in SettingsActivity applies the
+     * moment MainActivity returns to the front.
+     */
+    private void applyBarVisibility() {
+        SharedPreferences prefs = getSharedPreferences(TermService.PREFS, MODE_PRIVATE);
+        topBarShown = prefs.getBoolean(TermService.PREF_SHOW_TOP_BAR, true);
+        controlBarShown = prefs.getBoolean(TermService.PREF_SHOW_CONTROL_BAR, true);
+        joyShown = prefs.getBoolean(TermService.PREF_SHOW_JOYSTICK, true);
+        if (!topBarShown && filterBoxOpen) {
+            closeFilterBox(false); // the box lives in the bar; filter kept
+        }
+        if (!controlBarShown) {
+            controlBar.dismissPopup();
+        }
+        topBar.setVisibility(topBarShown ? View.VISIBLE : View.GONE);
+        controlBar.setVisibility(controlBarShown ? View.VISIBLE : View.GONE);
+        joyDot.setVisibility(joyShown && !crashScreen ? View.VISIBLE : View.GONE);
+        floatSettingsBtn.setVisibility(!topBarShown && !crashScreen
+                ? View.VISIBLE : View.GONE);
+        applyChromePadding();
     }
 
     // theme-driven chrome
@@ -754,6 +827,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         controlBar.applyTheme(theme.cmdlineBg(), theme.statuslineFg());
         keyRow.applyTheme(theme.cmdlineBg(), theme.statuslineFg());
         joyDot.applyTheme(theme.winFg());
+        // faint over the terminal like the joystick (translucent fg tint)
+        floatSettingsBtn.setImageTintList(ColorStateList.valueOf(
+                (theme.winFg() & 0x00FFFFFF) | 0x66000000));
         applyTabColors();
         int appearance = 0;
         if (CmusTheme.isLight(theme.winTitleBg())) {
@@ -870,6 +946,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             dismissSelectorPopup(); // nothing left to theme either
             closeFilterBox(false); // nothing left to filter either
             joyDot.setVisibility(View.GONE); // it must not eat the tap-out
+            floatSettingsBtn.setVisibility(View.GONE); // same rule
             Toast.makeText(this, "cmus exited (" + exitStatus + ") — tap to close",
                     Toast.LENGTH_LONG).show();
         }
@@ -880,24 +957,36 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     @Override
     public float onScale(float scale) {
         if (scale < 0.9f || scale > 1.1f) {
-            fontSize = Math.max(minFontSize, Math.min(Math.round(fontSize * scale), maxFontSize));
-            terminalView.setTextSize(fontSize);
-            for (TextView tab : viewTabs) {
-                tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, tabTextSize());
-            }
-            filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, tabTextSize());
-            sleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
-            updateTopBarButtons();
-            controlBar.setFontSize(fontSize, activeTypeface);
-            keyRow.setFontSize(fontSize);
-            titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ControlBar.firstRowOffset(fontSize, activeTypeface)));
-            getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
-                    .putInt(PREF_FONT, fontSize).apply();
+            applyFontSize(Math.max(minFontSize,
+                    Math.min(Math.round(fontSize * scale), maxFontSize)));
             return 1.0f;
         }
         return scale;
+    }
+
+    /**
+     * Applies a terminal font size everywhere the metrics reach (pinch-zoom
+     * and the settings zoom slider are two views of the same pref).
+     */
+    private void applyFontSize(int size) {
+        if (size == fontSize) {
+            return;
+        }
+        fontSize = size;
+        terminalView.setTextSize(fontSize);
+        for (TextView tab : viewTabs) {
+            tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, tabTextSize());
+        }
+        filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, tabTextSize());
+        sleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+        updateTopBarButtons();
+        controlBar.setFontSize(fontSize, activeTypeface);
+        keyRow.setFontSize(fontSize);
+        titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ControlBar.firstRowOffset(fontSize, activeTypeface)));
+        getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
+                .putInt(PREF_FONT, fontSize).apply();
     }
 
     @Override
@@ -1016,7 +1105,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             items.add("Keyboard");
         }
         items.add("Settings");
-        showListPopup(settingsBtn, items.toArray(new String[0]),
+        showListPopup(topBarShown ? settingsBtn : floatSettingsBtn,
+                items.toArray(new String[0]),
                 () -> -1, true,
                 which -> {
                     switch (items.get(which)) {
@@ -1294,6 +1384,15 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private void updateTopBarButtons() {
         int line = ControlBar.lineSpacing(fontSize, activeTypeface);
         int pad = line / 2; // (3 lines - 2-line icon) / 2, the ControlBar math
+        if (floatSettingsBtn != null) { // built after the first call
+            floatSettingsBtn.setPadding(pad, pad, pad, pad);
+            ViewGroup.LayoutParams lp = floatSettingsBtn.getLayoutParams();
+            if (lp != null) {
+                lp.width = 3 * line;
+                lp.height = 3 * line;
+                floatSettingsBtn.setLayoutParams(lp);
+            }
+        }
         for (ImageButton b : new ImageButton[]{filterBtn, filterClose, sleepBtn, settingsBtn}) {
             b.setPadding(pad, pad, pad, pad);
             b.setLayoutParams(new LinearLayout.LayoutParams(3 * line, 3 * line));
