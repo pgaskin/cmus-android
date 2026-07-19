@@ -26,14 +26,17 @@ Music folder to the library.
   its own requestCode and *continues the action* on grant in
   onRequestPermissionsResult; denied = nothing (re-tap re-asks).
   Manifest gains the uses-permission line.
-- **Idle-quit must not truncate an import (Patrick)** — and the check
-  has to be a *poll*, not a diffed event: `worker_has_job()` (the same
-  call behind the TUI's quit-while-jobs warning) answers "is an
-  add/update job running", but cmus's idle main loop can sleep in
-  select indefinitely (the stage-15 WINCH lesson), so a job *finishing*
-  would never reach a flush. An `android-jobs` intent line is both the
-  question and the wakeup (the android-winch pattern), answered
-  immediately with a transient `{"type":"jobs","running":bool}`.
+- **Idle-quit must not truncate an import (Patrick), and the app toasts
+  "Import finished" for *any* import** (TUI adds included, not just
+  Refresh). `worker_has_job()` (the call behind the TUI's
+  quit-while-jobs warning) answers "is an add/update job running", and —
+  the load-bearing find — **job_fd is in the main loop's select set**,
+  so job activity itself wakes the loop and a diffed jobs event always
+  reaches the next flush promptly (the stage-15 indefinite-sleep concern
+  doesn't apply to jobs). Two mechanisms by Patrick's call: the *event*
+  (diffed like volume, snapshotted on connect) drives the toast; the
+  idle-quit guard *polls* via an `android-jobs` line — a fresh
+  authoritative answer at decision time, re-polled while a job runs.
 
 ## Design
 
@@ -41,16 +44,20 @@ Music folder to the library.
   READ_MEDIA_AUDIO (request + resume on grant) → toast "Adding tracks
   from Music folder" → `add /storage/emulated/0/Music` over IPC (the
   dir from Environment, not hardcoded).
-- **cmus patch (0001 amend)**: `android-jobs` input line → immediate
-  `{"type":"jobs","running":true|false}` (worker_has_job; transient,
-  not snapshotted — it's a poll answer). Protocol comment updated.
+- **cmus patch (0001 amend)**: `{"type":"jobs","running":true|false}` —
+  diffed in android_flush against a cached copy (the volume pattern; on
+  connect and on change), *plus* immediately as the `android-jobs`
+  line's answer (which updates the same cache so nothing double-sends).
+  Protocol comment updated.
 - **Idle-quit guard (TermService)**: the idle-quit fire no longer quits
   directly — it re-checks its conditions, then sends `android-jobs`
-  with a pending flag. The Jobs echo: conditions re-checked (the world
-  may have moved during the round trip), then quit if idle, or re-post
-  the fire on a poll interval (30s) while a job runs. Cancel paths
-  (refocus, unpause, session death) clear the flag with the callbacks.
-  CmusIpc gains the transient Jobs record.
+  with a pending flag. Any Jobs event while pending: conditions
+  re-checked (the world may have moved), then quit if no job runs, or
+  re-post the fire on a poll interval (30s). Cancel paths (refocus,
+  unpause, session death) clear the flag with the callbacks.
+- **Import-finished toast (MainActivity)**: Jobs is cached/replayed in
+  CmusIpc like Volume; the activity toasts "Import finished" on a
+  true→false transition of the seen state — any import, any trigger.
 - **TODO for later (Patrick)**: tracks deleted on disk linger in the
   library — cmus has no prune-missing command. Needs design (an
   android.c intent line access(2)-checking lib entries, or an app-side
