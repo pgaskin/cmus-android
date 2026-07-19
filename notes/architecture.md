@@ -191,8 +191,11 @@ full plan and rationale; this file describes what currently exists.
 - `MainActivity` — vertical LinearLayout: view-selector tab bar over a
   FrameLayout-wrapped `TerminalView` (focusableInTouchMode — required
   for IME/keys; set in code, easy to miss; sizes from raw bounds, so
-  insets pad the wrappers) over a `ControlBar`. Insets split for
-  edge-to-edge coloring
+  insets pad the wrappers) over a `ControlBar` over a `KeyRow` (GONE
+  unless the IME is visible — the insets listener toggles it on
+  isVisible(Type.ime()), hands the bottom inset to whichever chrome is
+  bottom-most visible, and clears sticky modifier state on hide).
+  Insets split for edge-to-edge coloring
   (targetSdk 36: setStatusBarColor is a no-op): the tab bar consumes
   top+sides so its background (win_title_bg) paints the status-bar
   strip; the wrapper consumes sides only; the control bar consumes
@@ -246,6 +249,20 @@ full plan and rationale; this file describes what currently exists.
   `CmusSlider` is the shared flat one-color slider (track/fill/block
   thumb, horizontal or vertical, float progress, redraws only on
   ≥0.5px thumb movement, ignores external updates mid-drag).
+- `KeyRow` — extension key row shown while the IME is visible, sitting
+  directly atop it (below the control bar, so the terminal-flushness
+  padding math is untouched): monospace text keys at the terminal font
+  size in four gap-separated groups — shift/ctrl/alt · del/esc/tab ·
+  ←↓↑→ · home/end/pgup/pgdn — in control-bar colors (cmdline bg,
+  statusline fg), the tab bar's centered-or-scroll overflow pattern.
+  Keys inject via `TerminalView.onKeyDown` (the termux extra-keys
+  path; KeyHandler emits appMode sequences, which match terminfo since
+  cmus's keypad() sends smkx). Sticky modifiers termux-style: tap =
+  one-shot (consumed on read), long-press = locked (inverted block,
+  underlined when locked); MainActivity's readShift/Control/AltKey
+  delegate to the row, and TerminalView merges them into injected keys
+  and IME-typed characters alike. Arrows/page keys auto-repeat on
+  hold.
 - Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout)
   as the pre-first-Options fallback; live chrome colors come from
   CmusTheme above.
@@ -259,5 +276,5 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Input A (13: extension key row with sticky modifiers when the IME is
-visible), then input B/overlays/settings (14+).
+Input B (14: joystick dot, long-press → confirm → win-remove, no text
+selection), then quick filter/sleep timer, overlays, settings (15+).

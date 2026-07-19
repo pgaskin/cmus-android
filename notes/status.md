@@ -3,6 +3,40 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 13: input A (done)
+
+- Per [plans/13-input-a.md](plans/13-input-a.md), no design deviations
+  (the "space" separators shipped as inter-group gaps per the plan's
+  reading). Java-only stage, no cmus patch changes.
+- KeyRow (scrollbar-less fillViewport HorizontalScrollView, the tab-bar
+  overflow pattern): monospace lowercase text keys at the terminal font
+  size in four gap-separated groups — shift/ctrl/alt · del/esc/tab ·
+  ←↓↑→ · home/end/pgup/pgdn — cmdline bg + statusline fg like the
+  control bar it adjoins, ripple as the *foreground* so modifier state
+  can own the background. Sticky modifiers termux-style: tap = one-shot
+  (consumed on read, repaint posted since reads happen mid-dispatch),
+  long-press = locked (survives reads); active = inverted block, locked
+  adds underline. Arrows/pgup/pgdn auto-repeat on hold (long-press
+  starts, 75ms cadence, released on up/cancel + row detach).
+- Wiring: row bottom-most in the root layout (directly atop the IME,
+  below the control bar, so the terminal-flushness barExtra math is
+  untouched); the existing insets listener toggles it on
+  isVisible(Type.ime()) and clears all sticky state on hide (an
+  invisible modifier must never eat the next key); the bottom(+ime)
+  inset moves to whichever chrome is bottom-most visible. Keys inject
+  via TerminalView.onKeyDown(keyCode, ACTION_UP event) — the exact
+  path termux's extra-keys row uses — and MainActivity's
+  readShift/Control/AltKey stubs now delegate to the row, which is
+  what merges sticky modifiers into injected keys *and* IME-typed
+  characters (sticky ctrl + typed t = ^T for free). Application
+  keypad mode was verified a non-issue at plan time: cmus's keypad()
+  emits smkx, so KeyHandler's appMode sequences are the terminfo
+  strings ncurses expects.
+- Verified on device (Pixel 8, wifi adb install; Patrick hands-on for
+  the interaction pass — keys, sticky behavior, layout confirmed
+  working by hand). `./patch.sh check` green; clean assembleDebug.
+  Reinstall force-stopped cmus as always (documented loss window).
+
 ## 2026-07-18 — Stage 12: chrome B (done)
 
 - Per [plans/12-chrome-b.md](plans/12-chrome-b.md) with five live tweaks
@@ -507,13 +541,15 @@ pick up where things left off.
 
 ## Next
 
-Stage 13: input A (extension key row when the IME is visible:
-horizontally scrolling shift/ctrl/alt · space · del/esc/tab · space ·
-arrows · space · home/end/pgup/pgdn, termux-style sticky modifiers) —
-needs its detailed plan written and approved first. The control bar's
-keyboard button and MainActivity's IME toggling/insets are the
-integration points; TerminalViewClient's readControlKey/readAltKey/
-readShiftKey stubs in MainActivity are where sticky modifiers land.
+Stage 14: input B (joystick dot bottom-right — tap = enter, slide
+up/down = arrows, slide far left = tab; long-press = right-click →
+native confirm dialog naming the selected item → `win-remove`;
+gesture/zoom polish; disable text selection) — needs its detailed
+plan written and approved first. TerminalView's long-press currently
+falls through to our interim keyboard toggle in
+MainActivity.onLongPress (retired by the control bar's keyboard
+button since stage 12) and to the lib's text-selection mode, both of
+which stage 14 replaces/disables.
 
 Note for later (Patrick; stage 18 data import, or wherever imports
 land first): inhibit the idle-quit timer while media is being
