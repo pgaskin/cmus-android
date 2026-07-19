@@ -7,8 +7,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextWatcher;
 import android.os.SystemClock;
 import android.util.Log;
 import android.util.TypedValue;
@@ -20,10 +24,13 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -51,7 +58,11 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private TerminalView terminalView;
     private FrameLayout terminalWrapper;
     private View titleStrip;
+    private LinearLayout topBar;
     private HorizontalScrollView tabBar;
+    private ImageButton filterBtn;
+    private EditText filterBox;
+    private ImageButton filterClose;
     private ControlBar controlBar;
     private KeyRow keyRow;
     private JoyDot joyDot;
@@ -66,6 +77,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private CmusIpc ipc; // the instance ipcListener is registered on
     private CmusTheme theme;
     private String viewName;
+    // last echoed live filter (null = none); the box prefills from it at
+    // open and ignores echoes while open (authoritative mid-edit), the
+    // search icon's tint follows it always
+    private String liveFilter;
+    private boolean filterBoxOpen;
+    private boolean filterBoxSquelch; // programmatic setText, watcher off
+    private boolean imeVisible;
     // set by a long-press right-click; the Selected event it triggers is
     // the app's cue to offer the remove dialog (uptimeMillis deadline)
     private long pendingRemoveUntil;
@@ -150,6 +168,63 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         tabBar.addView(tabRow, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        // the tab bar rides in a wrapper with flanking icon slots — quick
+        // filter left, sleep timer right — and morphs into the live-filter
+        // search box (tabs and the right slot swap for the box and ✕)
+        filterBtn = topBarButton(R.drawable.ic_search, this::toggleFilterBox);
+        filterBox = new EditText(this);
+        filterBox.setSingleLine(true);
+        filterBox.setTypeface(Typeface.MONOSPACE);
+        filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+        filterBox.setPadding(dp(5), dp(8), dp(5), dp(8));
+        filterBox.setBackground(null); // no material underline; the bar is the chrome
+        filterBox.setHint("filter");
+        // raw substring match server-side; autocorrect would fight it
+        filterBox.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        filterBox.setImeOptions(EditorInfo.IME_ACTION_SEARCH
+                | EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN);
+        filterBox.setOnEditorActionListener((v, id, ev) -> {
+            // done typing: hand focus back to the terminal so the joystick
+            // and key row drive the filtered list (the box stays open)
+            hideImeAndFocusTerminal();
+            return true;
+        });
+        filterBox.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                if (filterBoxSquelch) {
+                    return;
+                }
+                // the whole rest of the line is the filter, verbatim — no
+                // quoting exists to get wrong; bare live-filter clears
+                String text = s.toString().trim();
+                sendCommand(text.isEmpty() ? "live-filter" : "live-filter " + text);
+            }
+        });
+        filterBox.setOnFocusChangeListener((v, f) -> updateKeyRow());
+        filterBox.setVisibility(View.GONE);
+        filterClose = topBarButton(R.drawable.ic_close, () -> closeFilterBox(true));
+        filterClose.setVisibility(View.GONE);
+
+        topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.addView(filterBtn);
+        topBar.addView(tabBar, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        topBar.addView(filterBox, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        topBar.addView(filterClose);
+
         // TerminalView sizes itself from raw view bounds (ignores its own
         // padding), so insets pad a wrapper instead. Edge-to-edge coloring
         // (targetSdk 36: setStatusBarColor is a no-op) = the tab bar's
@@ -210,7 +285,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.addView(tabBar, new LinearLayout.LayoutParams(
+        root.addView(topBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(terminalWrapper, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
@@ -221,15 +296,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             chromeInsets = insets.getInsets(WindowInsets.Type.systemBars()
                     | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
-            // the key row exists exactly while the IME does, sitting
-            // directly atop it below the control bar
-            boolean ime = insets.isVisible(WindowInsets.Type.ime());
-            if (ime != (keyRow.getVisibility() == View.VISIBLE)) {
-                keyRow.setVisibility(ime ? View.VISIBLE : View.GONE);
-                if (!ime) {
-                    keyRow.clearModifiers();
-                }
-            }
+            imeVisible = insets.isVisible(WindowInsets.Type.ime());
+            updateKeyRow();
             applyChromePadding();
             return WindowInsets.CONSUMED;
         });
@@ -275,6 +343,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         visible = false;
         controlBar.dismissPopup(); // a showing popup would leak the window
         dismissRemoveDialog(); // same, and it's stale by the time we're back
+        closeFilterBox(false); // the filter itself is cmus state, kept
         if (service != null) {
             service.setActivityVisible(false);
         }
@@ -305,8 +374,26 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
      * title row), the control bar's the statusline band, and neither moves
      * the bar's content when the remainder changes.
      */
+    /**
+     * The key row exists exactly while the IME does *and* the terminal owns
+     * it, sitting directly atop it below the control bar — its keys inject
+     * terminal sequences, so it hides while the filter box has focus.
+     */
+    private void updateKeyRow() {
+        boolean want = imeVisible && !filterBox.hasFocus();
+        if (want == (keyRow.getVisibility() == View.VISIBLE)) {
+            return;
+        }
+        keyRow.setVisibility(want ? View.VISIBLE : View.GONE);
+        if (!want) {
+            // an invisible modifier must never eat the next key
+            keyRow.clearModifiers();
+        }
+        applyChromePadding();
+    }
+
     private void applyChromePadding() {
-        tabBar.setPadding(chromeInsets.left, chromeInsets.top, chromeInsets.right, tabExtra);
+        topBar.setPadding(chromeInsets.left, chromeInsets.top, chromeInsets.right, tabExtra);
         terminalWrapper.setPadding(chromeInsets.left, 0, chromeInsets.right, 0);
         // the bottom-most visible chrome wears the bottom inset (the IME
         // height while the key row is visible)
@@ -392,6 +479,10 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 applyTabColors();
                 controlBar.onView(v.name());
             }
+            case CmusIpc.Filter f -> {
+                liveFilter = f.filter();
+                applyTabColors();
+            }
             case CmusIpc.Status s -> controlBar.onStatus(s);
             case CmusIpc.Position p -> controlBar.onPosition(p.position());
             case CmusIpc.Volume v -> controlBar.onVolume(v.left());
@@ -401,7 +492,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     };
 
     private void applyTheme() {
-        tabBar.setBackgroundColor(theme.winTitleBg());
+        topBar.setBackgroundColor(theme.winTitleBg());
+        filterBox.setTextColor(theme.winTitleFg());
+        filterBox.setHintTextColor((theme.winTitleFg() & 0x00FFFFFF) | INACTIVE_TAB_ALPHA);
         titleStrip.setBackgroundColor(theme.winTitleBg());
         terminalWrapper.setBackgroundColor(theme.winBg());
         // cmdline_bg so the bar blends with the TUI's bottom row (default =
@@ -427,11 +520,15 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         if (theme == null) {
             return;
         }
+        int fg = theme.winTitleFg();
+        int dim = (fg & 0x00FFFFFF) | INACTIVE_TAB_ALPHA;
         for (int i = 0; i < viewTabs.length; i++) {
-            boolean active = VIEW_NAMES[i].equals(viewName);
-            viewTabs[i].setTextColor(active ? theme.winTitleFg()
-                    : (theme.winTitleFg() & 0x00FFFFFF) | INACTIVE_TAB_ALPHA);
+            viewTabs[i].setTextColor(VIEW_NAMES[i].equals(viewName) ? fg : dim);
         }
+        // the search icon doubles as the active-filter indicator (the
+        // active-tab convention: full fg = a filter is applied)
+        filterBtn.setImageTintList(ColorStateList.valueOf(liveFilter != null ? fg : dim));
+        filterClose.setImageTintList(ColorStateList.valueOf(fg));
     }
 
     // TermService.SessionCallback
@@ -456,6 +553,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         } else {
             crashScreen = true;
             dismissRemoveDialog(); // there's nothing left to remove from
+            closeFilterBox(false); // nothing left to filter either
             joyDot.setVisibility(View.GONE); // it must not eat the tap-out
             Toast.makeText(this, "cmus exited (" + exitStatus + ") — tap to close",
                     Toast.LENGTH_LONG).show();
@@ -472,6 +570,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             for (TextView tab : viewTabs) {
                 tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             }
+            filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+            filterBtn.setLayoutParams(topBarButtonParams());
+            filterClose.setLayoutParams(topBarButtonParams());
             controlBar.setFontSize(fontSize);
             keyRow.setFontSize(fontSize);
             titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
@@ -506,6 +607,77 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         } else {
             imm.showSoftInput(terminalView, 0);
         }
+    }
+
+    // quick filter: the box drives cmus's live-filter per keystroke; cmus
+    // stays the source of truth through the filter event (the resume file
+    // restores filters at startup and a filters-view activation clears
+    // them behind our back), mirrored by the search icon's tint
+
+    private void toggleFilterBox() {
+        if (filterBoxOpen) {
+            // collapse keeping the filter applied; ✕ is the clearing exit
+            closeFilterBox(false);
+            return;
+        }
+        if (crashScreen || session == null || !session.isRunning()) {
+            return;
+        }
+        filterBoxOpen = true;
+        tabBar.setVisibility(View.GONE);
+        filterBox.setVisibility(View.VISIBLE);
+        filterClose.setVisibility(View.VISIBLE);
+        filterBoxSquelch = true;
+        filterBox.setText(liveFilter == null ? "" : liveFilter);
+        filterBox.setSelection(filterBox.getText().length());
+        filterBoxSquelch = false;
+        // the filter narrows the library, so show it (tree unless already
+        // on a library view); the hidden tab highlight follows the echo
+        if (!"tree".equals(viewName) && !"sorted".equals(viewName)) {
+            sendCommand("view tree");
+        }
+        filterBox.requestFocus();
+        getSystemService(InputMethodManager.class).showSoftInput(filterBox, 0);
+    }
+
+    private void closeFilterBox(boolean clear) {
+        if (!filterBoxOpen) {
+            return;
+        }
+        filterBoxOpen = false;
+        if (clear) {
+            sendCommand("live-filter");
+        }
+        filterBox.setVisibility(View.GONE);
+        filterClose.setVisibility(View.GONE);
+        tabBar.setVisibility(View.VISIBLE);
+        hideImeAndFocusTerminal();
+    }
+
+    private void hideImeAndFocusTerminal() {
+        terminalView.requestFocus();
+        getSystemService(InputMethodManager.class)
+                .hideSoftInputFromWindow(terminalView.getWindowToken(), 0);
+    }
+
+    /** Icon button flanking the tab bar, sized to the tab text band. */
+    private ImageButton topBarButton(int icon, Runnable action) {
+        ImageButton b = new ImageButton(this);
+        b.setImageResource(icon);
+        b.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        b.setPadding(dp(4), dp(4), dp(4), dp(4));
+        TypedValue tv = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true);
+        b.setBackgroundResource(tv.resourceId);
+        b.setOnClickListener(v -> action.run());
+        b.setLayoutParams(topBarButtonParams());
+        return b;
+    }
+
+    /** Square ≈ the tab text band (font size + the tabs' padding). */
+    private LinearLayout.LayoutParams topBarButtonParams() {
+        int side = fontSize + dp(16);
+        return new LinearLayout.LayoutParams(side, side);
     }
 
     @Override

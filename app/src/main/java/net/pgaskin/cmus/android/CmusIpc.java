@@ -34,8 +34,8 @@ import java.util.Map;
 public final class CmusIpc implements AutoCloseable {
     private static final String TAG = "cmus";
 
-    public sealed interface Event permits Hello, Status, Position, Volume, View, Options,
-            Selected {
+    public sealed interface Event permits Hello, Status, Position, Volume, View, Filter,
+            Options, Selected {
     }
 
     /** First line after connect. */
@@ -72,6 +72,16 @@ public final class CmusIpc implements AutoCloseable {
      * through it.
      */
     public record View(String name) implements Event {
+    }
+
+    /**
+     * The library live filter (the `live-filter` command; narrows the
+     * tree/sorted views); null = none. On connect and on change — and not
+     * every change comes from a command: the resume file restores it at
+     * startup and a filters-view activation silently clears it, which is
+     * why cmus diffs the actual lib state instead of hooking commands.
+     */
+    public record Filter(String filter) implements Event {
     }
 
     /**
@@ -129,6 +139,7 @@ public final class CmusIpc implements AutoCloseable {
     private volatile Status status;
     private volatile Volume volume;
     private volatile View view;
+    private volatile Filter filter;
     private volatile Options options;
     private volatile String version;
 
@@ -162,6 +173,9 @@ public final class CmusIpc implements AutoCloseable {
             if (view != null) {
                 listener.onEvent(view);
             }
+            if (filter != null) {
+                listener.onEvent(filter);
+            }
             if (options != null) {
                 listener.onEvent(options);
             }
@@ -185,6 +199,11 @@ public final class CmusIpc implements AutoCloseable {
     /** Last known view; null before the first event. */
     public View view() {
         return view;
+    }
+
+    /** Last known live filter; null before the first event. */
+    public Filter filter() {
+        return filter;
     }
 
     /** Last known options; null before the first event. */
@@ -347,6 +366,7 @@ public final class CmusIpc implements AutoCloseable {
             case Status s -> status = s;
             case Volume v -> volume = v;
             case View v -> view = v;
+            case Filter f -> filter = f;
             case Options o -> options = o;
             case Position ignored -> {
             }
@@ -367,6 +387,7 @@ public final class CmusIpc implements AutoCloseable {
         String state = null;
         String file = null;
         String viewName = null;
+        String liveFilter = null;
         int duration = -1;
         double position = -1;
         int left = -1;
@@ -389,6 +410,7 @@ public final class CmusIpc implements AutoCloseable {
                     case "left" -> left = r.nextInt();
                     case "right" -> right = r.nextInt();
                     case "view" -> viewName = r.nextString();
+                    case "filter" -> liveFilter = r.nextString();
                     case "tags" -> tags = readTags(r);
                     case "options" -> options = readOptions(r);
                     case "files" -> files = readStrings(r);
@@ -405,6 +427,7 @@ public final class CmusIpc implements AutoCloseable {
             case "position" -> new Position(position);
             case "volume" -> new Volume(left, right);
             case "view" -> new View(viewName);
+            case "filter" -> new Filter(liveFilter);
             case "options" -> new Options(options);
             case "selected" -> new Selected(viewName, files, playlists, playlist);
             case null -> throw new IOException("event without a type");
