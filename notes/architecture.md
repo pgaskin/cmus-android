@@ -54,7 +54,11 @@ full plan and rationale; this file describes what currently exists.
   pattern covers them all with no hunks outside android.c; a
   `colorscheme` event from cmd_colorscheme's success path only
   (transient like `selected` — cmus doesn't retain the name, the colors
-  ride the options echo; the app's theme-selector highlight); and
+  ride the options echo; the app's theme-selector highlight); a `jobs`
+  event (worker_has_job diffed in the flush — reliable because job_fd
+  is in the main-loop select set, so job activity is its own wakeup —
+  plus an immediate answer to the `android-jobs` poll line, the
+  idle-quit guard's fresh check); and
   android-nav-left/right + android-pl-add/delete + android-winch
   app-intent input lines resolved inside android.c [pane-aware
   joystick navigation; verbatim-name playlist add/delete; a tty-size
@@ -147,7 +151,12 @@ full plan and rationale; this file describes what currently exists.
   from the prefs-saved last attached size; a TerminalView attaching
   later just resizes it). Idle-quit: when cmus is not PLAYING and no
   activity is visible for 15 min (constant until stage 17), sends
-  `set resume=true` + `quit` — killing only cmus, never the task.
+  `set resume=true` + `quit` — killing only cmus, never the task. The
+  fire never quits mid-import (it would truncate the scan): it asks
+  cmus about worker jobs first (`android-jobs`, answered immediately)
+  and re-polls every 30s while one runs; the pipeline stays armed
+  through the poll/defer cycles, every async step re-checks the idle
+  conditions, and cancel paths clear the pending flag.
   Session death tears down ipc/mediaControl/FGS and drops the
   session ref so getSession can respawn; the backgrounded activity
   stays in recents and respawns on refocus. onTaskRemoved: playing →
@@ -188,9 +197,9 @@ full plan and rationale; this file describes what currently exists.
   exit → stopSelf + finish the activity.
 - `CmusIpc` — client for the android.c socket (the protocol comment
   there is the contract): sealed `Event` records
-  (Hello/Status/Position/Volume/View/Filter/Options + transient Selected
-  and Colorscheme — right-click resolutions and sourced-theme names,
-  not cached/replayed) parsed with JsonReader
+  (Hello/Status/Position/Volume/View/Filter/Options/Jobs + transient
+  Selected and Colorscheme — right-click resolutions and sourced-theme
+  names, not cached/replayed) parsed with JsonReader
   (JSONObject drops duplicate tag keys), listener callbacks on the
   main thread with cached-state replay for late attachers, `send()`
   for raw command lines (rejects newline/overlong), self-reconnecting
@@ -290,8 +299,13 @@ full plan and rationale; this file describes what currently exists.
   pause reverts it promptly); tap = preset list (15–90 min) +
   Custom… + Turn off; the service owns the countdown.
   Settings icon (faint, rightmost): tap = popover (Theme / Font /
-  Settings — the last toasts until stage 17), long-press = theme
-  selector directly. The selectors are centered scrollable list popups
+  Refresh / Settings — the last toasts until stage 17), long-press =
+  theme selector directly. Refresh (stage 18): READ_MEDIA_AUDIO
+  (runtime request resuming the action on grant) → "Adding tracks from
+  Music folder" toast → `add` of the shared Music dir — cmus's own
+  recursive add job imports, re-taps dedupe (library keyed by
+  filename). The diffed Jobs event's true→false edge toasts "Import
+  finished" for *any* import, whatever triggered it. The selectors are centered scrollable list popups
   over the TUI (win colors, separator frame, no scrim, ~60% height cap,
   closed on onStop/crash), sharing one PopupWindow slot + a refresh
   lambda that re-tints rows when the selection moves. Theme column:

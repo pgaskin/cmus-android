@@ -205,10 +205,16 @@ Authorship:
 16. **Theme/font selector overlay** + bundled fonts.
 17. **Settings screen**: control visibility toggles, curated cmus settings
     (aaudio op options, pause_on_output_change, softvol), idle-quit
-    minutes.
-18. **Data**: tar import/export of CMUS_HOME, load-tracks-from-folder
-    (READ_MEDIA_AUDIO).
-19. **Polish/verify**: on-device pass over the whole spec, perf, edge
+    minutes, zip import/export of CMUS_HOME (moved from 18, tar → zip).
+18. **Data** (done *before* 17, amended): Music-folder refresh action
+    (READ_MEDIA_AUDIO) + the jobs event/poll import guard.
+19. **Continuous state save**: periodically save cmus state (resume
+    file, autosave/library, cache) during runtime, not just at exit —
+    closes the loss window of exits that skip the SIGHUP path entirely
+    (force-stop's uid SIGKILL, battery death, panics; stage 10
+    documented it). Likely a small timer in the android.c patch or a
+    save-ish line the app triggers.
+20. **Polish/verify**: on-device pass over the whole spec, perf, edge
     cases.
 
 ## Open items (flagged, defaults chosen)

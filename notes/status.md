@@ -3,6 +3,42 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Stage 18: Music-folder refresh + import guard (done)
+
+- Per [plans/18-data.md](plans/18-data.md), same session as stage 16.
+  **Reordered before stage 17** (Patrick); what was stage 18's tar
+  import/export moves into the settings stage as **zip** — this stage is
+  the popover **Refresh** action plus the import guard designed with
+  Patrick mid-session.
+- **Refresh:** popover gains Refresh (Theme / Font / Refresh / Settings)
+  → READ_MEDIA_AUDIO (runtime request resuming the action on grant;
+  manifest + direct paths, no SAF) → toast "Adding tracks from Music
+  folder" → `add /storage/emulated/0/Music` (from Environment, not
+  hardcoded). cmus's own recursive add job is the importer; the library
+  is keyed by filename so re-taps dedupe — no app-side scan state. The
+  path prefixes under CMUS_ANDROID_EXT (stage-10 pl_env portability).
+- **Jobs over IPC (0001), two mechanisms by Patrick's call:** the
+  load-bearing find is that **job_fd is in cmus's main-loop select
+  set** — job activity itself wakes the loop, so a
+  `{"type":"jobs","running":bool}` event *diffed in the flush* (volume
+  pattern, snapshotted on connect, cached/replayed in CmusIpc) is
+  reliably prompt, unlike the stage-15 WINCH case. That event drives an
+  **"Import finished" toast on the true→false edge — any import, any
+  trigger** (TUI `:add` included). The **idle-quit guard polls
+  instead**: the fire sends `android-jobs` (answered immediately; also
+  updates the diff cache) and quits only on a fresh running=false,
+  re-polling every 30s while an import runs — never truncating a scan
+  (closes the stage-15 note). The pipeline stays armed through the
+  poll/defer cycles so a leftover re-poll can't couple with a fresh
+  arming and quit ~30s after backgrounding; every async step re-checks
+  the idle conditions, and cancel paths clear the pending flag.
+- **TODO (Patrick, recorded below):** tracks deleted on disk linger in
+  the library — cmus has no prune-missing command; needs design.
+- Verified on device (Pixel 8; Patrick hands-on with his own tracks):
+  permission flow, toast, import lands, finished-toast fires — "it
+  works correctly". patch.sh check green after the 0001 fixup+regen;
+  clean assembleDebug.
+
 ## 2026-07-19 — Stage 16: theme/font selector + bundled fonts (done)
 
 - Per [plans/16-theme-font.md](plans/16-theme-font.md) with two Patrick
@@ -782,31 +818,27 @@ pick up where things left off.
 
 Stage 17: settings screen (the popover's Settings entry currently
 toasts; control visibility toggles, curated cmus settings — aaudio op
-options, pause_on_output_change, softvol —, idle-quit minutes) — needs
-its detailed plan written and approved first.
+options, pause_on_output_change, softvol —, idle-quit minutes, plus the
+**zip** import/export of CMUS_HOME that moved here from stage 18) —
+needs its detailed plan written and approved first.
 
-Note for stage 19 polish: Iosevka-Regular.ttf is 10.8 MB (most of the
+TODO from Patrick (stage 18 follow-up, wherever it fits): tracks
+deleted on disk linger in the library — cmus has no prune-missing
+command. Needs design: maybe an android.c intent line
+access(2)-checking lib entries (worker job, like update-cache), or an
+app-side diff of the saved library against the filesystem.
+
+After 17 comes stage 19 (new, Patrick): continuous state save —
+periodic resume/autosave/library/cache saves during runtime, closing
+the stage-10 loss window for exits that skip SIGHUP entirely
+(force-stop's uid SIGKILL, battery death, panics); then stage 20
+polish.
+
+Note for stage 20 polish: Iosevka-Regular.ttf is 10.8 MB (most of the
 APK bump); a pyftsubset pass over the bundled fonts could reclaim most
 of it if size ever matters.
 
-Note for later (Patrick; stage 18 data import, or wherever imports
-land first): inhibit the idle-quit timer while media is being
-imported — a long add/import scan with the app backgrounded and
-nothing playing looks exactly like idle, and quitting mid-import
-would truncate it. TermService.updateIdleQuit is the gate point;
-cmus-side job activity could come from the running import command's
-lifecycle (the importer knows when it started/finished) rather than
-anything cmus reports.
-
-Future feature (Patrick, needs a cmus patch): periodically save cmus
-state — resume file, autosave/library, cache — during runtime, not
-just at exit, to protect against unexpected exits that skip the
-SIGHUP path entirely (force-stop SIGKILLs the whole uid, battery
-death, panics). Likely a small timer in the android.c patch or a
-`save`-ish IPC command the app triggers; stage 10 documents the loss
-window it would close.
-
-Note for later (stage 19 polish at the latest): ogg/opus embedded
+Note for later (stage 20 polish at the latest): ogg/opus embedded
 art — the framework extractor doesn't read METADATA_BLOCK_PICTURE,
 so MediaControl falls back to folder art for those; implement a
 small Java-side parser (base64 FLAC PICTURE block in the vorbis
