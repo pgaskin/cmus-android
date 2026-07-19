@@ -39,7 +39,16 @@ full plan and rationale; this file describes what currently exists.
   hunks in ui_curses.c/command_mode.c — including a view event out of
   set_view() — + a player_pos_exact() wrapper in player.c/h reading the
   fractional position under player_lock, since player_info.pos is whole
-  seconds and the app's seek bar animates between events; everything
+  seconds and the app's seek bar animates between events; a keys.c hook
+  in normal_mode_mouse emitting the `selected` event on right-clicks
+  that resolve to a list row [the win-remove target set via the shared
+  _for_each_sel machinery + playlist names, or the playlist-name
+  variant for the playlist view's list pane — only where the offered
+  action is prompt-free, since yes_no_query blocks the main loop on the
+  pty]; a pl_android_for_each_name wrapper in pl.c/h [struct playlist
+  is private]; and android-nav-left/right + android-pl-add/delete
+  app-intent input lines resolved inside android.c [pane-aware
+  joystick navigation; verbatim-name playlist add/delete]; everything
   guarded by CONFIG_ANDROID so the patched tree
   still builds with the upstream Makefile), 0002 removes remote-stream
   support (input.c remote machinery behind `#ifndef CONFIG_ANDROID`,
@@ -143,7 +152,8 @@ full plan and rationale; this file describes what currently exists.
   exit → stopSelf + finish the activity.
 - `CmusIpc` — client for the android.c socket (the protocol comment
   there is the contract): sealed `Event` records
-  (Hello/Status/Position/Volume/View/Options) parsed with JsonReader
+  (Hello/Status/Position/Volume/View/Options + transient Selected —
+  right-click resolutions, not cached/replayed) parsed with JsonReader
   (JSONObject drops duplicate tag keys), listener callbacks on the
   main thread with cached-state replay for late attachers, `send()`
   for raw command lines (rejects newline/overlong), self-reconnecting
@@ -191,10 +201,23 @@ full plan and rationale; this file describes what currently exists.
 - `MainActivity` — vertical LinearLayout: view-selector tab bar over a
   FrameLayout-wrapped `TerminalView` (focusableInTouchMode — required
   for IME/keys; set in code, easy to miss; sizes from raw bounds, so
-  insets pad the wrappers) over a `ControlBar` over a `KeyRow` (GONE
+  insets pad the wrappers; a `JoyDot` overlays its bottom-right) over
+  a `ControlBar` over a `KeyRow` (GONE
   unless the IME is visible — the insets listener toggles it on
   isVisible(Type.ime()), hands the bottom inset to whichever chrome is
   bottom-most visible, and clears sticky modifier state on hide).
+  Long-press = right-click (BUTTON3 press+release at the pressed cell;
+  always consumed, which is also what keeps the lib's text-selection
+  mode permanently unreachable): cmus moves its selection natively and
+  answers with a Selected event when the click resolved to something
+  actionable — inside an 800ms post-press window that opens the item
+  dialog (files list; Remove → win-remove re-checked against the
+  echoed view / Add to playlist → chooser of the event's playlist
+  names + New playlist… → pl-create + android-pl-add / Cancel), or
+  the remove-playlist dialog for the playlist-name variant
+  (android-pl-delete). The dialog is dismissed on stop/crash. The
+  pinch-zoomed font size persists in prefs (restored clamped on
+  create, so reopening matches the saved headless pty grid).
   Insets split for edge-to-edge coloring
   (targetSdk 36: setStatusBarColor is a no-op): the tab bar consumes
   top+sides so its background (win_title_bg) paints the status-bar
@@ -263,6 +286,19 @@ full plan and rationale; this file describes what currently exists.
   delegate to the row, and TerminalView merges them into injected keys
   and IME-typed characters alike. Arrows/page keys auto-repeat on
   hold.
+- `JoyDot` — faint minecraft-style joystick over the terminal's
+  bottom-right (120dp view, center 80/90dp in from the corner; only
+  touches starting within 39dp of center are grabbed, the rest fall
+  through; knob follows the finger to 44dp; win_fg at low alpha via
+  applyTheme; hidden on the crash screen). Tap = enter; slide up/down
+  past 15dp = repeating arrows (300→75ms, scaled by displacement to
+  60dp); slide far left/right past 40dp (30dp hysteresis) =
+  directional nav repeating 750→250ms — sends android-nav-left/right
+  over IPC, which cmus resolves pane-aware (win-next toward the inner
+  pane in tree/playlist, left/right-view -n at the edges and in
+  single-pane views, empty track pane skipped). Keys inject through
+  MainActivity's shared injectKey, so KeyRow's sticky modifiers merge
+  here too; arrows pause while navigating.
 - Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout)
   as the pre-first-Options fallback; live chrome colors come from
   CmusTheme above.
@@ -276,5 +312,5 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Input B (14: joystick dot, long-press → confirm → win-remove, no text
-selection), then quick filter/sleep timer, overlays, settings (15+).
+Quick filter + sleep timer (15), then theme/font selector overlay,
+settings, data import/export (16+).

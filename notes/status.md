@@ -3,6 +3,79 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 14: input B (done)
+
+- Per [plans/14-input-b.md](plans/14-input-b.md), but with a mid-stage
+  redesign and several feature additions from Patrick live-testing each
+  build — the plan's app-side screen-reading flow shipped, worked, and
+  was then replaced the same session (see below). What stands:
+- **Long-press = right-click.** onLongPress always returns true (that's
+  TerminalView's only entry into text-selection mode, so selection is
+  permanently disabled, and the interim long-press keyboard toggle is
+  retired) and, when mouse tracking is on, sends BUTTON3 press+release
+  (raw protocol code 2 — the lib's public sendMouseEvent takes it) at
+  the pressed cell. No mrb_* key is bound in the default rc, so cmus's
+  reaction is moving the selection to that row / switching panes.
+- **Patrick's redesign: the confirm dialog names the actual files, not
+  the rendered row text** — so patch 0001 grew a `selected` event
+  instead of the plan's terminal-buffer reading. keys.c hooks
+  normal_mode_mouse after the selection has moved (KEY_MRB_CLICK |
+  _SEL only — the bar/title variants excluded); android.c emits the
+  exact win-remove target set via the same per-view _for_each_sel the
+  multi-track commands use (marked-tracks rule included, so a marked
+  set or a tree artist/album lists every file), but only where
+  cmd_win_remove is prompt-free — elsewhere (browser, filters,
+  settings) yes_no_query would block cmus's main loop reading the pty.
+  The app arms an 800ms window at long-press; a Selected inside it =
+  the click resolved to a removable selection → dialog. Every
+  app-side guard from the plan (pane-split mirror, cmdline-prefix
+  mode sniff, blank-row check) became unnecessary: no event, no
+  dialog. Remove re-checks the echoed view at confirm.
+- **Playlist actions (Patrick, added during testing):** the item
+  dialog gained a neutral "Add to playlist" → chooser of the event's
+  `playlists` names + "New playlist…" (EditText → `pl-create` +
+  `android-pl-add`, ordered writes). Long-pressing a playlist *name*
+  (playlist view list pane) emits the event's playlist variant → a
+  remove-playlist dialog → `android-pl-delete`. The verbatim-name
+  intent lines dodge command-tokenizer quoting; android-pl-add marks
+  the target by name, adds the selection, and restores the user's
+  mark (cmus can only add to the *marked* playlist);
+  android-pl-delete = pl_delete_by_name — both prompt-free, unlike
+  their win-* equivalents. pl_android_for_each_name is the minimal
+  pl.c/pl.h wrapper (struct playlist + pl_head are private;
+  player_pos_exact precedent).
+- **JoyDot** (shaped by ~5 rounds of Patrick's hands-on): faint
+  two-circle virtual stick over the terminal's bottom-right — 120dp
+  view, grabs only touches starting within 39dp of center (rest fall
+  through to the terminal), knob follows the finger to 44dp, center
+  80/90dp in from the corner so a far-right drag has room. Tap =
+  enter; vertical past 15dp = repeating arrows (300→75ms scaled to
+  60dp); far left/right past 40dp (30dp hysteresis) = **directional
+  nav, repeating 750→250ms** scaled by displacement: android-nav-left/
+  right intent lines that cmus resolves with the pane state only it
+  has — win-next toward the inner pane in tree/playlist, left/right-
+  view -n at that side's edge or in single-pane views (no wrap), and
+  an empty track pane is skipped straight to the view switch
+  (pl_win_next refuses to enter it — the "can't go right out of an
+  empty playlist" fix). Keys ride the shared injectKey path, so
+  KeyRow's sticky modifiers merge; arrows pause while navigating; dot
+  hidden on the crash screen.
+- **Font size persists** (prefs "font", saved per pinch, restored
+  clamped) — reopening used to reset to 13dp and immediately resize
+  the headless pty spawned at the saved grid.
+- Verified on device (Pixel 8, wifi adb + logcat + debug receiver;
+  Patrick hands-on throughout, testing each build live): nav
+  view-switching watched via echoed view events (playlist left-pane
+  slide → sorted; empty-playlist far-right fix confirmed by Patrick),
+  dialogs/filenames/playlist add+remove/joystick feel/grab area all
+  Patrick-confirmed — "it all works correctly". patch.sh check green
+  after each of the four 0001 fixup+regen rounds; clean assembleDebug.
+- Testing notes: every reinstall force-stops cmus (documented loss
+  window). adb long-press = `input swipe x y x y 600`; joystick
+  slides = swipes from the dot center. clangd flags android.c with
+  phantom errors (no CONFIG_ANDROID in IDE flags — android.h's no-op
+  macros poison the parse); the real build is the arbiter.
+
 ## 2026-07-18 — Stage 13: input A (done)
 
 - Per [plans/13-input-a.md](plans/13-input-a.md), no design deviations
@@ -541,15 +614,10 @@ pick up where things left off.
 
 ## Next
 
-Stage 14: input B (joystick dot bottom-right — tap = enter, slide
-up/down = arrows, slide far left = tab; long-press = right-click →
-native confirm dialog naming the selected item → `win-remove`;
-gesture/zoom polish; disable text selection) — needs its detailed
-plan written and approved first. TerminalView's long-press currently
-falls through to our interim keyboard toggle in
-MainActivity.onLongPress (retired by the control bar's keyboard
-button since stage 12) and to the lib's text-selection mode, both of
-which stage 14 replaces/disables.
+Stage 15: quick filter + sleep timer (tab-bar morphing live-filter
+search box focused on the library; sleep-timer duration selector with
+minutes-left countdown icon) — needs its detailed plan written and
+approved first.
 
 Note for later (Patrick; stage 18 data import, or wherever imports
 land first): inhibit the idle-quit timer while media is being
