@@ -63,6 +63,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private ImageButton filterBtn;
     private EditText filterBox;
     private ImageButton filterClose;
+    private ImageButton sleepBtn;
+    private TextView sleepText;
+    private final Runnable sleepTick = this::updateSleepSlot;
     private ControlBar controlBar;
     private KeyRow keyRow;
     private JoyDot joyDot;
@@ -106,6 +109,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             session = service.getSession();
             terminalView.attachSession(session);
             attachIpc();
+            updateSleepSlot(); // binding is async; render the real state
             if (!session.isRunning()) {
                 finish();
             }
@@ -215,6 +219,16 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         filterClose = topBarButton(R.drawable.ic_close, () -> closeFilterBox(true));
         filterClose.setVisibility(View.GONE);
 
+        // sleep-timer slot: the bedtime icon while off, minutes-left text
+        // while armed (the service owns the countdown; this only renders it)
+        sleepBtn = topBarButton(R.drawable.ic_sleep, this::showSleepDialog);
+        sleepText = new TextView(this);
+        sleepText.setTypeface(Typeface.MONOSPACE);
+        sleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+        sleepText.setPadding(dp(5), dp(8), dp(5), dp(8));
+        sleepText.setOnClickListener(v -> showSleepDialog());
+        sleepText.setVisibility(View.GONE);
+
         topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -223,6 +237,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
         topBar.addView(filterBox, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        topBar.addView(sleepBtn);
+        topBar.addView(sleepText);
         topBar.addView(filterClose);
 
         // TerminalView sizes itself from raw view bounds (ignores its own
@@ -334,6 +350,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 terminalView.attachSession(session);
                 attachIpc(); // respawn = a fresh CmusIpc instance
             }
+            updateSleepSlot(); // restart the minute tick while visible
         }
     }
 
@@ -344,6 +361,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         controlBar.dismissPopup(); // a showing popup would leak the window
         dismissRemoveDialog(); // same, and it's stale by the time we're back
         closeFilterBox(false); // the filter itself is cmus state, kept
+        sleepText.removeCallbacks(sleepTick); // no ticking while invisible
         if (service != null) {
             service.setActivityVisible(false);
         }
@@ -483,7 +501,10 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 liveFilter = f.filter();
                 applyTabColors();
             }
-            case CmusIpc.Status s -> controlBar.onStatus(s);
+            case CmusIpc.Status s -> {
+                controlBar.onStatus(s);
+                updateSleepSlot(); // the expiry pause echoes back as Status
+            }
             case CmusIpc.Position p -> controlBar.onPosition(p.position());
             case CmusIpc.Volume v -> controlBar.onVolume(v.left());
             default -> {
@@ -529,6 +550,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // active-tab convention: full fg = a filter is applied)
         filterBtn.setImageTintList(ColorStateList.valueOf(liveFilter != null ? fg : dim));
         filterClose.setImageTintList(ColorStateList.valueOf(fg));
+        sleepBtn.setImageTintList(ColorStateList.valueOf(dim));
+        sleepText.setTextColor(fg); // armed = active, the tab convention
     }
 
     // TermService.SessionCallback
@@ -571,8 +594,10 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             }
             filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+            sleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             filterBtn.setLayoutParams(topBarButtonParams());
             filterClose.setLayoutParams(topBarButtonParams());
+            sleepBtn.setLayoutParams(topBarButtonParams());
             controlBar.setFontSize(fontSize);
             keyRow.setFontSize(fontSize);
             titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
@@ -625,6 +650,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         }
         filterBoxOpen = true;
         tabBar.setVisibility(View.GONE);
+        sleepBtn.setVisibility(View.GONE);
+        sleepText.setVisibility(View.GONE);
         filterBox.setVisibility(View.VISIBLE);
         filterClose.setVisibility(View.VISIBLE);
         filterBoxSquelch = true;
@@ -651,6 +678,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         filterBox.setVisibility(View.GONE);
         filterClose.setVisibility(View.GONE);
         tabBar.setVisibility(View.VISIBLE);
+        updateSleepSlot(); // restores whichever of icon/countdown applies
         hideImeAndFocusTerminal();
     }
 
@@ -678,6 +706,96 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private LinearLayout.LayoutParams topBarButtonParams() {
         int side = fontSize + dp(16);
         return new LinearLayout.LayoutParams(side, side);
+    }
+
+    // sleep timer: the service owns the countdown (it must tick with the
+    // activity gone); this renders it and hosts the duration selector
+
+    private static final int[] SLEEP_PRESETS = {15, 30, 45, 60, 90};
+
+    /**
+     * Bedtime icon when off, minutes-left text when armed, re-posted on the
+     * deadline's next minute boundary while visible. Status events land
+     * here too, so the expiry pause echo reverts the slot promptly.
+     */
+    private void updateSleepSlot() {
+        sleepText.removeCallbacks(sleepTick);
+        long remaining = service != null ? service.sleepRemainingMs() : 0;
+        if (filterBoxOpen) {
+            return; // the slot is hidden; closeFilterBox re-renders it
+        }
+        if (remaining == 0) {
+            sleepBtn.setVisibility(View.VISIBLE);
+            sleepText.setVisibility(View.GONE);
+            return;
+        }
+        sleepText.setText((remaining + 59_999) / 60_000 + "m");
+        sleepBtn.setVisibility(View.GONE);
+        sleepText.setVisibility(View.VISIBLE);
+        if (visible) {
+            sleepText.postDelayed(sleepTick, remaining % 60_000 + 100);
+        }
+    }
+
+    private void showSleepDialog() {
+        if (service == null) {
+            return;
+        }
+        long remaining = service.sleepRemainingMs();
+        int n = SLEEP_PRESETS.length;
+        String[] items = new String[n + (remaining > 0 ? 2 : 1)];
+        for (int i = 0; i < n; i++) {
+            items[i] = SLEEP_PRESETS[i] + " minutes";
+        }
+        items[n] = "Custom…";
+        if (remaining > 0) {
+            items[n + 1] = "Turn off (" + (remaining + 59_999) / 60_000 + "m left)";
+        }
+        // removeDialog = "the current dialog": stop/crash dismissal covers
+        // this one the same way as the item dialogs
+        removeDialog = new AlertDialog.Builder(this)
+                .setTitle("Sleep timer")
+                .setItems(items, (d, which) -> {
+                    if (which < n) {
+                        setSleepTimer(SLEEP_PRESETS[which]);
+                    } else if (which == n) {
+                        promptSleepMinutes();
+                    } else {
+                        service.cancelSleepTimer();
+                        updateSleepSlot();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void promptSleepMinutes() {
+        EditText input = new EditText(this);
+        input.setHint("Minutes");
+        input.setInputType(InputType.TYPE_CLASS_NUMBER);
+        removeDialog = new AlertDialog.Builder(this)
+                .setTitle("Sleep timer")
+                .setView(input)
+                .setPositiveButton("Start", (d, w) -> {
+                    int minutes;
+                    try {
+                        minutes = Integer.parseInt(input.getText().toString().trim());
+                    } catch (NumberFormatException e) {
+                        return;
+                    }
+                    if (minutes > 0) {
+                        setSleepTimer(minutes);
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void setSleepTimer(int minutes) {
+        if (service != null) {
+            service.setSleepTimer(minutes);
+            updateSleepSlot();
+        }
     }
 
     @Override

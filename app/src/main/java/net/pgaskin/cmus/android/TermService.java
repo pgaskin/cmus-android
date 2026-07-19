@@ -13,6 +13,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 
 import com.termux.terminal.TerminalSession;
@@ -282,6 +283,43 @@ public class TermService extends Service implements TerminalSessionClient {
         }
     }
 
+    // sleep timer (stage 15): app-side countdown, expiry pauses (never
+    // stops — resume-friendly, and a no-op unless playing). postDelayed
+    // counts uptimeMillis (the idle-quit stance above): while the timer
+    // matters something is playing and active audio holds a partial
+    // wakelock, so uptime tracks elapsed; if the device dozed, nothing
+    // was playing and the late no-op fire is fine. After the expiry
+    // pause, a backgrounded app falls into the normal idle-quit path.
+    private long sleepDeadline; // elapsedRealtime ms; 0 = off
+
+    private final Runnable sleepFire = () -> {
+        sleepDeadline = 0;
+        Log.i(TAG, "sleep timer: pausing");
+        if (ipc != null) {
+            ipc.send("player-pause-playback");
+        }
+    };
+
+    /** (Re)starts the countdown. */
+    public void setSleepTimer(int minutes) {
+        mainHandler.removeCallbacks(sleepFire);
+        sleepDeadline = SystemClock.elapsedRealtime() + minutes * 60_000L;
+        mainHandler.postDelayed(sleepFire, minutes * 60_000L);
+        Log.d(TAG, "sleep timer: set " + minutes + "m");
+    }
+
+    public void cancelSleepTimer() {
+        mainHandler.removeCallbacks(sleepFire);
+        sleepDeadline = 0;
+        Log.d(TAG, "sleep timer: cancelled");
+    }
+
+    /** Remaining ms, floored at 1 while armed; 0 = no timer. */
+    public long sleepRemainingMs() {
+        return sleepDeadline == 0 ? 0
+                : Math.max(1, sleepDeadline - SystemClock.elapsedRealtime());
+    }
+
     private final Runnable idleQuit = () -> {
         idleQuitArmed = false;
         CmusIpc.Status status = ipc != null ? ipc.status() : null;
@@ -356,6 +394,7 @@ public class TermService extends Service implements TerminalSessionClient {
     public void onSessionFinished(TerminalSession finishedSession) {
         mainHandler.removeCallbacksAndMessages(null);
         idleQuitArmed = false;
+        sleepDeadline = 0; // the fire above was just dropped with the rest
         pendingMediaPlay = false;
         // a foreground quit is the user closing the app for real — gate the
         // media-key resurrection off (background deaths keep it); before the
