@@ -815,7 +815,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 // event-driven by design (Patrick): the diffed jobs event
                 // covers every import trigger, not just our refresh
                 if (Boolean.TRUE.equals(jobsRunning) && !j.running()) {
-                    Toast.makeText(this, "Import finished", Toast.LENGTH_SHORT).show();
+                    // any worker job: Import adds and Update cache alike
+                    Toast.makeText(this, "Library update finished", Toast.LENGTH_SHORT).show();
                 }
                 jobsRunning = j.running();
             }
@@ -1118,7 +1119,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         }
         // the control bar owns the keyboard toggle; when it's hidden the
         // popover is the way in (stage 18)
-        List<String> items = new ArrayList<>(List.of("Theme", "Font", "Refresh"));
+        List<String> items = new ArrayList<>(List.of("Theme", "Font", "Import", "Update cache"));
         if (!getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
                 .getBoolean(TermService.PREF_SHOW_CONTROL_BAR, true)) {
             items.add("Keyboard");
@@ -1131,7 +1132,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                     switch (items.get(which)) {
                         case "Theme" -> showThemeSelector();
                         case "Font" -> showFontSelector();
-                        case "Refresh" -> refreshTracks();
+                        case "Import" -> refreshTracks();
+                        case "Update cache" -> updateCache();
                         case "Keyboard" -> toggleSoftKeyboard();
                         case "Settings" -> startActivityForResult(
                                 new Intent(this, SettingsActivity.class), REQUEST_SETTINGS);
@@ -1186,6 +1188,21 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     // refresh (stage 18): `add <Music>` — cmus's own recursive scan job is
     // the importer, and re-adds are dedupe no-ops (the library is keyed by
     // filename), so this is safely re-tappable with no app-side state
+
+    /**
+     * The popover's Update cache: cmus's own update-cache worker job —
+     * re-reads metadata for changed files and for entries added under
+     * skip_track_info (their unset mtime never matches, so no -f needed;
+     * -f would re-read the whole library). Completion lands as the usual
+     * Jobs true→false toast.
+     */
+    private void updateCache() {
+        if (crashScreen || session == null || !session.isRunning()) {
+            return;
+        }
+        Toast.makeText(this, "Updating track metadata", Toast.LENGTH_SHORT).show();
+        sendCommand("update-cache");
+    }
 
     private void refreshTracks() {
         if (crashScreen || session == null || !session.isRunning()) {

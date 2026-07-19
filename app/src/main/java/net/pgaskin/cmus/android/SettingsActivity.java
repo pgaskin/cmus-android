@@ -219,7 +219,7 @@ public class SettingsActivity extends Activity {
             }
         }));
         refreshers.add(() -> permSubtitle.setText(hasMusicPermission()
-                ? "Granted. Refresh can add tracks from the Music folder."
+                ? "Granted. Import can add tracks from the Music folder."
                 : "Not granted. Tap to allow reading the Music folder."));
 
         switchPrefRow("Show top bar", "The view tabs, filter, and sleep timer. When "

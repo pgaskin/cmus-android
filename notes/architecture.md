@@ -264,9 +264,10 @@ full plan and rationale; this file describes what currently exists.
   the system-side registration can't be cleared (null NPEs
   server-side on Android 16, archived registrations linger).
 - `CmusDebugReceiver` — broadcast receiver forwarding
-  `-e cmd <cmus command>` from (root) adb through `CmusIpc.send`;
-  fires when the build is debuggable *or* the stage-18 debug-settings
-  toggle is on (the settings row shows the example command).
+  `-e cmd <cmus command>` from (root) adb through `CmusIpc.send`,
+  gated by the stage-18 debug-settings toggle (default on only in
+  debuggable builds, like the IPC-log toggle — release ships with
+  both off; the settings row shows the example command).
 - `CmusFiles` — idempotent per-spawn layout under `filesDir/.cmus/`
   ({terminfo,data,home,lib,assets.stamp,android.sock} — a dotfolder so
   the file browser at $HOME = filesDir shows a clean home unless
@@ -351,8 +352,12 @@ full plan and rationale; this file describes what currently exists.
   pause reverts it promptly); tap = preset list (15–90 min) +
   Custom… + Turn off; the service owns the countdown.
   Settings icon (faint, rightmost): tap = popover (Theme / Font /
-  Refresh / Settings, + Keyboard while the bottom bar is hidden — its
-  IME toggle went with it), long-press = theme selector directly.
+  Import / Update cache / Settings, + Keyboard while the bottom bar is
+  hidden — its IME toggle went with it), long-press = theme selector
+  directly. Update cache sends plain `update-cache` (no -f: changed
+  files and skip_track_info entries refresh, the whole library isn't
+  re-read); any worker job's true→false edge toasts "Library update
+  finished".
   Stage-18 visibility toggles: top bar / bottom bar / joystick prefs
   re-applied on every onStart (returning from settings) — hidden bars
   hand their insets to the terminal wrapper, the row-quantization
@@ -361,7 +366,8 @@ full plan and rationale; this file describes what currently exists.
   button anchoring the same popover) floats over the terminal's
   top-right whenever the top bar is hidden (hidden with the joystick
   on the crash screen). Zoom (the font pref) is shared by
-  pinch and the settings slider through one applyFontSize. Refresh (stage 17): READ_MEDIA_AUDIO
+  pinch and the settings slider through one applyFontSize. Import
+  (stage 17's Refresh, renamed in 18): READ_MEDIA_AUDIO
   (runtime request resuming the action on grant) → "Adding tracks from
   Music folder" toast → `add` of the shared Music dir — cmus's own
   recursive add job imports, re-taps dedupe (library keyed by

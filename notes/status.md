@@ -56,6 +56,11 @@ pick up where things left off.
   **Caveat**: deleting autosave resets softvol_state to `0 0` (silent
   until vol is raised) — inherent to a defaults reset; I restored
   `vol 100` on the device after testing.
+- Popover rename (Patrick): Refresh → **Import**, plus a new **Update
+  cache** entry sending plain `update-cache` (no -f: changed files and
+  skip_track_info entries refresh without re-reading the whole
+  library); the jobs-edge toast is now the neutral "Library update
+  finished" since it fires for both.
 - **Riders**: Material You default (explicit colorscheme picks already
   store false, untouched); hue-rotation setting (0–359°, 180 default)
   re-pushed live; sleep-timer exit mode (clears `resurrect` so a BT key
