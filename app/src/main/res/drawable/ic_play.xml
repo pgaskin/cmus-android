@@ -1,0 +1,13 @@
+<!-- Material Symbols outlined, play_arrow fill1; the -960..0 y-range of the
+     symbols viewBox is shifted by the group -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group android:translateY="960">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M320,-200v-560l440,280 -440,280Z" />
+    </group>
+</vector>
