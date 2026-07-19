@@ -409,7 +409,8 @@ public class SettingsActivity extends Activity {
     private void buildDataSection() {
         header("Data");
 
-        addRow(row("Export backup", subtitle("Save library, playlists, and settings as a zip"),
+        addRow(row("Export backup", subtitle("Save the library, playlists, and cmus "
+                        + "settings as a zip. App settings are not included."),
                 null, () -> {
                     Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
                             .addCategory(Intent.CATEGORY_OPENABLE)
