@@ -18,7 +18,7 @@ full plan and rationale; this file describes what currently exists.
 ├── third_party/      12 pinned submodules (cmus, ncurses, libogg,
 │                     libvorbis, opus, opusfile, flac, libmad, wavpack,
 │                     faad2, mp4v2, libiconv)
-├── patches/          per-submodule patch dirs (cmus: 2)
+├── patches/          per-submodule patch dirs (cmus: 4)
 ├── patch.sh          vncpatch-style patch apply/regenerate
 ├── settings.gradle   root: pluginManagement + :app
 ├── build.gradle      AGP 9.3.0 (apply false)
@@ -58,7 +58,20 @@ full plan and rationale; this file describes what currently exists.
   event (worker_has_job diffed in the flush — reliable because job_fd
   is in the main-loop select set, so job activity is its own wakeup —
   plus an immediate answer to the `android-jobs` poll line, the
-  idle-quit guard's fresh check); and
+  idle-quit guard's fresh check); a `dirty` event announcing unsaved
+  state-file changes per kind (library/cache/playlist/queue/history —
+  per-kind mutation counters bumped from hooks in editable.c/lib.c/
+  pl.c/cache.c/history.c, atomic since the cache mutates on the
+  worker; a kind announces when its counter differs from both the
+  last-announced value and the one snapshotted *before* the last
+  save's writes, so mid-save mutations re-announce and each kind
+  emits once per save cycle; re-announced in the connect snapshot,
+  emitted before the jobs diff so a client arms its debounce before
+  a completion edge; the startup loaders deliberately don't bump the
+  cache); the `android-save [kind…]` line (granular subsets of the
+  exit save set; bare = everything) acked by a `saved` event carrying
+  `what`, with the cache written under cache_lock — the worker is
+  live here, unlike the exit path (stage-19 fix); and
   android-nav-left/right + android-pl-add/delete + android-winch
   app-intent input lines resolved inside android.c [pane-aware
   joystick navigation; verbatim-name playlist add/delete; a tty-size
@@ -73,7 +86,14 @@ full plan and rationale; this file describes what currently exists.
   Everything guarded by CONFIG_ANDROID so the patched tree
   still builds with the upstream Makefile), 0002 removes remote-stream
   support (input.c remote machinery behind `#ifndef CONFIG_ANDROID`,
-  cmus_detect_ft's http branch out) so http.c drops from the link. The
+  cmus_detect_ft's http branch out) so http.c drops from the link,
+  0003 (upstream candidate) fixes op/aaudio's sharing_mode getter,
+  0004 (upstream candidate, un-gated) makes do_cmus_save atomic —
+  write `<filename>.tmp` + rename like every other state writer
+  (lib.pl/queue.pl/playlists were the only in-place O_TRUNC writers),
+  with pl_load_all skipping `*.tmp` leftovers and .tmp-suffixed
+  playlist names rejected (saving playlist X writes X.tmp, which
+  would clobber a playlist named X.tmp). The
   protocol comment atop android.c is the contract the Java client codes
   against. Amending an existing patch = fixup commit in the submodule +
   `git rebase --autosquash base`, then ./patch.sh regen.
@@ -197,19 +217,24 @@ full plan and rationale; this file describes what currently exists.
   (re)connect (never touch user config files; autosave persisting the
   forced value is fine). resume makes every quit lossless (track,
   position, play state, view — even app-process death: pty SIGHUP is
-  a clean cmus exit, though force-stop's uid SIGKILL still loses
-  since-last-save state until stage 19's periodic save — its
-  `android-save` building block landed in stage 18);
+  a clean cmus exit; exits that skip every save path — force-stop's
+  uid SIGKILL, battery death — are bounded by `StateSaver`'s
+  continuous saves since stage 19);
   pl_env makes saved library/cache paths portable across
   reinstalls/storage moves. Owns a `MediaControl` beside it
   (registered as a second IPC listener, closed the same way); the
-  FGS notification is MediaControl's media notification. Session
+  FGS notification is MediaControl's media notification. Owns a
+  `StateSaver` the same way (third listener, per-CmusIpc lifecycle);
+  TermService.saveState (the export/pre-reset bounded save) delegates
+  into its FIFO ack queue. Session
   exit → stopSelf + finish the activity.
 - `CmusIpc` — client for the android.c socket (the protocol comment
   there is the contract): sealed `Event` records
   (Hello/Status/Position/Volume/View/Filter/Options/Jobs + transient
-  Selected, Colorscheme and Saved — right-click resolutions,
-  sourced-theme names and the android-save ack, not cached/replayed) parsed with JsonReader
+  Selected, Colorscheme, Dirty and Saved — right-click resolutions,
+  sourced-theme names, unsaved-change announcements and the
+  android-save ack with its `what` echo, not cached/replayed — Dirty
+  needs no replay because the connect snapshot re-announces) parsed with JsonReader
   (JSONObject drops duplicate tag keys), listener callbacks on the
   main thread with cached-state replay for late attachers, `send()`
   for raw command lines (rejects newline/overlong), self-reconnecting
@@ -256,6 +281,30 @@ full plan and rationale; this file describes what currently exists.
   match op/aaudio: USAGE_MEDIA/CONTENT_TYPE_MUSIC), abandon on
   STOPPED, hold across PAUSED, transient-loss resume flag; denied or
   taken → never counter the TUI user.
+- `StateSaver` — debounced continuous state saves (stage 19; cadences
+  and buckets are Patrick's, in the class comment and the plan):
+  playlist+queue/history/settings 5s, library+cache/resume 15s, full
+  save at playback boundaries ≥15 min apart. Content kinds trigger off
+  cmus's Dirty events (the only view of TUI-side edits; edge-triggered
+  per save cycle, so timers are arm-on-first-change with bounded
+  staleness — a continuous edit stream can't postpone a save forever);
+  settings off an app-side Options-map diff (the echo fires per
+  command, changed or not) + Volume changes (softvol_state); resume
+  off Status transitions only, never position ticks. Playlist/queue/
+  library/cache buckets defer while a worker job runs and the jobs
+  false edge flushes them — a save mid-restore writes a *partial*
+  file over a complete one (memory fills from the file; a force-stop
+  then persists the truncation), whereas mid-import saves are
+  consistent supersets, so the boundary full save doesn't defer (and
+  its 15-min clock starts at spawn, clear of the restore window).
+  Every android-save funnels through its FIFO ack queue (one socket,
+  ordered replies): saveNow's bounded waits get their own ack, never
+  a stray periodic one. Main-thread only; closed with its CmusIpc
+  (disconnect clears queue+timers, the snapshot re-announcement
+  rebuilds them). Known accepted churn: the startup restore dirties
+  library/queue/playlist, one consolidated small-file save per spawn
+  at the restore's jobs edge (the loaders never bump the cache kind,
+  keeping the multi-MB write out).
 - `MediaButtonReceiver` — media-key resurrection: registered as the
   session's setMediaButtonBroadcastReceiver fallback, so once the
   session is gone a play/play-pause/headset key restarts the FGS
@@ -502,4 +551,6 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Continuous state save (19; android-save landed in 18, the timer remains), ogg/opus embedded art (20), polish/verify (21).
+Ogg/opus embedded art (20), polish/verify (21). Upstream submissions
+pending: 0003 (aaudio sharing_mode getter), 0004 (atomic playlist
+saves).

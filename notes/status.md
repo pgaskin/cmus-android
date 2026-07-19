@@ -3,6 +3,87 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Stage 19: continuous state save (implemented; committed pre-verification at Patrick's direction)
+
+- Per [plans/19-continuous-save.md](plans/19-continuous-save.md) — the
+  cadences/buckets/atomicity are **Patrick's decisions** (see the plan);
+  committed before final tests at his direction, device pass his.
+- **Two stage-18 bugs found while planning**: (1) the android_save_state
+  comment claimed every callee is write-tmp-and-rename — wrong:
+  `do_cmus_save` (lib.pl/queue.pl/playlists) wrote in place with
+  O_TRUNC; (2) it called `cache_close()` with the worker live, but
+  job.c mutates the cache hash under cache_mutex and upstream only
+  reaches cache_close after job_exit — a save mid-import could walk
+  the table mid-mutation. Both fixed (0004 below; cache_lock around
+  the cache save in 0001's android_save_state).
+- **0001 amendments**: `android-save [kind…]` (resume settings library
+  cache playlist queue history; bare = everything, so stage-18 flows
+  unchanged), saved ack grows `"what"`, and a coalesced
+  `{"type":"dirty","what":[…]}` event — per-kind mutation counters
+  (atomic; the cache bumps on the worker), announced when counter
+  differs from both last-announced and the value snapshotted *before*
+  the last save's writes (mid-save mutations re-announce; edge-
+  triggered = one event per kind per save cycle, so app debounces are
+  arm-on-first-change with bounded staleness), re-announced in the
+  connect snapshot, emitted *before* the jobs diff so a client arms
+  before it sees a completion edge. Hook sites: editable.c chokepoints
+  (do_editable_add/remove_track/move_sel/sort/rand/update_track,
+  classified lib→skip / pq→queue / else playlist — lib.pl saves from
+  the filename hash in canonical ti_cmp order, so lib editable
+  order never moves the file; the hash_insert/hash_remove hooks in
+  lib.c are the exact library writers), pl.c meta ops
+  (create/delete/rename/import), cache.c (do_cache_remove_ti + the
+  two runtime add_ti sites — never the startup loader, so a plain
+  spawn stays cache-clean), history_add_line (runtime-only; loads use
+  history_add_tail). Known accepted churn: the startup restore's
+  autoload jobs dirty library/queue/playlist → one consolidated
+  small-file save after the restore's jobs edge per spawn (the
+  multi-MB cache write never joins it).
+- **0004 (new, upstream candidate)**: do_cmus_save writes
+  `<filename>.tmp` + rename (the "-" stdout path unchanged; unlink on
+  failure). Riders from Patrick's mid-session catch: pl_load_all
+  skips `*.tmp` (an interrupted save's leftover must not load as a
+  phantom playlist) and new playlist names ending in .tmp are
+  rejected — saving playlist X writes X.tmp, which would clobber a
+  playlist literally named X.tmp. No fsync (matches the other
+  writers; rename fully covers SIGKILL, battery death was ruled out
+  of scope).
+- **StateSaver** (service-owned, third IPC listener beside
+  MediaControl, per-CmusIpc lifecycle, all main-thread): buckets
+  playlist+queue 5s / history 5s / settings 5s / library+cache 15s /
+  resume 15s; full save at playback boundaries (track change, pause,
+  stop) when ≥15 min since the last. Triggers: Dirty events for the
+  content kinds; app-side Options-map diff (the options event fires
+  per command, changed or not) + Volume changes for settings; Status
+  transitions for resume (never position ticks — the 15s also pushes
+  the write off the track-boundary moment). **Deferral rider found
+  during implementation**: playlist/queue/library/cache buckets hold
+  while a worker job runs and the jobs false edge flushes them — a
+  save mid-*restore* would write a partial file over a complete one
+  (memory fills *from* the file), and a force-stop right then
+  persists the truncation; mid-*import* saves are consistent
+  supersets, so the boundary full save doesn't defer (and the 15-min
+  guard starts at spawn, so it can't land in the restore window).
+  All android-save traffic funnels through StateSaver's FIFO ack
+  queue (one socket, ordered replies): TermService.saveState
+  delegates, so the zip-export/pre-reset bounded waits can't be
+  satisfied by a stray periodic ack (the old single-slot
+  pendingSavedDone machinery is gone). Disconnect clears queue+timers
+  (saveNow timeouts still release callers); the connect snapshot's
+  re-announcements rebuild pending state.
+- CmusIpc: Saved gains `what`, new transient Dirty record; both logged
+  by the service's IPC logger.
+- Open questions from the plan Patrick hasn't ruled on (defaults
+  shipped): queue folded into the playlist bucket; no resume save for
+  long uninterrupted tracks beyond boundaries; seek/view/filter don't
+  arm the resume bucket; no on-background save; cache rides the 15s
+  track-edit debounce (can land mid-playback — his stutter listen
+  will judge); fset edits invisible until a full save; no fsync.
+- Verified: clean assembleDebug + patch.sh check green (committed at
+  that point per Patrick); device pass pending — kill -9 staged-point
+  state survival, torn-write loop, event-flow logs, export-during-
+  saves, and the boundary-save stutter listen (explicitly Patrick's).
+
 ## 2026-07-19 — Stage 18: settings screen + riders (implemented; Patrick's device pass pending)
 
 - Per [plans/18-settings.md](plans/18-settings.md) (committed and amended
@@ -946,11 +1027,9 @@ command. Needs design: maybe an android.c intent line
 access(2)-checking lib entries (worker job, like update-cache), or an
 app-side diff of the saved library against the filesystem.
 
-After 18 come stage 19 (continuous state save — periodic
-resume/autosave/library/cache saves during runtime, closing the
-stage-10 loss window for exits that skip SIGHUP entirely: force-stop's
-uid SIGKILL, battery death, panics) and stage 20 (ogg/opus embedded
-art — both new stages from Patrick), then stage 21 polish.
+After 19 (continuous state save — done above) comes stage 20
+(ogg/opus embedded art — a new stage from Patrick), then stage 21
+polish. 0004 joins 0003 on the upstream-submission list.
 
 Note for stage 21 polish: Iosevka-Regular.ttf is 10.8 MB (most of the
 APK bump); a pyftsubset pass over the bundled fonts could reclaim most
