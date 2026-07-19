@@ -3,6 +3,55 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 11: chrome A (done)
+
+- Per [plans/11-chrome-a.md](plans/11-chrome-a.md) with two live tweaks
+  from Patrick during device verification: tab text size **tracks the
+  terminal font** (COMPLEX_UNIT_PX at fontSize, updated in onScale on
+  pinch — slightly bigger than the plan's fixed 11sp), and the
+  overflow-scroll fallback actually has to work — the plan's
+  CENTER_HORIZONTAL layout gravity on the row inside the
+  HorizontalScrollView broke it (overflow hangs off the unreachable
+  left side; scrollX can't go negative). Fix: no layout gravity;
+  fillViewport stretches the row so its own gravity centers the tabs
+  when they fit, and overflow lays out from the left and scrolls.
+- cmus patch 0001 amended (rebase --autosquash over base, regen; 0002
+  first-line churn only): `{"type":"view","view":"<view_names>"}` on
+  connect + change, one hook line in set_view() after the
+  unchanged-early-return. CmusIpc: View record cached/replayed like the
+  rest. CmusTheme record: color option string ("default" | 16 names |
+  16-255) → index → ARGB via termux's static
+  TerminalColors.COLOR_SCHEME (the live emulator only diverges via OSC
+  4/10/11, which cmus never sends), default → indices 256/257 per
+  fg/bg role; record equality = change detection.
+- MainActivity: root is now vertical LinearLayout {tab bar, terminal
+  wrapper}; insets split so the tab bar's bg (win_title) paints the
+  status-bar strip and the wrapper's (win_bg) the nav strip + side
+  margins — setStatusBarColor is a no-op under targetSdk 36
+  edge-to-edge, icon appearance via setSystemBarsAppearance by
+  bg luminance is the only real API. Tabs: text-only view_names,
+  monospace, active = win_title_fg, inactive = same at 55% alpha; tap
+  sends `view <name>` and the highlight only moves when the event
+  comes back (cmus is the single source of truth, so TUI 1-7
+  presses and resume land identically). Listener registration is
+  per-CmusIpc-instance (attachIpc after every getSession) since
+  respawn creates a fresh instance; replay makes late attach correct.
+- Verified on device (Pixel 8, wifi adb): snapshot carries `view`;
+  tab tap → TUI switches + highlight follows on the echo; TUI key 2 →
+  highlight follows; `colorscheme gruvbox-warm` via debug receiver →
+  whole chrome (tab bar + status strip + nav strip) recolors off one
+  options event, seamless against the TUI title row;
+  `set color_win_title_bg=white` → dark status icons (and back);
+  quit in sorted → relaunch: resume restores the view, snapshot
+  highlights it; landscape rotation keeps colors + highlight
+  (re-registration path); narrow-screen overflow (wm size 600px)
+  scrolls to `settings` and back. patch.sh check green.
+- Testing notes: `pm install -r` mid-verification force-stops cmus →
+  the gruvbox change from earlier wasn't in autosave (documented
+  stage-10 loss window, not a bug). adb can't inject pinch; font-scale
+  tracking eyeballed by Patrick. wm size overflow test needs the swipe
+  y-coordinate on the bar itself (~115px raw), not the TUI title row.
+
 ## 2026-07-18 — Stage 10: lifecycle (done)
 
 - Per [plans/10-lifecycle.md](plans/10-lifecycle.md) with one design
@@ -382,10 +431,12 @@ pick up where things left off.
 
 ## Next
 
-Stage 11: chrome A (theme color extraction from IPC options +
-view-selector tab bar + Android status/nav bar coloring) — needs its
-detailed plan written and approved first. CmusIpc's cached Options
-already carries all color_* values, replayed to late listeners.
+Stage 12: chrome B (bottom control bar: play/pause, repeat, shuffle,
+seek bar, volume button + vertical slider gated on softvol,
+add-to-queue, keyboard toggle) — needs its detailed plan written and
+approved first. CmusTheme already resolves statusline/cmdline colors
+for it; play state/position/volume all come from the cached CmusIpc
+events.
 
 Note for later (Patrick; stage 18 data import, or wherever imports
 land first): inhibit the idle-quit timer while media is being

@@ -36,12 +36,14 @@ full plan and rationale; this file describes what currently exists.
   read-only; the `:app:patchCheck` Exec task runs it before `preBuild` so
   builds fail with a hint when patches exist but aren't applied.
 - patches/cmus: 0001 adds the app IPC socket (android.c/android.h + hook
-  hunks in ui_curses.c/command_mode.c; everything guarded by
-  CONFIG_ANDROID so the patched tree still builds with the upstream
-  Makefile), 0002 removes remote-stream support (input.c remote machinery
-  behind `#ifndef CONFIG_ANDROID`, cmus_detect_ft's http branch out) so
-  http.c drops from the link. The protocol comment atop android.c is the
-  contract the Java client codes against.
+  hunks in ui_curses.c/command_mode.c — including a view event out of
+  set_view(); everything guarded by CONFIG_ANDROID so the patched tree
+  still builds with the upstream Makefile), 0002 removes remote-stream
+  support (input.c remote machinery behind `#ifndef CONFIG_ANDROID`,
+  cmus_detect_ft's http branch out) so http.c drops from the link. The
+  protocol comment atop android.c is the contract the Java client codes
+  against. Amending an existing patch = fixup commit in the submodule +
+  `git rebase --autosquash base`, then ./patch.sh regen.
 - Pins (2026-07-18): cmus master d335e90, ncurses snapshot 87c2c84,
   libogg v1.3.6, libvorbis v1.3.7, opus v1.6.1, opusfile master 6dfd29e,
   flac 1.5.0, libmad 0.16.4 be34ec9 (the codeberg tenacityteam fork —
@@ -138,12 +140,20 @@ full plan and rationale; this file describes what currently exists.
   exit → stopSelf + finish the activity.
 - `CmusIpc` — client for the android.c socket (the protocol comment
   there is the contract): sealed `Event` records
-  (Hello/Status/Position/Volume/Options) parsed with JsonReader
+  (Hello/Status/Position/Volume/View/Options) parsed with JsonReader
   (JSONObject drops duplicate tag keys), listener callbacks on the
   main thread with cached-state replay for late attachers, `send()`
   for raw command lines (rejects newline/overlong), self-reconnecting
   (100ms → 1s; every connect gets a full snapshot, so no state
   crosses connections).
+- `CmusTheme` — chrome-relevant color_* options resolved to ARGB (record
+  built from an Options event; equality = change detection). Value
+  grammar is options.c get_color ("default" | 16 names | bare 16-255);
+  palette is termux's static `TerminalColors.COLOR_SCHEME` — exactly
+  what TerminalView renders, since only OSC 4/10/11 (never sent by
+  cmus) mutate the live copy — with "default" → the terminal
+  default-fg/bg indices per role. Resolves win/win_title now and
+  statusline/cmdline/separator ahead of the stage-12 bottom bar.
 - `MediaControl` — framework MediaSession + MediaStyle notification +
   cover art + audio focus, a pure mirror of CmusIpc events (13+
   renders system controls from PlaybackState actions + metadata; the
@@ -174,11 +184,27 @@ full plan and rationale; this file describes what currently exists.
   terminfo + cmus-data assets (stamped by versionCode + APK install
   time), rebuilds `cmus-lib/{ip,op}/NAME.so` symlinks into
   nativeLibraryDir, creates `cmus-home/`.
-- `MainActivity` — `TerminalView` (focusableInTouchMode — required for
-  IME/keys; set in code, easy to miss) in a FrameLayout wrapper that
-  consumes systemBars+cutout+ime insets as padding (TerminalView sizes
-  from raw bounds; targetSdk 36 = enforced edge-to-edge, adjustResize
-  is a no-op). Tap toggles the IME, pinch scales the font (5–36dp),
+- `MainActivity` — vertical LinearLayout: view-selector tab bar over a
+  FrameLayout-wrapped `TerminalView` (focusableInTouchMode — required
+  for IME/keys; set in code, easy to miss; sizes from raw bounds, so
+  insets pad the wrappers). Insets split for edge-to-edge coloring
+  (targetSdk 36: setStatusBarColor is a no-op): the tab bar consumes
+  top+sides so its background (win_title_bg) paints the status-bar
+  strip; the wrapper consumes sides+bottom+ime so its background
+  (win_bg) paints the nav strip + margins; icon appearance via
+  setSystemBarsAppearance by bg luminance. Everything re-tints on
+  Options events through a CmusTheme (until the first one: the black
+  Theme.Cmus). Tab bar: text-only view_names in monospace at the
+  terminal font size (tracks pinch-zoom), in a scrollbar-less
+  HorizontalScrollView — fillViewport + row gravity center the tabs
+  when they fit, overflow lays out left and scrolls (a CENTER layout
+  gravity would strand overflow off the unreachable left). Active tab
+  = win_title_fg, inactive 55% alpha; tap sends `view <name>`, the
+  highlight moves only on the echoed View event (cmus is the source of
+  truth — TUI 1-7 keys and resume land the same way). The IPC
+  listener re-registers per CmusIpc instance (attachIpc after every
+  getSession; respawn = fresh instance, replay covers late attach).
+  Tap toggles the IME, pinch scales the font (5–36dp),
   back backgrounds the app (playback continues under the FGS);
   rotation recreates the activity and re-attaches the live session.
   Reports onStart/onStop to the service (idle-quit + size saving);
@@ -186,8 +212,9 @@ full plan and rationale; this file describes what currently exists.
   visible: exit 0 → finish, nonzero → frozen terminal + the emulator's
   "[Process completed]" banner + toast, tap or Enter closes; while
   backgrounded: stays in recents for the respawn.
-- Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout);
-  colors become cmus-theme-driven in a later stage.
+- Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout)
+  as the pre-first-Options fallback; live chrome colors come from
+  CmusTheme above.
 
 ## Build requirements
 
@@ -198,6 +225,6 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Chrome A (11: theme color extraction from IPC options, view-selector
-tab bar, status/nav bar coloring), then controls/input/overlays/
-settings (12+).
+Chrome B (12: bottom control bar — play/pause/repeat/shuffle/seek,
+volume slider gated on softvol, add-to-queue, keyboard toggle), then
+input/overlays/settings (13+).
