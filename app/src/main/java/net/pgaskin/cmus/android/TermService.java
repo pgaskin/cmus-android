@@ -142,14 +142,14 @@ public class TermService extends Service implements TerminalSessionClient {
                     "HOME=" + filesDir,
                     "TMPDIR=" + getCacheDir(),
                     "TERM=xterm-256color",
-                    "TERMINFO=" + new File(filesDir, "terminfo"),
-                    "CMUS_HOME=" + new File(filesDir, "cmus-home"),
-                    "CMUS_LIB_DIR=" + new File(filesDir, "cmus-lib"),
-                    "CMUS_DATA_DIR=" + new File(filesDir, "cmus-data"),
-                    // app-facing IPC socket (patches/cmus/0001); filesDir
-                    // root, not cmus-home, so tar exports of the config
-                    // never pick up socket files. Java client is stage 8.
-                    "CMUS_ANDROID_SOCKET=" + new File(filesDir, "cmus-android.sock")));
+                    "TERMINFO=" + CmusFiles.terminfo(this),
+                    "CMUS_HOME=" + CmusFiles.home(this),
+                    "CMUS_LIB_DIR=" + CmusFiles.lib(this),
+                    "CMUS_DATA_DIR=" + CmusFiles.data(this),
+                    // app-facing IPC socket (patches/cmus/0001); beside
+                    // home, not in it, so zip exports of the config never
+                    // pick up socket files
+                    "CMUS_ANDROID_SOCKET=" + CmusFiles.socket(this)));
             // base-path vars for pl_env_vars (saved library/playlist/cache
             // paths keep the var, not the base, so libraries survive
             // reinstalls/storage moves). Order matters twice over: pl_env
@@ -185,7 +185,7 @@ public class TermService extends Service implements TerminalSessionClient {
                 // autosave-restored color_* indexes need their entries back
                 pushPalette();
             }
-            ipc = new CmusIpc(new File(filesDir, "cmus-android.sock"));
+            ipc = new CmusIpc(CmusFiles.socket(this));
             ipc.addListener(ipcListener);
             mediaControl = new MediaControl(this, ipc);
             ipc.addListener(mediaControl);

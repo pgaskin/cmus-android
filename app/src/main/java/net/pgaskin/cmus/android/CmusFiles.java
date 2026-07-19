@@ -15,27 +15,82 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 /**
- * Builds the on-disk layout cmus needs under filesDir before it is spawned:
+ * Builds the on-disk layout cmus needs before it is spawned. Everything
+ * app-managed lives under a dotfolder so the cmus file browser (cwd/$HOME =
+ * filesDir, show_hidden off by default) shows a clean home:
  *
  * <pre>
- * filesDir/terminfo/x/xterm-256color   extracted asset (TERMINFO)
- * filesDir/cmus-data/{rc,*.theme}      extracted assets (CMUS_DATA_DIR)
- * filesDir/cmus-lib/{ip,op}/NAME.so    symlinks into nativeLibraryDir (CMUS_LIB_DIR)
- * filesDir/cmus-home/                  autosave state (CMUS_HOME)
+ * filesDir/.cmus/terminfo/x/xterm-256color   extracted asset (TERMINFO)
+ * filesDir/.cmus/data/{rc,*.theme}           extracted assets (CMUS_DATA_DIR)
+ * filesDir/.cmus/lib/{ip,op}/NAME.so         symlinks into nativeLibraryDir (CMUS_LIB_DIR)
+ * filesDir/.cmus/home/                       autosave state (CMUS_HOME)
+ * filesDir/.cmus/assets.stamp
+ * filesDir/.cmus/android.sock                (CMUS_ANDROID_SOCKET; outside home
+ *                                             so zip exports never carry it)
  * </pre>
  *
  * Idempotent; called by {@link TermService} before each spawn.
  */
 final class CmusFiles {
-    private static final String[] ASSET_TREES = {"terminfo", "cmus-data"};
-    private static final String STAMP_NAME = "cmus-assets.stamp";
+    /** APK asset tree name → extraction dir name under the dotfolder. */
+    private static final String[][] ASSET_TREES = {{"terminfo", "terminfo"}, {"cmus-data", "data"}};
+    private static final String STAMP_NAME = "assets.stamp";
 
     private CmusFiles() {}
 
+    static File root(Context context) {
+        return new File(context.getFilesDir(), ".cmus");
+    }
+
+    static File home(Context context) {
+        return new File(root(context), "home");
+    }
+
+    static File data(Context context) {
+        return new File(root(context), "data");
+    }
+
+    static File lib(Context context) {
+        return new File(root(context), "lib");
+    }
+
+    static File terminfo(Context context) {
+        return new File(root(context), "terminfo");
+    }
+
+    static File socket(Context context) {
+        return new File(root(context), "android.sock");
+    }
+
     static void prepare(Context context) throws IOException {
+        migrate(context);
         extractAssets(context);
         linkPlugins(context);
-        new File(context.getFilesDir(), "cmus-home").mkdirs();
+        home(context).mkdirs();
+    }
+
+    /**
+     * Pre-stage-18 installs had everything at the filesDir top level; move
+     * the state (cmus-home) and drop the rest (regenerated under .cmus).
+     */
+    private static void migrate(Context context) throws IOException {
+        File filesDir = context.getFilesDir();
+        File oldHome = new File(filesDir, "cmus-home");
+        if (oldHome.isDirectory()) {
+            File home = home(context);
+            if (!home.exists()) {
+                root(context).mkdirs();
+                if (!oldHome.renameTo(home)) {
+                    throw new IOException("migrating " + oldHome + " -> " + home + " failed");
+                }
+            } else {
+                deleteTree(oldHome);
+            }
+        }
+        for (String stale : new String[]{"cmus-lib", "cmus-data", "terminfo",
+                "cmus-assets.stamp", "cmus-android.sock"}) {
+            deleteTree(new File(filesDir, stale));
+        }
     }
 
     /**
@@ -44,8 +99,8 @@ final class CmusFiles {
      * development, so the install time is part of the stamp).
      */
     private static void extractAssets(Context context) throws IOException {
-        File filesDir = context.getFilesDir();
-        File stampFile = new File(filesDir, STAMP_NAME);
+        File root = root(context);
+        File stampFile = new File(root, STAMP_NAME);
 
         String stamp;
         try {
@@ -62,9 +117,10 @@ final class CmusFiles {
             // no stamp yet
         }
 
-        for (String tree : ASSET_TREES) {
-            deleteTree(new File(filesDir, tree));
-            extractAssetTree(context, tree, new File(filesDir, tree));
+        root.mkdirs();
+        for (String[] tree : ASSET_TREES) {
+            deleteTree(new File(root, tree[1]));
+            extractAssetTree(context, tree[0], new File(root, tree[1]));
         }
         try (OutputStream out = new FileOutputStream(stampFile)) {
             out.write(stamp.getBytes(StandardCharsets.UTF_8));
@@ -99,7 +155,7 @@ final class CmusFiles {
      * cheap, and immune to nativeLibraryDir moving between installs.
      */
     private static void linkPlugins(Context context) throws IOException {
-        File libDir = new File(context.getFilesDir(), "cmus-lib");
+        File libDir = lib(context);
         deleteTree(libDir);
 
         File nativeDir = new File(context.getApplicationInfo().nativeLibraryDir);
@@ -124,7 +180,7 @@ final class CmusFiles {
         }
     }
 
-    private static void deleteTree(File file) {
+    static void deleteTree(File file) {
         if (file.isDirectory() && !isSymlink(file)) {
             File[] children = file.listFiles();
             if (children != null) {

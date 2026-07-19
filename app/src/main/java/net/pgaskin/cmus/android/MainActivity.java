@@ -1141,15 +1141,15 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     }
 
     /**
-     * Union of user themes (cmus-home — wins in cmd_colorscheme's search
-     * order) and the bundled ones (cmus-data), sorted. A name containing
+     * Union of user themes (CMUS_HOME — wins in cmd_colorscheme's search
+     * order) and the bundled ones (CMUS_DATA_DIR), sorted. A name containing
      * whitespace can't be applied (`colorscheme` takes exactly one arg), so
      * it isn't offered.
      */
     private List<String> themeNames() {
         TreeSet<String> names = new TreeSet<>();
-        for (String dir : new String[]{"cmus-home", "cmus-data"}) {
-            File[] files = new File(getFilesDir(), dir).listFiles();
+        for (File dir : new File[]{CmusFiles.home(this), CmusFiles.data(this)}) {
+            File[] files = dir.listFiles();
             if (files == null) {
                 continue;
             }
