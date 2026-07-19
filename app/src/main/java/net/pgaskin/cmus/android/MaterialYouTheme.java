@@ -84,6 +84,10 @@ final class MaterialYouTheme {
     static int[] colors(Context context) {
         boolean night = (context.getResources().getConfiguration().uiMode
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        // the control-color rotation is a setting (stage 18); 180 = the
+        // original complement
+        int rotation = context.getSharedPreferences(TermService.PREFS, Context.MODE_PRIVATE)
+                .getInt(TermService.PREF_HUE_ROTATION, 180);
         if (night) {
             int bg = mix(c(context, android.R.color.system_neutral1_900), 0xFF000000);
             int band = c(context, android.R.color.system_neutral1_800); // bottom title, active sel
@@ -100,7 +104,7 @@ final class MaterialYouTheme {
             // titles vs teal statusline, wallpaper-derived. Scoped to the
             // status/cmdline band (and the control bar riding it); the
             // list's playing-track colors stay in the ramp family
-            int status = complement(c(context, android.R.color.system_accent3_200));
+            int status = rotate(c(context, android.R.color.system_accent3_200), rotation);
             int cur = c(context, android.R.color.system_accent3_300); // playing track in the lists — a saturated step
             // dimmer than the sel/cur fgs but on the same warm ramp, not
             // grey: the unselected list rows sit below the highlights in
@@ -145,7 +149,7 @@ final class MaterialYouTheme {
         int bandDark = mix(band, c(context, android.R.color.system_neutral1_200));
         int topBand = mix(band, bg); // the light mirror: lighter, toward bg
         int title = c(context, android.R.color.system_accent1_700); // reads apart from the near-black list text
-        int status = complement(c(context, android.R.color.system_accent3_700));
+        int status = rotate(c(context, android.R.color.system_accent3_700), rotation);
         int cur = c(context, android.R.color.system_accent3_600);
         int fg = mix(c(context, android.R.color.system_accent1_600),
                 c(context, android.R.color.system_neutral1_600)); // dimmer + half-desaturated, same ramp
@@ -184,11 +188,15 @@ final class MaterialYouTheme {
         return context.getColor(res);
     }
 
-    /** Hue rotated 180°, tone kept — a same-brightness genuinely-other hue. */
-    private static int complement(int argb) {
+    /**
+     * Hue rotated, tone kept — a same-brightness genuinely-other hue (the
+     * ramps never leave the seed's neighborhood, so this is synthesized).
+     * 180° is the original complement; the degrees are a setting now.
+     */
+    private static int rotate(int argb, int degrees) {
         float[] hsv = new float[3];
         android.graphics.Color.colorToHSV(argb, hsv);
-        hsv[0] = (hsv[0] + 180f) % 360f;
+        hsv[0] = (((hsv[0] + degrees) % 360f) + 360f) % 360f;
         return android.graphics.Color.HSVToColor(hsv);
     }
 

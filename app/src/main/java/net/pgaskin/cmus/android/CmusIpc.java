@@ -35,7 +35,7 @@ public final class CmusIpc implements AutoCloseable {
     private static final String TAG = "cmus";
 
     public sealed interface Event permits Hello, Status, Position, Volume, View, Filter,
-            Options, Selected, Colorscheme, Jobs {
+            Options, Selected, Colorscheme, Jobs, Saved {
     }
 
     /** First line after connect. */
@@ -126,6 +126,15 @@ public final class CmusIpc implements AutoCloseable {
      * Cached/replayed like Volume.
      */
     public record Jobs(boolean running) implements Event {
+    }
+
+    /**
+     * The `android-save` line's ack: cmus wrote its whole exit-path save
+     * set (resume, autosave, queue, library, playlists, histories, cache)
+     * without exiting; the state files are fresh on disk. Transient — an
+     * ack, not state.
+     */
+    public record Saved() implements Event {
     }
 
     public enum PlayState { STOPPED, PLAYING, PAUSED }
@@ -405,6 +414,8 @@ public final class CmusIpc implements AutoCloseable {
             }
             case Colorscheme ignored -> {
             }
+            case Saved ignored -> {
+            }
         }
         for (Listener l : List.copyOf(listeners)) {
             l.onEvent(event);
@@ -469,6 +480,7 @@ public final class CmusIpc implements AutoCloseable {
             case "selected" -> new Selected(viewName, files, playlists, playlist);
             case "colorscheme" -> new Colorscheme(name);
             case "jobs" -> new Jobs(running);
+            case "saved" -> new Saved();
             case null -> throw new IOException("event without a type");
             default -> null;
         };

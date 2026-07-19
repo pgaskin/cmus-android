@@ -51,6 +51,25 @@ public class TermService extends Service implements TerminalSessionClient {
     static final String PREF_RESURRECT = "resurrect";
     /** The generated Material You scheme is the active one (stage 16). */
     static final String PREF_MATERIAL = "material_you";
+    /** Terminal font size in px (pinch-zoom and the settings zoom slider). */
+    static final String PREF_FONT = "font";
+    // stage-18 app settings (SettingsActivity); defaults live at the read
+    // sites but every reader must agree
+    static final String PREF_SHOW_TOP_BAR = "show_top_bar";
+    static final String PREF_SHOW_CONTROL_BAR = "show_control_bar";
+    static final String PREF_SHOW_JOYSTICK = "show_joystick";
+    /** Degrees for MaterialYouTheme's control-color complement (default 180). */
+    static final String PREF_HUE_ROTATION = "material_hue_rotation";
+    /** Minutes; 0 disables the idle quit. */
+    static final String PREF_IDLE_QUIT_MIN = "idle_quit_minutes";
+    /** Resume-restored PLAYING is paused right after spawn. */
+    static final String PREF_RESUME_PAUSED = "resume_paused";
+    /** Sleep-timer expiry exits the app instead of pausing. */
+    static final String PREF_SLEEP_EXIT = "sleep_timer_exit";
+    /** Opt-in for {@link CmusDebugReceiver} in non-debuggable builds. */
+    static final String PREF_DEBUG_RECEIVER = "debug_receiver";
+    /** Per-event IPC logging, at info level so release logcat shows it. */
+    static final String PREF_IPC_LOG = "ipc_logging";
 
     /** What the attached activity cares about; safe to leave unregistered. */
     public interface SessionCallback {
@@ -73,10 +92,9 @@ public class TermService extends Service implements TerminalSessionClient {
         }
     }
 
-    // stage-17 setting replaces the constant; postDelayed counts
+    // delay comes from PREF_IDLE_QUIT_MIN (stage 18); postDelayed counts
     // uptimeMillis, so deep doze stretches the delay — accepted (hygiene
     // feature, fires on next wake, no AlarmManager machinery)
-    private static final long IDLE_QUIT_DELAY_MS = 15 * 60 * 1000;
     private static final long IDLE_QUIT_GRACE_MS = 30 * 1000;
     /** Re-poll cadence while a worker job defers an idle-quit. */
     private static final long IDLE_QUIT_JOBS_POLL_MS = 30 * 1000;
@@ -90,20 +108,37 @@ public class TermService extends Service implements TerminalSessionClient {
     private MediaControl mediaControl;
     private SessionCallback callback;
     private String plEnvVars;
-    private boolean activityVisible = true; // the activity starts the service
+    // how many activities are visible (MainActivity + SettingsActivity each
+    // report start/stop; a counter because the activity transition overlaps
+    // — the new one's onStart lands before the old one's onStop)
+    private int visibleActivities;
     private boolean idleQuitArmed;
     // an idle-quit fire asked cmus about worker jobs (android-jobs) and
     // the answer decides: quit, or re-poll while an import runs — quitting
     // mid-import truncates it (Patrick). Any Jobs event while set counts.
     private boolean idleQuitPendingJobs;
     private boolean pendingMediaPlay;
+    // pause a resume-restored PLAYING right after spawn (PREF_RESUME_PAUSED);
+    // consumed by the first Status event, where an explicit media-key
+    // resurrection (pendingMediaPlay — the user asked for playback) wins
+    private boolean pendingResumePause;
     private boolean materialActive;
+    // stage-18 data resets: kill→mutate→respawn (see resetData)
+    private Runnable pendingResetOp;
+    private Runnable pendingResetDone;
+    private Runnable pendingSavedDone;
+    private boolean ipcLogging;
 
     @Override
     public void onCreate() {
         instance = this;
+        // Material You is the default theme (stage 18); an explicit
+        // colorscheme pick stores false, so existing picks are untouched
         materialActive = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getBoolean(PREF_MATERIAL, false);
+                .getBoolean(PREF_MATERIAL, true);
+        ipcLogging = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_IPC_LOG, (getApplicationInfo().flags
+                        & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
         NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
                 getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
@@ -122,8 +157,7 @@ public class TermService extends Service implements TerminalSessionClient {
         // idle-quit timer could never arm and a paused resurrected cmus
         // would hold the FGS forever
         if (spawning && ACTION_MEDIA_PLAY.equals(intent.getAction())) {
-            pendingMediaPlay = true;
-            activityVisible = false;
+            pendingMediaPlay = true; // headless: visibleActivities stays 0
         }
         return START_NOT_STICKY;
     }
@@ -180,6 +214,7 @@ public class TermService extends Service implements TerminalSessionClient {
             SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
             session.updateSize(prefs.getInt(PREF_COLS, 80), prefs.getInt(PREF_ROWS, 24), 8, 16);
             prefs.edit().putBoolean(PREF_RESURRECT, true).apply();
+            pendingResumePause = prefs.getBoolean(PREF_RESUME_PAUSED, false);
             if (materialActive) {
                 // a fresh emulator starts on the stock palette; the
                 // autosave-restored color_* indexes need their entries back
@@ -237,6 +272,9 @@ public class TermService extends Service implements TerminalSessionClient {
                     ipc.send(cmd);
                 }
             }
+            // the app-managed cmus settings (stage 18): prefs override
+            // whatever autosave restored; the echoes sync changes back
+            CmusSettings.forceAll(TermService.this, ipc);
         }
 
         @Override
@@ -247,12 +285,14 @@ public class TermService extends Service implements TerminalSessionClient {
         @Override
         public void onEvent(CmusIpc.Event event) {
             switch (event) {
-                case CmusIpc.Hello h -> Log.d(TAG, "ipc hello version=" + h.version());
+                case CmusIpc.Hello h -> logIpc("ipc hello version=" + h.version());
                 case CmusIpc.Status s -> {
-                    Log.d(TAG, "ipc status " + s.state()
+                    logIpc("ipc status " + s.state()
                             + " pos=" + s.position() + "/" + s.duration()
                             + " file=" + s.file() + " tags=" + s.tags());
                     updateIdleQuit(); // ipc.status() already caches s
+                    boolean resumePause = pendingResumePause;
+                    pendingResumePause = false; // first Status consumes it
                     if (pendingMediaPlay) {
                         pendingMediaPlay = false;
                         switch (s.state()) {
@@ -264,17 +304,22 @@ public class TermService extends Service implements TerminalSessionClient {
                             case PLAYING -> {
                             }
                         }
+                    } else if (resumePause && s.state() == CmusIpc.PlayState.PLAYING) {
+                        // "always resume paused": quit-while-playing
+                        // restores playing; park it at position instead
+                        Log.i(TAG, "resume-paused: pausing restored playback");
+                        ipc.send("player-pause-playback");
                     }
                 }
-                case CmusIpc.Position p -> Log.d(TAG, "ipc position " + p.position());
-                case CmusIpc.Selected s -> Log.d(TAG, "ipc selected view=" + s.view()
+                case CmusIpc.Position p -> logIpc("ipc position " + p.position());
+                case CmusIpc.Selected s -> logIpc("ipc selected view=" + s.view()
                         + " files=" + s.files() + " playlists=" + s.playlists()
                         + " playlist=" + s.playlist());
-                case CmusIpc.Volume v -> Log.d(TAG, "ipc volume " + v.left() + "/" + v.right());
-                case CmusIpc.View v -> Log.d(TAG, "ipc view " + v.name());
-                case CmusIpc.Filter f -> Log.d(TAG, "ipc filter " + f.filter());
+                case CmusIpc.Volume v -> logIpc("ipc volume " + v.left() + "/" + v.right());
+                case CmusIpc.View v -> logIpc("ipc view " + v.name());
+                case CmusIpc.Filter f -> logIpc("ipc filter " + f.filter());
                 case CmusIpc.Jobs j -> {
-                    Log.d(TAG, "ipc jobs running=" + j.running());
+                    logIpc("ipc jobs running=" + j.running());
                     if (idleQuitPendingJobs) {
                         // the poll answer (or a diffed transition — either
                         // is authoritative) continues the idle-quit fire
@@ -296,7 +341,7 @@ public class TermService extends Service implements TerminalSessionClient {
                     }
                 }
                 case CmusIpc.Colorscheme c -> {
-                    Log.d(TAG, "ipc colorscheme " + c.name());
+                    logIpc("ipc colorscheme " + c.name());
                     if (materialActive) {
                         // a sourced theme file replaces the generated
                         // scheme (from either side — the app's selector or
@@ -307,17 +352,43 @@ public class TermService extends Service implements TerminalSessionClient {
                         pushPalette();
                     }
                 }
-                case CmusIpc.Options o -> Log.d(TAG, "ipc options n=" + o.values().size()
-                        + " mouse=" + o.values().get("mouse")
-                        + " softvol=" + o.values().get("softvol")
-                        + " color_win_cur=" + o.values().get("color_win_cur")
-                        + " color_titleline_bg=" + o.values().get("color_titleline_bg"));
+                case CmusIpc.Options o -> {
+                    // echo → prefs: the sync-back half of the stage-18
+                    // managed settings (TUI :set changes persist too)
+                    CmusSettings.syncBack(TermService.this, o.values());
+                    logIpc("ipc options n=" + o.values().size()
+                            + " mouse=" + o.values().get("mouse")
+                            + " softvol=" + o.values().get("softvol")
+                            + " color_win_cur=" + o.values().get("color_win_cur")
+                            + " color_titleline_bg=" + o.values().get("color_titleline_bg"));
+                }
+                case CmusIpc.Saved ignored -> {
+                    logIpc("ipc saved");
+                    completeSaved();
+                }
             }
         }
     };
 
     public void setSessionCallback(SessionCallback callback) {
         this.callback = callback;
+    }
+
+    /**
+     * Per-event IPC logging (debug settings): info level so it survives
+     * release logcat filtering; the toggle keeps steady-state logs quiet.
+     */
+    private void logIpc(String message) {
+        if (ipcLogging) {
+            Log.i(TAG, message);
+        }
+    }
+
+    /** Settings toggled PREF_IPC_LOG. */
+    public void ipcLogSettingChanged() {
+        ipcLogging = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_IPC_LOG, (getApplicationInfo().flags
+                        & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
     }
 
     // Material You (stage 16): the app redefines terminal palette entries
@@ -347,6 +418,27 @@ public class TermService extends Service implements TerminalSessionClient {
     /** For the selector highlight. */
     public boolean materialYouActive() {
         return materialActive;
+    }
+
+    /**
+     * Settings changed something palette-affecting (the control-color hue
+     * rotation): a live re-push, palette-only like light/dark.
+     */
+    public void materialSettingChanged() {
+        if (materialActive) {
+            pushPalette();
+        }
+    }
+
+    /**
+     * (Re)sends the derived progress_bar — from settings (the pref moved)
+     * and from MainActivity when the control-bar visibility changes (auto
+     * derives from it); also part of the connect-time force.
+     */
+    public void applyProgressBar() {
+        if (ipc != null) {
+            ipc.send("set progress_bar=" + CmusSettings.effectiveProgressBar(this));
+        }
     }
 
     /**
@@ -386,9 +478,13 @@ public class TermService extends Service implements TerminalSessionClient {
         }
     }
 
-    /** Reported from the activity's onStart/onStop for the idle-quit timer. */
+    /**
+     * Reported from each activity's onStart/onStop (matched pairs) for the
+     * idle-quit timer; a count because the Main→Settings transition
+     * overlaps (the incoming onStart precedes the outgoing onStop).
+     */
     public void setActivityVisible(boolean visible) {
-        activityVisible = visible;
+        visibleActivities = Math.max(0, visibleActivities + (visible ? 1 : -1));
         if (!visible && session != null && session.getEmulator() != null) {
             // remember the attached size for the next headless spawn
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -414,7 +510,7 @@ public class TermService extends Service implements TerminalSessionClient {
         idleQuitArmed = arm;
         if (arm) {
             Log.d(TAG, "idle-quit: armed");
-            mainHandler.postDelayed(idleQuit, IDLE_QUIT_DELAY_MS);
+            mainHandler.postDelayed(idleQuit, idleQuitMinutes() * 60_000L);
         } else {
             Log.d(TAG, "idle-quit: cancelled");
             idleQuitPendingJobs = false; // a stale poll answer must not quit
@@ -433,6 +529,21 @@ public class TermService extends Service implements TerminalSessionClient {
 
     private final Runnable sleepFire = () -> {
         sleepDeadline = 0;
+        if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_SLEEP_EXIT, false)) {
+            // exit mode (stage 18): a full, clean exit — and no media-key
+            // resurrection afterwards, or a pocketed BT play key would
+            // undo the sleep (the pref is re-set true by the next spawn)
+            Log.i(TAG, "sleep timer: exiting");
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(PREF_RESURRECT, false).apply();
+            if (ipc != null) {
+                ipc.send("set resume=true");
+                ipc.send("quit");
+            }
+            // session death runs the normal teardown; a visible activity
+            // finishes through its onSessionFinished path
+            return;
+        }
         Log.i(TAG, "sleep timer: pausing");
         if (ipc != null) {
             ipc.send("player-pause-playback");
@@ -479,8 +590,29 @@ public class TermService extends Service implements TerminalSessionClient {
     /** The idle-quit preconditions, re-checked at every async step. */
     private boolean idleQuitConditionsHold() {
         CmusIpc.Status status = ipc != null ? ipc.status() : null;
-        return status != null && status.state() != CmusIpc.PlayState.PLAYING
-                && !activityVisible && session != null && session.isRunning();
+        return idleQuitMinutes() > 0
+                && status != null && status.state() != CmusIpc.PlayState.PLAYING
+                && visibleActivities == 0 && session != null && session.isRunning();
+    }
+
+    /** The idle-quit setting; 0 = off. */
+    private int idleQuitMinutes() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_IDLE_QUIT_MIN, 15);
+    }
+
+    /**
+     * Settings changed the idle-quit minutes: an armed timer carries the
+     * old delay (or shouldn't exist at all), so re-arm from scratch. The
+     * async re-check in the fire makes a stray old fire harmless either
+     * way; this just makes the setting feel immediate.
+     */
+    public void idleQuitSettingChanged() {
+        if (idleQuitArmed) {
+            idleQuitArmed = false;
+            idleQuitPendingJobs = false;
+            mainHandler.removeCallbacks(idleQuit);
+        }
+        updateIdleQuit();
     }
 
     /**
@@ -494,6 +626,77 @@ public class TermService extends Service implements TerminalSessionClient {
         ipc.send("set resume=true");
         ipc.send("quit");
         mainHandler.postDelayed(this::updateIdleQuit, IDLE_QUIT_GRACE_MS);
+    }
+
+    // stage-18 data section primitives (SettingsActivity drives these)
+
+    /**
+     * Sends android-save and runs done (main thread, exactly once) on the
+     * Saved ack or after timeoutMs — a wedged cmus must never block an
+     * export or a pre-reset save, so the timeout path proceeds with
+     * whatever is on disk. No session/IPC = nothing to save, done runs
+     * immediately.
+     */
+    public void saveState(long timeoutMs, Runnable done) {
+        completeSaved(); // a stale pending save shouldn't couple with ours
+        if (ipc == null) {
+            done.run();
+            return;
+        }
+        pendingSavedDone = done;
+        ipc.send("android-save");
+        mainHandler.postDelayed(savedTimeout, timeoutMs);
+    }
+
+    private final Runnable savedTimeout = this::completeSaved;
+
+    private void completeSaved() {
+        mainHandler.removeCallbacks(savedTimeout);
+        Runnable done = pendingSavedDone;
+        pendingSavedDone = null;
+        if (done != null) {
+            done.run();
+        }
+    }
+
+    /**
+     * kill→mutate→respawn (the data resets are troubleshooting tools —
+     * files only, never cmus commands): SIGKILL the session so no exit
+     * save path can rewrite what fileOp deletes and a wedged cmus can't
+     * block, run fileOp once the death is reaped, respawn, then done
+     * (main thread; the new session/IPC exist by then — listeners must
+     * re-attach, a respawn means fresh instances).
+     */
+    public void resetData(Runnable fileOp, Runnable done) {
+        pendingResetOp = fileOp;
+        pendingResetDone = done;
+        if (session != null && session.isRunning()) {
+            session.finishIfRunning(); // SIGKILL; onSessionFinished continues
+        } else {
+            session = null; // an already-dead session is just dropped
+            finishReset();
+        }
+    }
+
+    /** The mutate+respawn half, on the main thread with no session alive. */
+    private void finishReset() {
+        Runnable op = pendingResetOp;
+        Runnable done = pendingResetDone;
+        pendingResetOp = null;
+        pendingResetDone = null;
+        if (op != null) {
+            try {
+                op.run();
+            } catch (RuntimeException e) {
+                Log.e(TAG, "data reset op failed", e);
+            }
+        }
+        getSession(); // respawn (fresh CmusIpc + MediaControl)
+        startForeground(NOTIFICATION_ID, mediaControl.buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+        if (done != null) {
+            done.run();
+        }
     }
 
     @Override
@@ -551,8 +754,9 @@ public class TermService extends Service implements TerminalSessionClient {
         pendingMediaPlay = false;
         // a foreground quit is the user closing the app for real — gate the
         // media-key resurrection off (background deaths keep it); before the
-        // teardown below so nothing can interrupt it
-        if (activityVisible) {
+        // teardown below so nothing can interrupt it. Not during a data
+        // reset: that death is ours, and the respawn re-sets the pref anyway
+        if (visibleActivities > 0 && pendingResetOp == null) {
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putBoolean(PREF_RESURRECT, false).apply();
         }
@@ -569,6 +773,12 @@ public class TermService extends Service implements TerminalSessionClient {
         // recents and its next onStart restarts the service; resume=true
         // makes the round trip invisible
         session = null;
+        if (pendingResetOp != null) {
+            // stage-18 data reset: this death is the kill we asked for —
+            // mutate and respawn in place of the shutdown (the FGS stays)
+            finishReset();
+            return;
+        }
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
         if (callback != null) {
