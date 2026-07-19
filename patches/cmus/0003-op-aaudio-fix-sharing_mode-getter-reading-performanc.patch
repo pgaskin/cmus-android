@@ -1,7 +1,7 @@
 From cef6483c43126574194dd375281c79912dfc8db9 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 13:41:48 -0400
-Subject: [PATCH 3/5] op/aaudio: fix sharing_mode getter reading
+Subject: [PATCH 3/8] op/aaudio: fix sharing_mode getter reading
  performance_mode
 
 op_aaudio_get_sharing_mode switched on op_aaudio_opt_performance_mode,

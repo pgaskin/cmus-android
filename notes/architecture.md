@@ -105,7 +105,17 @@ full plan and rationale; this file describes what currently exists.
   static_plugins.c gathers them into static_{ip,op}_plugins[] tables that
   ip_load_plugins/op_load_plugins walk in place of the CMUS_LIB_DIR scan
   (the upstream Makefile leaves the macro unset and keeps the dlopen
-  path). The
+  path). The last three are app-hardening, all gated on CONFIG_ANDROID so
+  the upstream Makefile is unaffected: 0006 drops the built-in cmus-remote
+  socket server (every server_* reference in ui_curses.c behind #ifndef
+  CONFIG_ANDROID — the select set, server_init/exit, the --listen flag and
+  its default socket path) so server.c leaves the link like http.c did —
+  the app has its own IPC socket; 0007 routes debug output to logcat (tag
+  `cmus`): d_print at debug level, gated by a flag debug_init() reads once
+  from CMUS_ANDROID_DEBUG_LOG so early logs get through, and _debug_bug at
+  error level always; 0008 neuters spawn() to fail with EPERM instead of
+  fork()+execvp() (no external processes — status display programs, the
+  run/shell commands; the three callers already handle -1). The
   protocol comment atop android.c is the contract the Java client codes
   against. Amending an existing patch = fixup commit in the submodule +
   `git rebase --autosquash base`, then ./patch.sh regen.
@@ -144,8 +154,9 @@ full plan and rationale; this file describes what currently exists.
   ext-colors, no trace/ticlib/driver); iconv is lib/iconv.c +
   localcharset.c with a handwritten bionic config.h.
 - `native/cmus/`: cmus core (the Makefile's cmus-y set, mpris off,
-  http.c out, + the patch's android.c; `CONFIG_ANDROID` set as a plain
-  compile definition on the core only) as an
+  http.c + server.c out, + the patch's android.c; `CONFIG_ANDROID` set as
+  a plain compile definition on the core only; links `-llog` for the
+  logcat debug output of patch 0007) as an
   executable named `libcmus.so`, parked in CMAKE_LIBRARY_OUTPUT_DIRECTORY,
   which AGP packages as-is; the 9 ip plugins (flac vorbis opus mad wavpack
   aac mp4 wav cue) + op/aaudio are compiled straight into that binary
@@ -181,7 +192,10 @@ full plan and rationale; this file describes what currently exists.
   `CMUS_ANDROID_SOCKET=<filesDir>/.cmus/android.sock`, the app IPC
   socket — beside home, not in it, so zip exports of the config never
   pick up socket files, + `CMUS_ANDROID_{EXT_FILES,EXT,FILES}`, the
-  pl_env base vars — names permanent, most-specific first), and is the
+  pl_env base vars — names permanent, most-specific first, + a conditional
+  `CMUS_ANDROID_DEBUG_LOG=1` when the debuggable-only debug-logging toggle
+  is on, read once at startup by patch 0007 so a change needs a respawn),
+  and is the
   session's one stable `TerminalSessionClient`, forwarding to the
   attached activity. The spawn is headless (TerminalSession only
   forks in initializeEmulator, so getSession sizes the pty itself

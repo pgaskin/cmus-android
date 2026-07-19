@@ -73,6 +73,10 @@ public class CmusService extends Service implements TerminalSessionClient {
     static final String PREF_DEBUG_RECEIVER = "debug_receiver";
     /** Per-event IPC logging, at info level so release logcat shows it. */
     static final String PREF_IPC_LOG = "ipc_logging";
+    /** Route cmus d_print debug output to logcat (tag cmus). Read once at
+     * spawn (CMUS_ANDROID_DEBUG_LOG) so early logs get through, so a change
+     * needs a restart; off by default even in debuggable builds (overhead). */
+    static final String PREF_DEBUG_LOG = "debug_logging";
 
     /** What the attached activity cares about; safe to leave unregistered. */
     public interface SessionCallback {
@@ -203,6 +207,11 @@ public class CmusService extends Service implements TerminalSessionClient {
             env.add("CMUS_ANDROID_FILES=" + filesDir);
             plEnv.add("CMUS_ANDROID_FILES");
             plEnvVars = String.join(",", plEnv);
+            // debug.c reads this once at startup (patches/cmus/0007) so early
+            // logs get through; a change needs a respawn, hence the settings note
+            if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_DEBUG_LOG, false)) {
+                env.add("CMUS_ANDROID_DEBUG_LOG=1");
+            }
             // 100 transcript rows is the minimum honored (cmus is an
             // altscreen app; the transcript is never scrolled)
             session = new TerminalSession(exe, filesDir.getPath(),

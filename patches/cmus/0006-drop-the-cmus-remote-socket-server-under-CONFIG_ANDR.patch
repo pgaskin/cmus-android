@@ -1,0 +1,159 @@
+From 25f32a7a97623f0e6da5aca24c73063ee75ba673 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Sun, 19 Jul 2026 19:51:10 -0400
+Subject: [PATCH 6/8] drop the cmus-remote socket server under CONFIG_ANDROID
+
+The app talks to cmus over its own IPC socket (patch 0001); the built-in
+cmus-remote UNIX/TCP server is unused and just opens an attack surface, so
+gate every server_* reference in ui_curses.c behind #ifndef CONFIG_ANDROID
+(the main-loop select set, server_init/server_exit, the --listen flag and
+its default socket path) so server.c drops from the link, mirroring the
+remote-stream removal. The upstream Makefile keeps building it.
+
+diff --git a/ui_curses.c b/ui_curses.c
+index f05ae71..74ba281 100644
+--- a/ui_curses.c
++++ b/ui_curses.c
+@@ -40,7 +40,9 @@
+ #include "prog.h"
+ #include "uchar.h"
+ #include "spawn.h"
++#ifndef CONFIG_ANDROID
+ #include "server.h"
++#endif
+ #include "keys.h"
+ #include "debug.h"
+ #include "help.h"
+@@ -126,7 +128,9 @@ static time_t error_time = 0;
+ static int msg_is_error;
+ static int error_count = 0;
+ 
++#ifndef CONFIG_ANDROID
+ static char *server_address = NULL;
++#endif
+ 
+ /* used for messages to the client */
+ static int client_fd = -1;
+@@ -2231,7 +2235,11 @@ static void main_loop(void)
+ 		fd_high = (fd); \
+ } while(0)
+ 
++#ifdef CONFIG_ANDROID
++	fd_high = 0;
++#else
+ 	fd_high = server_socket;
++#endif
+ 	while (cmus_running) {
+ 		fd_set set;
+ 		struct timeval tv;
+@@ -2239,8 +2247,10 @@ static void main_loop(void)
+ 		int i;
+ 		int nr_fds_vol = 0, fds_vol[NR_MIXER_FDS];
+ 		int nr_fds_out = 0, fds_out[NR_MIXER_FDS];
++#ifndef CONFIG_ANDROID
+ 		struct list_head *item;
+ 		struct client *client;
++#endif
+ 
+ 		player_info_snapshot();
+ 
+@@ -2268,16 +2278,20 @@ static void main_loop(void)
+ 		SELECT_ADD_FD(0);
+ 		SELECT_ADD_FD(job_fd);
+ 		SELECT_ADD_FD(cmus_next_track_request_fd);
++#ifndef CONFIG_ANDROID
+ 		SELECT_ADD_FD(server_socket);
++#endif
+ 		if (mpris_fd != -1)
+ 			SELECT_ADD_FD(mpris_fd);
+ 		if (android_fd != -1)
+ 			SELECT_ADD_FD(android_fd);
+ 		if (android_client_fd != -1)
+ 			SELECT_ADD_FD(android_client_fd);
++#ifndef CONFIG_ANDROID
+ 		list_for_each_entry(client, &client_head, node) {
+ 			SELECT_ADD_FD(client->fd);
+ 		}
++#endif
+ 		if (!soft_vol) {
+ 			nr_fds_vol = mixer_get_fds(MIXER_FDS_VOLUME, fds_vol);
+ 			if (nr_fds_vol <= 0) {
+@@ -2336,6 +2350,7 @@ static void main_loop(void)
+ 				clear_pipe(fds_out[i], -1);
+ 			}
+ 		}
++#ifndef CONFIG_ANDROID
+ 		if (FD_ISSET(server_socket, &set))
+ 			server_accept();
+ 
+@@ -2348,6 +2363,7 @@ static void main_loop(void)
+ 				server_serve(client);
+ 			item = next;
+ 		}
++#endif
+ 
+ 		if (FD_ISSET(0, &set))
+ 			u_getch();
+@@ -2461,7 +2477,9 @@ static void init_all(void)
+ 	main_thread = pthread_self();
+ 	cmus_track_request_init();
+ 
++#ifndef CONFIG_ANDROID
+ 	server_init(server_address);
++#endif
+ 
+ 	/* does not select output plugin */
+ 	player_init();
+@@ -2580,7 +2598,9 @@ static void exit_all(void)
+ 		resume_exit();
+ 	options_exit();
+ 
++#ifndef CONFIG_ANDROID
+ 	server_exit();
++#endif
+ 	cmus_exit();
+ 	if (resume_cmus)
+ 		cmus_save(play_queue_for_each, play_queue_autosave_filename,
+@@ -2600,7 +2620,9 @@ static void exit_all(void)
+ }
+ 
+ enum {
++#ifndef CONFIG_ANDROID
+ 	FLAG_LISTEN,
++#endif
+ 	FLAG_PLUGINS,
+ 	FLAG_SHOW_CURSOR,
+ 	FLAG_HELP,
+@@ -2609,7 +2631,9 @@ enum {
+ };
+ 
+ static struct option options[NR_FLAGS + 1] = {
++#ifndef CONFIG_ANDROID
+ 	{ 0, "listen", 1 },
++#endif
+ 	{ 0, "plugins", 0 },
+ 	{ 0, "show-cursor", 0 },
+ 	{ 0, "help", 0 },
+@@ -2658,9 +2682,11 @@ int main(int argc, char *argv[])
+ 		case FLAG_PLUGINS:
+ 			list_plugins = 1;
+ 			break;
++#ifndef CONFIG_ANDROID
+ 		case FLAG_LISTEN:
+ 			server_address = xstrdup(arg);
+ 			break;
++#endif
+ 		case FLAG_SHOW_CURSOR:
+ 			show_cursor = 1;
+ 			break;
+@@ -2681,8 +2707,10 @@ int main(int argc, char *argv[])
+ 		using_utf8 = 1;
+ 
+ 	misc_init();
++#ifndef CONFIG_ANDROID
+ 	if (server_address == NULL)
+ 		server_address = xstrdup(cmus_socket_path);
++#endif
+ 	debug_init();
+ 	d_print("charset = '%s'\n", charset);
+ 

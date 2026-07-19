@@ -522,6 +522,15 @@ public class SettingsActivity extends Activity {
                         service.ipcLogSettingChanged();
                     }
                 });
+
+        // read once at spawn (verbose, so off by default even here) — only
+        // offered on debuggable builds
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            switchPrefRow("cmus debug logging",
+                    "Log cmus d_print output at debug level with the logcat tag "
+                            + "cmus. Applies on the next app restart.",
+                    CmusService.PREF_DEBUG_LOG, false, null);
+        }
     }
 
     // data-section flows

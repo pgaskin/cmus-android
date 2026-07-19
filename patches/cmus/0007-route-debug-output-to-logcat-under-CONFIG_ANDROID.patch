@@ -1,0 +1,87 @@
+From 11891a7fbad536779f05fa2e181e94599623b45b Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Sun, 19 Jul 2026 19:51:10 -0400
+Subject: [PATCH 7/8] route debug output to logcat under CONFIG_ANDROID
+
+Under CONFIG_ANDROID, d_print goes to logcat (tag "cmus") at debug level,
+gated by a flag read once in debug_init() from CMUS_ANDROID_DEBUG_LOG so
+early startup logs get through; _debug_bug logs at error level always,
+regardless of the flag, then exit(127) as before. Non-Android builds keep
+the original cmus-debug.txt/stderr behavior.
+
+diff --git a/debug.c b/debug.c
+index 6e114b6..291532b 100644
+--- a/debug.c
++++ b/debug.c
+@@ -24,6 +24,63 @@
+ #include <stdlib.h>
+ #include <sys/time.h>
+ 
++#ifdef CONFIG_ANDROID
++#include <string.h>
++#include <android/log.h>
++
++/*
++ * On Android debug output goes to logcat (tag "cmus") instead of a file:
++ * d_print at debug level, gated by a flag read once at startup so early logs
++ * get through (the app sets CMUS_ANDROID_DEBUG_LOG when the toggle is on);
++ * _debug_bug at error level, always, regardless of the flag.
++ */
++static int debug_log_enabled;
++
++void debug_init(void)
++{
++	const char *val = getenv("CMUS_ANDROID_DEBUG_LOG");
++	debug_log_enabled = val && val[0] && strcmp(val, "0") != 0;
++}
++
++/* format into buf, dropping the trailing newline d_print callers conventionally
++ * add (logcat supplies its own) */
++static void debug_format(char *buf, size_t size, const char *fmt, va_list ap)
++{
++	int n = vsnprintf(buf, size, fmt, ap);
++	if (n >= (int)size)
++		n = size - 1;
++	while (n > 0 && buf[n - 1] == '\n')
++		buf[--n] = '\0';
++}
++
++void _debug_bug(const char *function, const char *fmt, ...)
++{
++	char buf[1024];
++	va_list ap;
++
++	va_start(ap, fmt);
++	debug_format(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++
++	__android_log_print(ANDROID_LOG_ERROR, "cmus", "BUG in %s: %s", function, buf);
++	exit(127);
++}
++
++void _debug_print(const char *function, const char *fmt, ...)
++{
++	char buf[1024];
++	va_list ap;
++
++	if (!debug_log_enabled)
++		return;
++
++	va_start(ap, fmt);
++	debug_format(buf, sizeof(buf), fmt, ap);
++	va_end(ap);
++
++	__android_log_print(ANDROID_LOG_DEBUG, "cmus", "%s: %s", function, buf);
++}
++#else
+ #if DEBUG > 1
+ static FILE *debug_stream = NULL;
+ #endif
+@@ -83,6 +140,7 @@ void _debug_print(const char *function, const char *fmt, ...)
+ 	fflush(debug_stream);
+ #endif
+ }
++#endif
+ 
+ uint64_t timer_get(void)
+ {

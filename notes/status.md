@@ -3,6 +3,32 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — App hardening: drop cmus socket, logcat debug, neuter spawn (built + device-tested, authored as Claude)
+
+Three CONFIG_ANDROID-gated cmus patches (upstream Makefile unaffected):
+
+- **0006 — drop the cmus-remote socket server.** The app has its own IPC
+  socket (0001); the built-in UNIX/TCP server is unused surface. Gated every
+  `server_*` use in ui_curses.c behind `#ifndef CONFIG_ANDROID` (the two
+  main-loop client loops + `fd_high` seed, `server_init`/`server_exit`, the
+  `--listen` flag enum/option/case, the default `cmus_socket_path`), dropped
+  `server.c` + its `DEFAULT_PORT` from the CMake build — leaves the link like
+  http.c. Device: app restored + played a tagged mp3, no regression.
+- **0007 — debug output to logcat (tag `cmus`).** Under CONFIG_ANDROID
+  `_debug_print` → `__android_log_print` at debug level, gated by a flag
+  `debug_init()` reads once from `CMUS_ANDROID_DEBUG_LOG` (startup-read so
+  early logs get through, e.g. `main: charset = 'UTF-8'`); `_debug_bug` →
+  error level always, then exit(127). Strips the trailing `\n` d_print
+  callers add. cmus links `-llog`. App: `PREF_DEBUG_LOG` → conditional
+  `CMUS_ANDROID_DEBUG_LOG=1` env at spawn; a **debuggable-only** settings
+  toggle (Debug section), **default off even in debug builds** (verbose),
+  subtitle notes it applies on the next app restart. Device: toggled on via
+  prefs, restart → `D cmus` lines with function prefixes streamed; off (the
+  baseline) → none.
+- **0008 — neuter spawn().** `spawn()` returns `EPERM` instead of
+  `fork()`+`execvp()` — no external processes (status display programs, the
+  run/shell commands); all three callers already handle `-1`. Build-verified.
+
 ## 2026-07-19 — Single libcmus.so: plugins linked into the binary (built + device-tested, authored as Claude)
 
 - Goal: one `libcmus.so` with every input/output plugin linked in, instead of

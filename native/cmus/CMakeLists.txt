@@ -128,7 +128,6 @@ add_executable(cmus
     ${src}/read_wrapper.c
     ${src}/search.c
     ${src}/search_mode.c
-    ${src}/server.c
     ${src}/spawn.c
     ${src}/static_plugins.c
     ${src}/tabexp.c
@@ -170,13 +169,11 @@ target_compile_definitions(cmus PRIVATE HAVE_CONFIG _FILE_OFFSET_BITS=64
 target_compile_options(cmus PRIVATE ${cmus_cflags})
 # pthread is in bionic libc; the GNU iconv.h from the iconv target's
 # interface must (and does) precede bionic's own limited <iconv.h>
-target_link_libraries(cmus PRIVATE ncursesw iconv dl m)
+target_link_libraries(cmus PRIVATE ncursesw iconv dl m log)
 
 set_source_files_properties(
     ${src}/android.c ${src}/command_mode.c ${src}/input.c ${src}/ui_curses.c
     PROPERTIES COMPILE_DEFINITIONS VERSION="${cmus_version}")
-set_source_files_properties(${src}/server.c
-    PROPERTIES COMPILE_DEFINITIONS DEFAULT_PORT=3000)
 
 # ip/vorbis.c + ip/mp4.c include "../config/*.h"; relative to the source
 # that misses (pristine tree), and against -I dirs the lookup is textual
