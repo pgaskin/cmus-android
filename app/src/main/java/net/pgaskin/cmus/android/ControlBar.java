@@ -133,7 +133,11 @@ public final class ControlBar extends LinearLayout {
                 callback.sendCommand("vol " + progress);
             }
         });
-        volumePopup = new PopupWindow(volumeSlider, 0, 0, true);
+        // not focusable: a focusable popup takes window focus from the
+        // terminal, which hides the soft keyboard; the slider only needs
+        // touch, and outside-touch still dismisses (back won't, since keys
+        // keep going to the activity)
+        volumePopup = new PopupWindow(volumeSlider, 0, 0, false);
         volumePopup.setOutsideTouchable(true);
         volumePopup.setElevation(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 6,
                 getResources().getDisplayMetrics()));

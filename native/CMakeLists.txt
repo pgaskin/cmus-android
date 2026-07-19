@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.30)
 project(cmus_android C CXX)
 
+# AGP configures the debug variant with CMAKE_BUILD_TYPE=Debug, i.e. -O0
+# for cmus and every codec — 3-4x the decode CPU of termux's optimized
+# packages, very noticeable during playback. Decoding is the whole point,
+# so optimize native code in every variant (trailing -O2 wins over the
+# toolchain's earlier -O0).
+string(APPEND CMAKE_C_FLAGS_DEBUG " -O2 -DNDEBUG")
+string(APPEND CMAKE_CXX_FLAGS_DEBUG " -O2 -DNDEBUG")
+
 # Find modules here shim find_package(Ogg)/find_package(Opus) onto the
 # in-tree targets; prepended so they win over the copies the submodules
 # append (which would probe the system).

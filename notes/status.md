@@ -3,6 +3,19 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Fixes: volume popup keyboard + debug-build decode CPU (done)
+
+- Volume popup made non-focusable (ControlBar): a focusable PopupWindow
+  took window focus and hid the soft keyboard. Outside-tap still
+  dismisses; back now goes to the activity instead.
+- Debug-variant decode CPU (15-20% vs termux's 5% on the producer
+  thread): AGP builds the debug variant with CMAKE_BUILD_TYPE=Debug, so
+  cmus + all codecs compiled at -O0. native/CMakeLists.txt now appends
+  `-O2 -DNDEBUG` to the Debug flags (a gradle `arguments
+  -DCMAKE_BUILD_TYPE=...` override was ignored by AGP 9). Not
+  player_pos_exact, which was the initial suspect — it only runs on the
+  main loop and trylocks. Verified fixed on-device by Patrick.
+
 ## 2026-07-19 — Stage 17: Music-folder refresh + import guard (done)
 
 - Per [plans/17-refresh.md](plans/17-refresh.md), same session as stage
