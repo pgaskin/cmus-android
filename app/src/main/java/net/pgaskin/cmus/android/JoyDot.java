@@ -19,6 +19,9 @@ import android.view.ViewConfiguration;
  * here too). Keys inject through
  * the same TerminalView path as the key row, so its sticky modifiers merge
  * here too. Fixed dp size — it's a control, not TUI-flush chrome.
+ * Resting on the center for 3s vibrates and turns the rest of the touch
+ * into a reposition drag; the owner moves/clamps/persists via the drag
+ * callbacks (this view only reports raw deltas).
  */
 public final class JoyDot extends View {
     public interface Callback {
@@ -26,6 +29,12 @@ public final class JoyDot extends View {
 
         /** Far horizontal slide: go this way (pane, then adjacent view). */
         void nav(boolean right);
+
+        /** Reposition drag engaged: the finger moved by (dx, dy) raw px. */
+        void drag(float dx, float dy);
+
+        /** Reposition drag released: persist wherever the dot ended up. */
+        void dragEnd();
     }
 
     // knob alphas over the terminal; faint at rest, firmer under a finger
@@ -39,6 +48,8 @@ public final class JoyDot extends View {
     /** Nav (pane/view) repeat bounds — much slower, it changes context. */
     private static final long NAV_SLOW_MS = 750;
     private static final long NAV_FAST_MS = 250;
+    /** Resting on the center this long arms the reposition drag. */
+    private static final long DRAG_HOLD_MS = 2000;
 
     private final Callback callback;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -65,12 +76,16 @@ public final class JoyDot extends View {
 
     private boolean tracking;
     private boolean fired;
+    private boolean dragging;
     private int repeatDir;
     private int navDir;
     private float downX;
     private float downY;
     private float dx;
     private float dy;
+    /** Raw coords, since the view itself moves under a reposition drag. */
+    private float lastRawX;
+    private float lastRawY;
 
     private final Runnable repeater = new Runnable() {
         @Override
@@ -85,6 +100,22 @@ public final class JoyDot extends View {
         public void run() {
             fireNav();
             postDelayed(this, navInterval());
+        }
+    };
+
+    /** Armed on DOWN, cancelled the moment the finger leaves the middle;
+     * firing flips the rest of this touch into a reposition drag. */
+    private final Runnable dragArm = new Runnable() {
+        @Override
+        public void run() {
+            if (!tracking || fired || Math.hypot(dx, dy) > touchSlop) {
+                return;
+            }
+            dragging = true;
+            dx = 0;
+            dy = 0;
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            invalidate();
         }
     };
 
@@ -115,21 +146,41 @@ public final class JoyDot extends View {
                 dy = 0;
                 tracking = true;
                 fired = false;
+                dragging = false;
                 repeatDir = 0;
                 navDir = 0;
+                lastRawX = e.getRawX();
+                lastRawY = e.getRawY();
+                postDelayed(dragArm, DRAG_HOLD_MS);
                 invalidate();
             }
             case MotionEvent.ACTION_MOVE -> {
                 if (!tracking) {
                     break;
                 }
+                if (dragging) {
+                    callback.drag(e.getRawX() - lastRawX, e.getRawY() - lastRawY);
+                    lastRawX = e.getRawX();
+                    lastRawY = e.getRawY();
+                    break;
+                }
                 dx = e.getX() - downX;
                 dy = e.getY() - downY;
+                if (Math.hypot(dx, dy) > touchSlop) {
+                    removeCallbacks(dragArm); // left the middle: no re-arm
+                }
                 // far left/right = go that way, repeating slowly while
                 // held (hysteresis holds the state between rearm and
                 // threshold); arrows pause while navigating
                 int nd = dx >= navThreshold ? 1 : dx <= -navThreshold ? -1
                         : Math.abs(dx) > navRearm ? navDir : 0;
+                // engaging nav also needs a clearly horizontal pull (2:1
+                // over the vertical wander, ~27° off axis) — it was too
+                // easy to hit from a sloppy vertical drag; once engaged,
+                // the distance hysteresis alone holds it
+                if (nd != 0 && navDir == 0 && Math.abs(dx) < 2 * Math.abs(dy)) {
+                    nd = 0;
+                }
                 if (nd != navDir) {
                     removeCallbacks(navRepeater);
                     navDir = nd;
@@ -158,7 +209,9 @@ public final class JoyDot extends View {
                 invalidate();
             }
             case MotionEvent.ACTION_UP -> {
-                if (!fired && Math.hypot(dx, dy) <= touchSlop) {
+                if (dragging) {
+                    callback.dragEnd();
+                } else if (!fired && Math.hypot(dx, dy) <= touchSlop) {
                     sendKey(KeyEvent.KEYCODE_ENTER);
                 }
                 reset();
@@ -220,9 +273,11 @@ public final class JoyDot extends View {
 
     private void reset() {
         tracking = false;
+        dragging = false;
         stopRepeat();
         navDir = 0;
         removeCallbacks(navRepeater);
+        removeCallbacks(dragArm);
         dx = 0;
         dy = 0;
         invalidate();
@@ -233,6 +288,7 @@ public final class JoyDot extends View {
         super.onDetachedFromWindow();
         removeCallbacks(repeater);
         removeCallbacks(navRepeater);
+        removeCallbacks(dragArm);
     }
 
     private int dp(int dp) {

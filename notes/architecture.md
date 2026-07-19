@@ -403,19 +403,25 @@ full plan and rationale; this file describes what currently exists.
   delegate to the row, and TerminalView merges them into injected keys
   and IME-typed characters alike. Arrows/page keys auto-repeat on
   hold.
-- `JoyDot` — faint minecraft-style joystick over the terminal's
-  bottom-right (120dp view, center 80/90dp in from the corner; only
-  touches starting within 39dp of center are grabbed, the rest fall
-  through; knob follows the finger to 44dp; win_fg at low alpha via
-  applyTheme; hidden on the crash screen). Tap = enter; slide up/down
-  past 15dp = repeating arrows (300→75ms, scaled by displacement to
-  60dp); slide far left/right past 40dp (30dp hysteresis) =
+- `JoyDot` — faint minecraft-style joystick over the terminal (120dp
+  view; only touches starting within 39dp of center are grabbed, the
+  rest fall through; knob follows the finger to 44dp; win_fg at low
+  alpha via applyTheme; hidden on the crash screen). Tap = enter;
+  slide up/down past 15dp = repeating arrows (300→75ms, scaled by
+  displacement to 60dp); slide far left/right past 40dp (30dp
+  hysteresis; engaging also needs a 2:1-horizontal pull, ~27° cone) =
   directional nav repeating 750→250ms — sends android-nav-left/right
   over IPC, which cmus resolves pane-aware (win-next toward the inner
   pane in tree/playlist, left/right-view -n at the edges and in
   single-pane views, empty track pane skipped). Keys inject through
   MainActivity's shared injectKey, so KeyRow's sticky modifiers merge
-  here too; arrows pause while navigating.
+  here too; arrows pause while navigating. Resting on the center 2s
+  vibrates and turns the touch into a reposition drag (JoyDot reports
+  raw deltas; MainActivity moves/clamps/persists): center saved as a
+  wrapper-fraction per orientation (joy_x/y_port/land, default center
+  140/150dp in from the bottom-right corner), re-derived on every
+  wrapper resize (rotation, IME), center clamped ≥64dp from the
+  wrapper edges while dragging and on restore.
 - Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout)
   as the pre-first-Options fallback; live chrome colors come from
   CmusTheme above.

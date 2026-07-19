@@ -3,6 +3,22 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Joystick: hold-to-drag repositioning + nav angle gate (done)
+
+- JoyDot: resting on the center 2s (Patrick tuned down from 3) fires a
+  LONG_PRESS haptic and the touch becomes a reposition drag. JoyDot only
+  reports raw-coordinate deltas (the view moves under the finger);
+  MainActivity owns placement: center kept as a fraction of the terminal
+  wrapper, saved per orientation (joy_x/y_port + joy_x/y_land in the
+  term prefs), restored via a wrapper layout-change listener (rotation +
+  IME resize; replaces the old fixed BOTTOM|END margins — the unsaved
+  default is the same 140/150dp corner spot), center clamped ≥64dp from
+  wrapper edges during drag and on restore.
+- Nav trigger was too easy to hit from a sloppy vertical drag: engaging
+  left/right now also needs a 2:1 horizontal pull (~27° cone) on top of
+  the 40dp threshold; the distance hysteresis alone still holds it once
+  engaged. Verified on-device by Patrick.
+
 ## 2026-07-19 — Fixes: volume popup keyboard + debug-build decode CPU (done)
 
 - Volume popup made non-focusable (ControlBar): a focusable PopupWindow

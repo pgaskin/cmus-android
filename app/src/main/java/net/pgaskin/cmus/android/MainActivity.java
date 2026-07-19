@@ -6,8 +6,10 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Environment;
@@ -70,6 +72,14 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private static final String PREF_COLORSCHEME = "colorscheme";
     /** Selected terminal font: an asset path from FONT_ASSETS, absent = system. */
     private static final String PREF_TYPEFACE = "typeface";
+    /** Joystick center as a fraction of the terminal wrapper, one pair of
+     * float keys per orientation ("port"/"land" suffix); absent = the
+     * original fixed corner spot. */
+    private static final String PREF_JOY_X = "joy_x_";
+    private static final String PREF_JOY_Y = "joy_y_";
+    /** The joystick center keeps at least this far from the wrapper edges,
+     * while dragging and when restoring a saved spot. */
+    private static final int JOY_EDGE_DP = 64;
 
     /** The bundled monospace fonts (assets/fonts, license texts beside them). */
     private static final String[] FONT_NAMES = {
@@ -98,6 +108,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private ControlBar controlBar;
     private KeyRow keyRow;
     private JoyDot joyDot;
+    /** Joystick center in wrapper px, kept clamped by applyJoyPos. */
+    private float joyCx;
+    private float joyCy;
     private final TextView[] viewTabs = new TextView[VIEW_NAMES.length];
     // bar/cutout insets and the IME inset separately, handled asymmetrically
     // around the IME animation (one layout pass, one terminal resize, no
@@ -364,13 +377,39 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 // adjacent view (android.c's android-nav-* input lines)
                 sendCommand(right ? "android-nav-right" : "android-nav-left");
             }
+
+            @Override
+            public void drag(float dx, float dy) {
+                joyCx += dx;
+                joyCy += dy;
+                applyJoyPos();
+            }
+
+            @Override
+            public void dragEnd() {
+                int w = terminalWrapper.getWidth();
+                int h = terminalWrapper.getHeight();
+                if (w == 0 || h == 0) {
+                    return;
+                }
+                String sfx = joyKeySuffix();
+                getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
+                        .putFloat(PREF_JOY_X + sfx, joyCx / w)
+                        .putFloat(PREF_JOY_Y + sfx, joyCy / h)
+                        .apply();
+            }
         });
-        FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(
-                dp(120), dp(120), Gravity.BOTTOM | Gravity.END);
-        // center sits well inside the corner so a far-right tab drag has
-        // room before the finger runs off the screen edge
-        dotLp.setMargins(0, 0, dp(80), dp(90));
-        terminalWrapper.addView(joyDot, dotLp);
+        // positioned from the saved per-orientation fraction (or the fixed
+        // default) on every wrapper resize, so it re-derives on rotation
+        // and keeps riding above the IME as the wrapper shrinks
+        terminalWrapper.addView(joyDot, new FrameLayout.LayoutParams(
+                dp(120), dp(120), Gravity.TOP | Gravity.START));
+        terminalWrapper.addOnLayoutChangeListener(
+                (v, l, t, r, b, ol, ot, or, ob) -> {
+                    if (r - l != or - ol || b - t != ob - ot) {
+                        placeJoyDot();
+                    }
+                });
 
         controlBar = new ControlBar(this, new ControlBar.Callback() {
             @Override
@@ -509,6 +548,47 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private int dp(int dp) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp,
                 getResources().getDisplayMetrics()));
+    }
+
+    private String joyKeySuffix() {
+        return getResources().getConfiguration().orientation
+                == Configuration.ORIENTATION_LANDSCAPE ? "land" : "port";
+    }
+
+    /** Derive the joystick center from the saved fraction (or the fixed
+     * default corner spot) for the wrapper's current size. */
+    private void placeJoyDot() {
+        int w = terminalWrapper.getWidth();
+        int h = terminalWrapper.getHeight();
+        if (w == 0 || h == 0) {
+            return;
+        }
+        SharedPreferences prefs = getSharedPreferences(TermService.PREFS, MODE_PRIVATE);
+        String sfx = joyKeySuffix();
+        float fx = prefs.getFloat(PREF_JOY_X + sfx, Float.NaN);
+        float fy = prefs.getFloat(PREF_JOY_Y + sfx, Float.NaN);
+        // default center sits well inside the corner so a far-right tab
+        // drag has room before the finger runs off the screen edge
+        joyCx = Float.isNaN(fx) ? w - dp(140) : fx * w;
+        joyCy = Float.isNaN(fy) ? h - dp(150) : fy * h;
+        applyJoyPos();
+    }
+
+    /** Clamp the center to ≥64dp from the wrapper edges and lay the dot
+     * out there (margins against TOP|START). */
+    private void applyJoyPos() {
+        int w = terminalWrapper.getWidth();
+        int h = terminalWrapper.getHeight();
+        if (w == 0 || h == 0) {
+            return;
+        }
+        int edge = dp(JOY_EDGE_DP);
+        joyCx = Math.max(edge, Math.min(joyCx, w - edge));
+        joyCy = Math.max(edge, Math.min(joyCy, h - edge));
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) joyDot.getLayoutParams();
+        lp.leftMargin = Math.round(joyCx) - lp.width / 2;
+        lp.topMargin = Math.round(joyCy) - lp.height / 2;
+        joyDot.setLayoutParams(lp);
     }
 
     /**
