@@ -1,4 +1,4 @@
-From d02fa7d5a7f85bd0992195b22b2a39b976576265 Mon Sep 17 00:00:00 2001
+From 47a9de43eaebd3b380a8adc0b7f05a0e8d679532 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 2/2] drop remote stream support under CONFIG_ANDROID

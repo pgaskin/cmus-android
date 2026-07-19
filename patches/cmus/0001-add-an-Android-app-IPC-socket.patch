@@ -1,4 +1,4 @@
-From bb6a8d54c353ebc25e51a746865a23f39bb6cf2c Mon Sep 17 00:00:00 2001
+From 05376bff997ed1d0b1749dbeeffca06ffbe259d9 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..35905d1
+index 0000000..9fa1f6a
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,631 @@
+@@ -0,0 +1,657 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -95,6 +95,13 @@ index 0000000..35905d1
 + *       the playlist-view list pane variant: a right-click there selects
 + *       (and shows) that playlist, and this carries its name so the app
 + *       can offer android-pl-delete — win-remove would prompt.
++ *   {"type":"colorscheme","name":"..."}
++ *       a `colorscheme` command successfully sourced the named theme
++ *       file (either search dir; a failed lookup emits nothing).
++ *       Transient like "selected": a theme is just a batch of set
++ *       commands and cmus doesn't retain the name, so there's nothing
++ *       to snapshot on connect — the resulting color_* values arrive
++ *       in the coalesced options event as usual.
 + *
 + * Inbound: raw cmus command lines, newline-delimited — exactly what the
 + * server.c socket accepts ("player-pause", "seek +5", ...), including the
@@ -542,6 +549,25 @@ index 0000000..35905d1
 +	gbuf_free(&buf);
 +}
 +
++/*
++ * A colorscheme command sourced a theme file (command_mode.c hooks the
++ * success path only). The name is the app's theme-selector highlight;
++ * the color options themselves follow in the flushed options event.
++ */
++void android_colorscheme_event(const char *name)
++{
++	GBUF(buf);
++
++	if (android_client_fd == -1)
++		return;
++
++	gbuf_add_str(&buf, "{\"type\":\"colorscheme\",\"name\":");
++	android_json_str(&buf, name);
++	gbuf_add_str(&buf, "}\n");
++	android_write(&buf);
++	gbuf_free(&buf);
++}
++
 +static void android_status_event(struct gbuf *buf)
 +{
 +	const struct track_info *ti = player_info.ti;
@@ -652,10 +678,10 @@ index 0000000..35905d1
 +}
 diff --git a/android.h b/android.h
 new file mode 100644
-index 0000000..2382e60
+index 0000000..3563a86
 --- /dev/null
 +++ b/android.h
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,54 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -691,6 +717,7 @@ index 0000000..2382e60
 +void android_options_changed(void);
 +void android_view_changed(void);
 +void android_selected_event(void);
++void android_colorscheme_event(const char *name);
 +
 +#else
 +
@@ -704,12 +731,13 @@ index 0000000..2382e60
 +#define android_options_changed() { }
 +#define android_view_changed() { }
 +#define android_selected_event() { }
++#define android_colorscheme_event(name) { }
 +
 +#endif
 +
 +#endif
 diff --git a/command_mode.c b/command_mode.c
-index b794399..8528b8b 100644
+index b794399..75edd91 100644
 --- a/command_mode.c
 +++ b/command_mode.c
 @@ -17,6 +17,7 @@
@@ -720,7 +748,21 @@ index b794399..8528b8b 100644
  #include "search_mode.h"
  #include "cmdline.h"
  #include "options.h"
-@@ -2967,6 +2968,11 @@ void run_parsed_command(char *cmd, char *arg)
+@@ -775,9 +776,12 @@ static void cmd_colorscheme(char *arg)
+ 	snprintf(filename, sizeof(filename), "%s/%s.theme", cmus_config_dir, arg);
+ 	if (source_file(filename) == -1) {
+ 		snprintf(filename, sizeof(filename), "%s/%s.theme", cmus_data_dir, arg);
+-		if (source_file(filename) == -1)
++		if (source_file(filename) == -1) {
+ 			error_msg("sourcing %s: %s", filename, strerror(errno));
++			return;
++		}
+ 	}
++	android_colorscheme_event(arg);
+ }
+ 
+ /*
+@@ -2967,6 +2971,11 @@ void run_parsed_command(char *cmd, char *arg)
  		}
  		i++;
  	}
