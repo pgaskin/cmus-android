@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Scoped Auto Backup / device-transfer rules (stage 18). Any <include>
+     restricts its domain to exactly the listed paths, so everything else
+     (the regenerated .cmus/{lib,data,terminfo}, stamp, socket — and,
+     deliberately, resume + queue.pl: a restored install starts stopped
+     with an empty queue) is excluded for free. The pl_env path prefixes
+     are what keep a restored lib.pl/playlists valid on another device;
+     the cmus_opts sync re-forces the managed settings on first connect. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="sharedpref" path="." />
+        <include domain="file" path=".cmus/home/lib.pl" />
+        <include domain="file" path=".cmus/home/playlists" />
+        <include domain="file" path=".cmus/home/search-history" />
+        <include domain="file" path=".cmus/home/command-history" />
+        <include domain="file" path=".cmus/home/autosave" />
+        <include domain="file" path=".cmus/home/cache" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="." />
+        <include domain="file" path=".cmus/home/lib.pl" />
+        <include domain="file" path=".cmus/home/playlists" />
+        <include domain="file" path=".cmus/home/search-history" />
+        <include domain="file" path=".cmus/home/command-history" />
+        <include domain="file" path=".cmus/home/autosave" />
+        <include domain="file" path=".cmus/home/cache" />
+    </device-transfer>
+</data-extraction-rules>
