@@ -629,7 +629,9 @@ public class SettingsActivity extends Activity {
             String name = prefix + f.getName();
             if (f.isDirectory()) {
                 zipTree(zip, f, name + "/");
-            } else {
+            } else if (f.isFile()) {
+                // isFile skips cmus's own server socket ($CMUS_HOME/socket)
+                // — opening a socket file throws, and it's not state
                 zip.putNextEntry(new ZipEntry(name));
                 try (InputStream in = new java.io.FileInputStream(f)) {
                     for (int n; (n = in.read(buf)) != -1; ) {
