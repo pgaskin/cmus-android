@@ -36,6 +36,12 @@ public final class JoyDot extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final int baseRadius = dp(20);
     private final int knobRadius = dp(12);
+    /** Touches must start this close to the center; the view is bigger
+     * than the dot so the knob can travel, and everything outside the
+     * grab area falls through to the terminal. */
+    private final int grabRadius = dp(26);
+    /** How far the knob visually follows the finger (past the base). */
+    private final int knobTravel = dp(44);
     /** Vertical displacement where the arrows start. */
     private final int vertThreshold = dp(15);
     /** Vertical displacement where the repeat reaches full speed. */
@@ -81,6 +87,10 @@ public final class JoyDot extends View {
     public boolean onTouchEvent(MotionEvent e) {
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN -> {
+                if (Math.hypot(e.getX() - getWidth() / 2f, e.getY() - getHeight() / 2f)
+                        > grabRadius) {
+                    return false; // not on the dot: the terminal's touch
+                }
                 downX = e.getX();
                 downY = e.getY();
                 dx = 0;
@@ -143,13 +153,14 @@ public final class JoyDot extends View {
         paint.setColor((fg & 0x00FFFFFF)
                 | (tracking ? BASE_ALPHA_ACTIVE : BASE_ALPHA) << 24);
         canvas.drawCircle(cx, cy, baseRadius, paint);
-        // the knob follows the finger, clamped to the base circle
+        // the knob follows the finger past the base circle, up to about
+        // the gesture thresholds
         float kx = dx;
         float ky = dy;
         double len = Math.hypot(kx, ky);
-        if (len > baseRadius) {
-            kx = (float) (kx / len * baseRadius);
-            ky = (float) (ky / len * baseRadius);
+        if (len > knobTravel) {
+            kx = (float) (kx / len * knobTravel);
+            ky = (float) (ky / len * knobTravel);
         }
         paint.setColor((fg & 0x00FFFFFF)
                 | (tracking ? KNOB_ALPHA_ACTIVE : KNOB_ALPHA) << 24);

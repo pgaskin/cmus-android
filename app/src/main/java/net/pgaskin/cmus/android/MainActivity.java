@@ -167,10 +167,14 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // enter/arrows/tab without reaching for the IME: the joystick dot
         // floats over the terminal's bottom-right, riding above the IME
         // automatically as the wrapper shrinks
+        // the view is bigger than the dot so the knob can travel; only
+        // touches starting on the dot itself are consumed
         joyDot = new JoyDot(this, this::injectKey);
         FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(
-                dp(76), dp(76), Gravity.BOTTOM | Gravity.END);
-        dotLp.setMargins(0, 0, dp(28), dp(36));
+                dp(120), dp(120), Gravity.BOTTOM | Gravity.END);
+        // center sits well inside the corner so a far-right tab drag has
+        // room before the finger runs off the screen edge
+        dotLp.setMargins(0, 0, dp(80), dp(90));
         terminalWrapper.addView(joyDot, dotLp);
 
         controlBar = new ControlBar(this, new ControlBar.Callback() {
