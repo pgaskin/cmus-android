@@ -10,6 +10,7 @@ import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Environment;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
@@ -62,6 +63,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private static final int INACTIVE_TAB_ALPHA = 0x8C000000;
     /** Protocol code for the right button (same in SGR and X10 encodings). */
     private static final int MOUSE_RIGHT_BUTTON = 2;
+    /** requestPermissions code for the refresh action (0 = notifications). */
+    private static final int REQUEST_REFRESH = 1;
     private static final String PREF_FONT = "font";
     /** Last colorscheme name echoed by cmus (the selector highlight). */
     private static final String PREF_COLORSCHEME = "colorscheme";
@@ -136,6 +139,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     // last colorscheme name echoed by cmus (null = never seen); the name is
     // app-side bookkeeping — the colors themselves live in cmus's autosave
     private String colorschemeName;
+    // last seen worker-job state; the true→false edge is any import
+    // finishing (Refresh, TUI :add, anything) → toast (null = none seen)
+    private Boolean jobsRunning;
     private boolean bound;
     private boolean visible;
     private boolean crashScreen;
@@ -629,6 +635,14 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 applyTabColors();
             }
             case CmusIpc.Colorscheme c -> onColorscheme(c.name());
+            case CmusIpc.Jobs j -> {
+                // event-driven by design (Patrick): the diffed jobs event
+                // covers every import trigger, not just our refresh
+                if (Boolean.TRUE.equals(jobsRunning) && !j.running()) {
+                    Toast.makeText(this, "Import finished", Toast.LENGTH_SHORT).show();
+                }
+                jobsRunning = j.running();
+            }
             case CmusIpc.Status s -> {
                 controlBar.onStatus(s);
                 updateSleepSlot(); // the expiry pause echoes back as Status
@@ -908,11 +922,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         if (theme == null || crashScreen) {
             return;
         }
-        showListPopup(settingsBtn, new String[]{"Theme", "Font", "Settings"}, () -> -1, true,
+        showListPopup(settingsBtn, new String[]{"Theme", "Font", "Refresh", "Settings"},
+                () -> -1, true,
                 which -> {
                     switch (which) {
                         case 0 -> showThemeSelector();
                         case 1 -> showFontSelector();
+                        case 2 -> refreshTracks();
                         default -> Toast.makeText(this, "Not yet implemented",
                                 Toast.LENGTH_SHORT).show();
                     }
@@ -951,6 +967,35 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                         sendCommand("colorscheme " + names.get(which - 1));
                     }
                 });
+    }
+
+    // refresh (stage 18): `add <Music>` — cmus's own recursive scan job is
+    // the importer, and re-adds are dedupe no-ops (the library is keyed by
+    // filename), so this is safely re-tappable with no app-side state
+
+    private void refreshTracks() {
+        if (crashScreen || session == null || !session.isRunning()) {
+            return;
+        }
+        if (checkSelfPermission(android.Manifest.permission.READ_MEDIA_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                    new String[]{android.Manifest.permission.READ_MEDIA_AUDIO},
+                    REQUEST_REFRESH);
+            return; // granted → onRequestPermissionsResult resumes
+        }
+        Toast.makeText(this, "Adding tracks from Music folder", Toast.LENGTH_SHORT).show();
+        sendCommand("add " + Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_MUSIC));
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            int[] grantResults) {
+        if (requestCode == REQUEST_REFRESH && grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            refreshTracks(); // denied = nothing; a re-tap re-asks
+        }
     }
 
     private void showFontSelector() {

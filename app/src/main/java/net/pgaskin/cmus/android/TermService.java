@@ -78,6 +78,8 @@ public class TermService extends Service implements TerminalSessionClient {
     // feature, fires on next wake, no AlarmManager machinery)
     private static final long IDLE_QUIT_DELAY_MS = 15 * 60 * 1000;
     private static final long IDLE_QUIT_GRACE_MS = 30 * 1000;
+    /** Re-poll cadence while a worker job defers an idle-quit. */
+    private static final long IDLE_QUIT_JOBS_POLL_MS = 30 * 1000;
 
     private static TermService instance; // for CmusDebugReceiver only
 
@@ -90,6 +92,10 @@ public class TermService extends Service implements TerminalSessionClient {
     private String plEnvVars;
     private boolean activityVisible = true; // the activity starts the service
     private boolean idleQuitArmed;
+    // an idle-quit fire asked cmus about worker jobs (android-jobs) and
+    // the answer decides: quit, or re-poll while an import runs — quitting
+    // mid-import truncates it (Patrick). Any Jobs event while set counts.
+    private boolean idleQuitPendingJobs;
     private boolean pendingMediaPlay;
     private boolean materialActive;
 
@@ -267,6 +273,28 @@ public class TermService extends Service implements TerminalSessionClient {
                 case CmusIpc.Volume v -> Log.d(TAG, "ipc volume " + v.left() + "/" + v.right());
                 case CmusIpc.View v -> Log.d(TAG, "ipc view " + v.name());
                 case CmusIpc.Filter f -> Log.d(TAG, "ipc filter " + f.filter());
+                case CmusIpc.Jobs j -> {
+                    Log.d(TAG, "ipc jobs running=" + j.running());
+                    if (idleQuitPendingJobs) {
+                        // the poll answer (or a diffed transition — either
+                        // is authoritative) continues the idle-quit fire
+                        idleQuitPendingJobs = false;
+                        if (!idleQuitConditionsHold()) {
+                            idleQuitArmed = false;
+                            return;
+                        }
+                        if (j.running()) {
+                            Log.i(TAG, "idle-quit: import running, delaying");
+                            mainHandler.postDelayed(idleQuit, IDLE_QUIT_JOBS_POLL_MS);
+                        } else {
+                            // pipeline complete; the grace re-check can
+                            // re-arm fresh if the quit is dropped
+                            idleQuitArmed = false;
+                            Log.i(TAG, "idle-quit: quitting cmus");
+                            quitCmus();
+                        }
+                    }
+                }
                 case CmusIpc.Colorscheme c -> {
                     Log.d(TAG, "ipc colorscheme " + c.name());
                     if (materialActive) {
@@ -379,9 +407,7 @@ public class TermService extends Service implements TerminalSessionClient {
      * snapshot is not idle: never quit on state we never saw.
      */
     private void updateIdleQuit() {
-        CmusIpc.Status status = ipc != null ? ipc.status() : null;
-        boolean arm = status != null && status.state() != CmusIpc.PlayState.PLAYING
-                && !activityVisible && session != null && session.isRunning();
+        boolean arm = idleQuitConditionsHold();
         if (arm == idleQuitArmed) {
             return;
         }
@@ -391,6 +417,7 @@ public class TermService extends Service implements TerminalSessionClient {
             mainHandler.postDelayed(idleQuit, IDLE_QUIT_DELAY_MS);
         } else {
             Log.d(TAG, "idle-quit: cancelled");
+            idleQuitPendingJobs = false; // a stale poll answer must not quit
             mainHandler.removeCallbacks(idleQuit);
         }
     }
@@ -432,16 +459,29 @@ public class TermService extends Service implements TerminalSessionClient {
                 : Math.max(1, sleepDeadline - SystemClock.elapsedRealtime());
     }
 
+    // armed stays true through the poll round trip and any import-deferred
+    // re-polls — the pipeline is one arming, and only the cancel path (or
+    // the quit itself) ends it; otherwise a leftover re-poll could couple
+    // with a fresh arming and quit ~30s after backgrounding
     private final Runnable idleQuit = () -> {
-        idleQuitArmed = false;
-        CmusIpc.Status status = ipc != null ? ipc.status() : null;
-        if (status == null || status.state() == CmusIpc.PlayState.PLAYING
-                || activityVisible || session == null || !session.isRunning()) {
+        if (!idleQuitConditionsHold()) {
+            idleQuitArmed = false;
             return;
         }
-        Log.i(TAG, "idle-quit: quitting cmus");
-        quitCmus();
+        // never quit mid-import (it would truncate the scan): ask cmus
+        // about worker jobs first — a fresh authoritative answer at
+        // decision time (the poll line is also the main-loop wakeup); the
+        // Jobs echo continues below in the listener
+        idleQuitPendingJobs = true;
+        ipc.send("android-jobs");
     };
+
+    /** The idle-quit preconditions, re-checked at every async step. */
+    private boolean idleQuitConditionsHold() {
+        CmusIpc.Status status = ipc != null ? ipc.status() : null;
+        return status != null && status.state() != CmusIpc.PlayState.PLAYING
+                && !activityVisible && session != null && session.isRunning();
+    }
 
     /**
      * Lossless quit: re-force resume in case the user disabled it
@@ -506,6 +546,7 @@ public class TermService extends Service implements TerminalSessionClient {
     public void onSessionFinished(TerminalSession finishedSession) {
         mainHandler.removeCallbacksAndMessages(null);
         idleQuitArmed = false;
+        idleQuitPendingJobs = false;
         sleepDeadline = 0; // the fire above was just dropped with the rest
         pendingMediaPlay = false;
         // a foreground quit is the user closing the app for real — gate the

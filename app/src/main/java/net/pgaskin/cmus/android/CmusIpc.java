@@ -35,7 +35,7 @@ public final class CmusIpc implements AutoCloseable {
     private static final String TAG = "cmus";
 
     public sealed interface Event permits Hello, Status, Position, Volume, View, Filter,
-            Options, Selected, Colorscheme {
+            Options, Selected, Colorscheme, Jobs {
     }
 
     /** First line after connect. */
@@ -118,6 +118,16 @@ public final class CmusIpc implements AutoCloseable {
     public record Colorscheme(String name) implements Event {
     }
 
+    /**
+     * Whether any cmus worker job (add/update scans — imports) is running.
+     * On connect and on change (job activity itself wakes cmus's main
+     * loop, so transitions arrive promptly), plus immediately as the
+     * answer to the `android-jobs` line — the idle-quit guard's poll.
+     * Cached/replayed like Volume.
+     */
+    public record Jobs(boolean running) implements Event {
+    }
+
     public enum PlayState { STOPPED, PLAYING, PAUSED }
 
     /** All callbacks run on the main thread. */
@@ -152,6 +162,7 @@ public final class CmusIpc implements AutoCloseable {
     private volatile View view;
     private volatile Filter filter;
     private volatile Options options;
+    private volatile Jobs jobs;
     private volatile String version;
 
     /** Starts connecting (and retrying) immediately. */
@@ -187,6 +198,9 @@ public final class CmusIpc implements AutoCloseable {
             if (filter != null) {
                 listener.onEvent(filter);
             }
+            if (jobs != null) {
+                listener.onEvent(jobs);
+            }
             if (options != null) {
                 listener.onEvent(options);
             }
@@ -220,6 +234,11 @@ public final class CmusIpc implements AutoCloseable {
     /** Last known options; null before the first event. */
     public Options options() {
         return options;
+    }
+
+    /** Last known worker-job state; null before the first event. */
+    public Jobs jobs() {
+        return jobs;
     }
 
     /**
@@ -379,6 +398,7 @@ public final class CmusIpc implements AutoCloseable {
             case View v -> view = v;
             case Filter f -> filter = f;
             case Options o -> options = o;
+            case Jobs j -> jobs = j;
             case Position ignored -> {
             }
             case Selected ignored -> {
@@ -406,6 +426,7 @@ public final class CmusIpc implements AutoCloseable {
         double position = -1;
         int left = -1;
         int right = -1;
+        boolean running = false;
         Map<String, List<String>> tags = Map.of();
         Map<String, String> options = Map.of();
         List<String> files = List.of();
@@ -426,6 +447,7 @@ public final class CmusIpc implements AutoCloseable {
                     case "view" -> viewName = r.nextString();
                     case "filter" -> liveFilter = r.nextString();
                     case "name" -> name = r.nextString();
+                    case "running" -> running = r.nextBoolean();
                     case "tags" -> tags = readTags(r);
                     case "options" -> options = readOptions(r);
                     case "files" -> files = readStrings(r);
@@ -446,6 +468,7 @@ public final class CmusIpc implements AutoCloseable {
             case "options" -> new Options(options);
             case "selected" -> new Selected(viewName, files, playlists, playlist);
             case "colorscheme" -> new Colorscheme(name);
+            case "jobs" -> new Jobs(running);
             case null -> throw new IOException("event without a type");
             default -> null;
         };
