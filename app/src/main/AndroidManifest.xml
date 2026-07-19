@@ -22,6 +22,14 @@
             </intent-filter>
         </activity>
 
+        <!-- stage 18: stock Material day/night, deliberately not cmus-themed -->
+        <activity
+            android:name=".SettingsActivity"
+            android:label="Settings"
+            android:exported="false"
+            android:theme="@style/Theme.Cmus.Settings"
+            android:parentActivityName=".MainActivity" />
+
         <service
             android:name=".TermService"
             android:exported="false"

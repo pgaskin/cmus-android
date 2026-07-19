@@ -6,4 +6,14 @@
         <item name="android:navigationBarColor">@android:color/black</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
+
+    <!-- The settings screen deliberately doesn't wear the cmus theme
+         (Patrick): stock Material following the system day/night (the
+         framework has no DayNight, so values-night overrides the parent),
+         with a muted blue-grey accent instead of the default purple. -->
+    <style name="Theme.Cmus.Settings" parent="android:Theme.Material.Light">
+        <item name="android:colorAccent">@color/settings_accent</item>
+        <item name="android:colorPrimary">@color/settings_accent</item>
+        <item name="android:colorEdgeEffect">@color/settings_accent</item>
+    </style>
 </resources>

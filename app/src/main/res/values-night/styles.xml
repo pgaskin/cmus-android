@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- night variant of the settings theme; see values/styles.xml -->
+    <style name="Theme.Cmus.Settings" parent="android:Theme.Material">
+        <item name="android:colorAccent">@color/settings_accent</item>
+        <item name="android:colorPrimary">@color/settings_accent</item>
+        <item name="android:colorEdgeEffect">@color/settings_accent</item>
+    </style>
+</resources>

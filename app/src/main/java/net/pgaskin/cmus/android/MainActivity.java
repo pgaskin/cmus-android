@@ -47,6 +47,7 @@ import com.termux.view.TerminalView;
 import com.termux.view.TerminalViewClient;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.TreeSet;
@@ -67,7 +68,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private static final int MOUSE_RIGHT_BUTTON = 2;
     /** requestPermissions code for the refresh action (0 = notifications). */
     private static final int REQUEST_REFRESH = 1;
-    private static final String PREF_FONT = "font";
+    private static final int REQUEST_SETTINGS = 2;
+    private static final String PREF_FONT = TermService.PREF_FONT; // settings zoom slider shares it
     /** Last colorscheme name echoed by cmus (the selector highlight). */
     private static final String PREF_COLORSCHEME = "colorscheme";
     /** Selected terminal font: an asset path from FONT_ASSETS, absent = system. */
@@ -172,9 +174,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         public void onServiceConnected(ComponentName name, android.os.IBinder binder) {
             service = ((TermService.LocalBinder) binder).getService();
             service.setSessionCallback(MainActivity.this);
-            // binding is async; the service defaults to visible, so only the
-            // launched-then-immediately-backgrounded window needs correcting
-            service.setActivityVisible(visible);
+            // binding is async: this is our +1 for the visibility count
+            // (onStart skipped it while service was null); a matched -1
+            // comes from onStop. Launched-then-immediately-backgrounded =
+            // nothing to report
+            if (visible) {
+                service.setActivityVisible(true);
+            }
             session = service.getSession();
             terminalView.attachSession(session);
             attachIpc();
@@ -1002,17 +1008,36 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         if (theme == null || crashScreen) {
             return;
         }
-        showListPopup(settingsBtn, new String[]{"Theme", "Font", "Refresh", "Settings"},
+        // the control bar owns the keyboard toggle; when it's hidden the
+        // popover is the way in (stage 18)
+        List<String> items = new ArrayList<>(List.of("Theme", "Font", "Refresh"));
+        if (!getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
+                .getBoolean(TermService.PREF_SHOW_CONTROL_BAR, true)) {
+            items.add("Keyboard");
+        }
+        items.add("Settings");
+        showListPopup(settingsBtn, items.toArray(new String[0]),
                 () -> -1, true,
                 which -> {
-                    switch (which) {
-                        case 0 -> showThemeSelector();
-                        case 1 -> showFontSelector();
-                        case 2 -> refreshTracks();
-                        default -> Toast.makeText(this, "Not yet implemented",
-                                Toast.LENGTH_SHORT).show();
+                    switch (items.get(which)) {
+                        case "Theme" -> showThemeSelector();
+                        case "Font" -> showFontSelector();
+                        case "Refresh" -> refreshTracks();
+                        case "Keyboard" -> toggleSoftKeyboard();
+                        case "Settings" -> startActivityForResult(
+                                new Intent(this, SettingsActivity.class), REQUEST_SETTINGS);
                     }
                 });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_SETTINGS
+                && resultCode == SettingsActivity.RESULT_RESET_PREFS) {
+            // app prefs were reset: rebuild everything from defaults
+            recreate();
+        }
     }
 
     private void showThemeSelector() {

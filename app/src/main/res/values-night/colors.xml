@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- lighter step of the same blue-grey for dark surfaces -->
+    <color name="settings_accent">#90A4AE</color>
+</resources>
