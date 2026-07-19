@@ -45,18 +45,19 @@ public final class CmusIpc implements AutoCloseable {
      * Playback status/track/metadata; on connect and on change. Without a
      * current track, file is null, duration/position -1, tags empty. Tag
      * keys are as stored in the file, lowercased by cmus, and may repeat
-     * (e.g. multiple artists).
+     * (e.g. multiple artists). Position is fractional seconds.
      */
-    public record Status(PlayState state, String file, int duration, int position,
+    public record Status(PlayState state, String file, int duration, double position,
             Map<String, List<String>> tags) implements Event {
     }
 
     /**
-     * Whole-seconds position advance/seek (&le; 1/s while playing); only
-     * sent when no Status goes out in the same flush (Status carries
-     * position too).
+     * Position advance/seek, sent when the whole second changes (&le; 1/s
+     * while playing) but carrying the exact fractional position so
+     * animating between events doesn't jump on rebase; only sent when no
+     * Status goes out in the same flush (Status carries position too).
      */
-    public record Position(int position) implements Event {
+    public record Position(double position) implements Event {
     }
 
     /** Percent; -1 = unknown. On connect and on change. */
@@ -349,7 +350,7 @@ public final class CmusIpc implements AutoCloseable {
         String file = null;
         String viewName = null;
         int duration = -1;
-        int position = -1;
+        double position = -1;
         int left = -1;
         int right = -1;
         Map<String, List<String>> tags = Map.of();
@@ -363,7 +364,7 @@ public final class CmusIpc implements AutoCloseable {
                     case "status" -> state = r.nextString();
                     case "file" -> file = r.nextString();
                     case "duration" -> duration = r.nextInt();
-                    case "position" -> position = r.nextInt();
+                    case "position" -> position = r.nextDouble();
                     case "left" -> left = r.nextInt();
                     case "right" -> right = r.nextInt();
                     case "view" -> viewName = r.nextString();

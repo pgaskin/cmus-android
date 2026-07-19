@@ -39,7 +39,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private TerminalView terminalView;
     private FrameLayout terminalWrapper;
     private HorizontalScrollView tabBar;
+    private ControlBar controlBar;
     private final TextView[] viewTabs = new TextView[VIEW_NAMES.length];
+    private android.graphics.Insets chromeInsets = android.graphics.Insets.NONE;
+    // each bar's share of the terminal's row-quantization remainder, worn as
+    // padding on its terminal-adjoining edge
+    private int tabExtra;
+    private int barExtra;
     private TermService service;
     private TerminalSession session;
     private CmusIpc ipc; // the instance ipcListener is registered on
@@ -128,19 +134,38 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         terminalWrapper = new FrameLayout(this);
         terminalWrapper.addView(terminalView);
 
+        controlBar = new ControlBar(this, new ControlBar.Callback() {
+            @Override
+            public void sendCommand(String command) {
+                MainActivity.this.sendCommand(command);
+            }
+
+            @Override
+            public void toggleKeyboard() {
+                toggleSoftKeyboard();
+            }
+        });
+        controlBar.setFontSize(fontSize);
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.addView(tabBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(terminalWrapper, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        root.addView(controlBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            android.graphics.Insets in = insets.getInsets(WindowInsets.Type.systemBars()
+            chromeInsets = insets.getInsets(WindowInsets.Type.systemBars()
                     | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
-            tabBar.setPadding(in.left, in.top, in.right, 0);
-            terminalWrapper.setPadding(in.left, 0, in.right, in.bottom);
+            applyChromePadding();
             return WindowInsets.CONSUMED;
         });
+        // the terminal shows whole rows and leaves the remainder as a gap
+        // under the last one; absorb it into the bars so the chrome stays
+        // flush with the TUI's own top and bottom rows
+        root.addOnLayoutChangeListener(
+                (v, l, t, r, b, ol, ot, or, ob) -> updateRowGapPadding());
         setContentView(root);
 
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -176,6 +201,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     protected void onStop() {
         super.onStop();
         visible = false;
+        controlBar.dismissPopup(); // a showing popup would leak the window
         if (service != null) {
             service.setActivityVisible(false);
         }
@@ -198,6 +224,37 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private int dp(int dp) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp,
                 getResources().getDisplayMetrics()));
+    }
+
+    /**
+     * Inset padding plus each bar's remainder share on its terminal-adjoining
+     * edge: the tab bar's extends the win-title band (flush with cmus's own
+     * title row), the control bar's the statusline band, and neither moves
+     * the bar's content when the remainder changes.
+     */
+    private void applyChromePadding() {
+        tabBar.setPadding(chromeInsets.left, chromeInsets.top, chromeInsets.right, tabExtra);
+        terminalWrapper.setPadding(chromeInsets.left, 0, chromeInsets.right, 0);
+        controlBar.setPadding(chromeInsets.left, barExtra, chromeInsets.right,
+                chromeInsets.bottom);
+    }
+
+    private void updateRowGapPadding() {
+        // the remainder the terminal would leave with no extras (TerminalView
+        // rows = (height - firstRowOffset) / lineSpacing); adding the current
+        // extras back makes this a fixed point across relayouts
+        int spacing = ControlBar.lineSpacing(fontSize);
+        int avail = terminalWrapper.getHeight() + tabExtra + barExtra
+                - ControlBar.firstRowOffset(fontSize);
+        if (avail <= 0) {
+            return;
+        }
+        int rem = avail % spacing;
+        if (rem / 2 != tabExtra || rem - rem / 2 != barExtra) {
+            tabExtra = rem / 2;
+            barExtra = rem - rem / 2;
+            applyChromePadding();
+        }
     }
 
     // theme-driven chrome
@@ -235,6 +292,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                     theme = t;
                     applyTheme();
                 }
+                controlBar.onOptions(o.values());
             }
             // cmus is the single source of truth for the active view: taps
             // don't move the highlight until the event comes back, and
@@ -243,6 +301,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 viewName = v.name();
                 applyTabColors();
             }
+            case CmusIpc.Status s -> controlBar.onStatus(s);
+            case CmusIpc.Position p -> controlBar.onPosition(p.position());
+            case CmusIpc.Volume v -> controlBar.onVolume(v.left());
             default -> {
             }
         }
@@ -251,12 +312,14 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private void applyTheme() {
         tabBar.setBackgroundColor(theme.winTitleBg());
         terminalWrapper.setBackgroundColor(theme.winBg());
+        controlBar.applyTheme(theme.statuslineBg(), theme.statuslineFg());
         applyTabColors();
         int appearance = 0;
         if (CmusTheme.isLight(theme.winTitleBg())) {
             appearance |= WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS;
         }
-        if (CmusTheme.isLight(theme.winBg())) {
+        // the control bar's background paints the nav-bar strip now
+        if (CmusTheme.isLight(theme.statuslineBg())) {
             appearance |= WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
         }
         getWindow().getInsetsController().setSystemBarsAppearance(appearance,
@@ -311,6 +374,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             for (TextView tab : viewTabs) {
                 tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             }
+            controlBar.setFontSize(fontSize);
             return 1.0f;
         }
         return scale;

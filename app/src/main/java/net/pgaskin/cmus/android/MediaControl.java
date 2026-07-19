@@ -48,8 +48,8 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
      * A position event farther than this from the extrapolated position is
      * a seek. The system extrapolates from (position, speed) itself, so the
      * ~1/s position events are otherwise ignored — no per-second binder
-     * churn. Whole-second positions + elapsedRealtime-vs-audio-clock drift
-     * stay well under this; speed 0 while paused makes paused seeks trip it.
+     * churn. elapsedRealtime-vs-audio-clock drift stays well under this;
+     * speed 0 while paused makes paused seeks trip it.
      */
     private static final long SEEK_THRESHOLD_MS = 2000;
 
@@ -221,7 +221,7 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
             });
         }
         updatePlaybackState(s.position() < 0
-                ? PlaybackState.PLAYBACK_POSITION_UNKNOWN : s.position() * 1000L);
+                ? PlaybackState.PLAYBACK_POSITION_UNKNOWN : (long) (s.position() * 1000));
         updateMetadata();
         notificationManager.notify(TermService.NOTIFICATION_ID, buildNotification());
     }
@@ -229,7 +229,7 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
     private void onPosition(CmusIpc.Position p) {
         long extrapolated = basisPositionMs
                 + (basisPlaying ? SystemClock.elapsedRealtime() - basisRealtime : 0);
-        long positionMs = p.position() * 1000L;
+        long positionMs = (long) (p.position() * 1000);
         if (basisPositionMs == PlaybackState.PLAYBACK_POSITION_UNKNOWN
                 || Math.abs(positionMs - extrapolated) > SEEK_THRESHOLD_MS) {
             updatePlaybackState(positionMs);
