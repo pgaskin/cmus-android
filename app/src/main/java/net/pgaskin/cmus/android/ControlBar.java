@@ -107,10 +107,16 @@ public final class ControlBar extends LinearLayout {
         volume = button(R.drawable.ic_volume, this::toggleVolumePopup);
         volume.setVisibility(GONE); // until an Options event says softvol
         // in the queue view adding makes no sense (it would duplicate the
-        // selection), so the button flips to remove-from-queue; win-remove
-        // is gated on the echoed view so it can never touch the library
+        // selection), so the button flips to remove-from-queue — gated on
+        // the echoed view so win-remove can never touch the library; in
+        // the browser it flips to + = add-to-library (Patrick), the
+        // browser's `a` binding
         queue = button(R.drawable.ic_queue_add, () -> callback.sendCommand(
-                inQueueView() ? "win-remove" : "win-add-q"));
+                switch (viewName) {
+                    case "queue" -> "win-remove";
+                    case "browser" -> "win-add-l";
+                    default -> "win-add-q";
+                }));
         ImageButton keyboard = button(R.drawable.ic_keyboard, callback::toggleKeyboard);
         buttons = new ImageButton[]{playPause, repeat, shuffle, volume, queue, keyboard};
 
@@ -219,12 +225,11 @@ public final class ControlBar extends LinearLayout {
 
     public void onView(String name) {
         viewName = name;
-        queue.setImageResource(inQueueView()
-                ? R.drawable.ic_queue_remove : R.drawable.ic_queue_add);
-    }
-
-    private boolean inQueueView() {
-        return "queue".equals(viewName);
+        queue.setImageResource(switch (name) {
+            case "queue" -> R.drawable.ic_queue_remove;
+            case "browser" -> R.drawable.ic_add;
+            default -> R.drawable.ic_queue_add;
+        });
     }
 
     public void onOptions(Map<String, String> options) {

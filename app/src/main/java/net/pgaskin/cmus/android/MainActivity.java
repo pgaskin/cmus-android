@@ -56,6 +56,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     /** Tab order = the 1-7 keys; names are what the `view` command takes. */
     private static final String[] VIEW_NAMES = {
             "tree", "sorted", "playlist", "queue", "browser", "filters", "settings"};
+    /** Views whose tab shows only while active (rarely used; clutter). */
+    private static final List<String> HIDDEN_TABS = List.of("filters", "settings");
     /** Inactive tab text: win_title_fg at ~55% alpha, blending toward bg. */
     private static final int INACTIVE_TAB_ALPHA = 0x8C000000;
     /** Protocol code for the right button (same in SGR and X10 encodings). */
@@ -217,6 +219,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, tabTextSize());
             tab.setPadding(dp(5), dp(8), dp(5), dp(8));
             tab.setOnClickListener(v -> sendCommand("view " + name));
+            if (HIDDEN_TABS.contains(name)) {
+                tab.setVisibility(View.GONE); // clutter unless active (below)
+            }
             viewTabs[i] = tab;
             tabRow.addView(tab);
         }
@@ -699,6 +704,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         int dim = (fg & 0x00FFFFFF) | INACTIVE_TAB_ALPHA;
         for (int i = 0; i < viewTabs.length; i++) {
             viewTabs[i].setTextColor(VIEW_NAMES[i].equals(viewName) ? fg : dim);
+            // the filters/settings views are reachable from the TUI (the
+            // 6/7 keys) but rarely used — their tabs are clutter unless
+            // active (Patrick)
+            if (HIDDEN_TABS.contains(VIEW_NAMES[i])) {
+                viewTabs[i].setVisibility(VIEW_NAMES[i].equals(viewName)
+                        ? View.VISIBLE : View.GONE);
+            }
         }
         // the search icon doubles as the active-filter indicator (the
         // active-tab convention: full fg = a filter is applied)
