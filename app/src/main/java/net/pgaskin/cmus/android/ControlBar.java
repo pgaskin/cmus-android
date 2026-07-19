@@ -38,6 +38,7 @@ public final class ControlBar extends LinearLayout {
     private final ImageButton repeat;
     private final ImageButton shuffle;
     private final ImageButton volume;
+    private final ImageButton queue;
     private final CmusSlider seek;
     private final CmusSlider volumeSlider;
     private final PopupWindow volumePopup;
@@ -46,6 +47,7 @@ public final class ControlBar extends LinearLayout {
     private CmusIpc.PlayState state = CmusIpc.PlayState.STOPPED;
     private boolean repeatOn;
     private String shuffleMode = "off";
+    private String viewName = "";
     private boolean softvol;
     private int fg = 0xFFFFFFFF;
     private int barHeight;
@@ -104,10 +106,13 @@ public final class ControlBar extends LinearLayout {
 
         volume = button(R.drawable.ic_volume, this::toggleVolumePopup);
         volume.setVisibility(GONE); // until an Options event says softvol
-        ImageButton addQueue = button(R.drawable.ic_queue_add,
-                () -> callback.sendCommand("win-add-q"));
+        // in the queue view adding makes no sense (it would duplicate the
+        // selection), so the button flips to remove-from-queue; win-remove
+        // is gated on the echoed view so it can never touch the library
+        queue = button(R.drawable.ic_queue_add, () -> callback.sendCommand(
+                inQueueView() ? "win-remove" : "win-add-q"));
         ImageButton keyboard = button(R.drawable.ic_keyboard, callback::toggleKeyboard);
-        buttons = new ImageButton[]{playPause, repeat, shuffle, volume, addQueue, keyboard};
+        buttons = new ImageButton[]{playPause, repeat, shuffle, volume, queue, keyboard};
 
         volumeSlider = new CmusSlider(context, true);
         volumeSlider.setMax(100);
@@ -210,6 +215,16 @@ public final class ControlBar extends LinearLayout {
     public void onVolume(int left) {
         volumeSlider.setEnabled(left >= 0);
         volumeSlider.setProgress(Math.max(left, 0));
+    }
+
+    public void onView(String name) {
+        viewName = name;
+        queue.setImageResource(inQueueView()
+                ? R.drawable.ic_queue_remove : R.drawable.ic_queue_add);
+    }
+
+    private boolean inQueueView() {
+        return "queue".equals(viewName);
     }
 
     public void onOptions(Map<String, String> options) {

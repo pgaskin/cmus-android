@@ -43,7 +43,11 @@ pick up where things left off.
   tracks 63% of the bar snapped back to 3s; 0001 now relaxes the
   clamp to duration under CONFIG_ANDROID (seeking to eof just ends
   the track), verified `seek 6` → 6.0 where it used to echo 3.0.
-  MediaControl's notification seekbar gains the same reach.
+  MediaControl's notification seekbar gains the same reach. Post-stage
+  addition (Patrick): in the queue view the add-to-queue button flips
+  to remove-from-queue (playlist_remove icon, `win-remove`) — driven
+  by the echoed View event and gated on view == queue so it can never
+  remove library entries; win-add-q there would only duplicate.
 - ControlBar (horizontal LinearLayout beside a CmusSlider custom view):
   play/pause · repeat · shuffle · seek (weight 1) · volume · add-q ·
   keyboard, statusline colors, sized 3 terminal rows (icons 2) tracking

@@ -310,6 +310,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             case CmusIpc.View v -> {
                 viewName = v.name();
                 applyTabColors();
+                controlBar.onView(v.name());
             }
             case CmusIpc.Status s -> controlBar.onStatus(s);
             case CmusIpc.Position p -> controlBar.onPosition(p.position());

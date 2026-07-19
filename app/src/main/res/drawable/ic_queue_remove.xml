@@ -1,0 +1,12 @@
+<!-- Material Symbols outlined, playlist_remove -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group android:translateY="960">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="m576,-80 -56,-56 104,-104 -104,-104 56,-56 104,104 104,-104 56,56 -104,104 104,104 -56,56 -104,-104L576,-80ZM120,-320v-80h280v80H120Zm0,-160v-80h440v80H120Zm0,-160v-80h440v80H120Z" />
+    </group>
+</vector>

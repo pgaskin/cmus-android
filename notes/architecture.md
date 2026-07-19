@@ -241,6 +241,8 @@ full plan and rationale; this file describes what currently exists.
   drag-release sends `seek n` and rebases locally to skip the echo
   round trip. Volume button exists only while softvol=true and opens
   a PopupWindow with a vertical slider (`vol n` per integer step).
+  The queue button is win-add-q, flipping to win-remove (remove icon)
+  while the echoed View is the queue.
   `CmusSlider` is the shared flat one-color slider (track/fill/block
   thumb, horizontal or vertical, float progress, redraws only on
   ≥0.5px thumb movement, ignores external updates mid-drag).
