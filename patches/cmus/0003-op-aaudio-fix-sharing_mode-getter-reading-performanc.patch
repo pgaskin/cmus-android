@@ -1,7 +1,7 @@
-From 3f0045f6751e61d426538c343d32041a48b0ac8e Mon Sep 17 00:00:00 2001
+From f1b08b1d2064243671519c1809540bdf88c3ffc4 Mon Sep 17 00:00:00 2001
 From: Patrick Gaskin <patrick@pgaskin.net>
 Date: Sun, 19 Jul 2026 13:41:48 -0400
-Subject: [PATCH 3/3] op/aaudio: fix sharing_mode getter reading
+Subject: [PATCH 3/4] op/aaudio: fix sharing_mode getter reading
  performance_mode
 
 op_aaudio_get_sharing_mode switched on op_aaudio_opt_performance_mode,

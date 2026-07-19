@@ -1,7 +1,7 @@
-From b907f44f4f0dceb7de8f292da2e543947fbc866e Mon Sep 17 00:00:00 2001
+From 98f787ca1cf438605c332764804bed8f0e32cfd9 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
-Subject: [PATCH 1/3] add an Android app IPC socket
+Subject: [PATCH 1/4] add an Android app IPC socket
 
 A unix stream socket at $CMUS_ANDROID_SOCKET (unset = disabled) for the
 Android wrapper app: pushes newline-delimited JSON events (status,
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..057d49f
+index 0000000..dd1e674
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,736 @@
+@@ -0,0 +1,876 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -103,9 +103,31 @@ index 0000000..057d49f
 + *       promptness-wise because job activity itself wakes the main loop
 + *       (job_fd is in the select set), so transitions always reach the
 + *       next flush.
-+ *   {"type":"saved"}
-+ *       the android-save line below finished writing; the app's cue to
-+ *       read the state files (zip export).
++ *   {"type":"saved","what":["kind",...]}
++ *       an android-save line below finished writing the named kinds; the
++ *       app's cue to read the state files (zip export) and to clear its
++ *       debounce state (periodic saves). Acks arrive in request order
++ *       (one socket, commands processed serially), so FIFO matching is
++ *       exact; "what" makes it checkable.
++ *   {"type":"dirty","what":["kind",...]}
++ *       unsaved state-file changes, the app's periodic-save trigger.
++ *       Kinds: library (lib.pl), cache, playlist (playlists/), queue
++ *       (queue.pl), history (command+search). Edge-triggered per save
++ *       cycle: per-kind mutation counters are diffed in the flush
++ *       against the value at the last android-save of that kind, and a
++ *       kind is re-announced only after it's saved and mutated again —
++ *       so a debouncing client sees at most one event per kind per
++ *       cycle, and a mutation landing *during* a save (worker-thread
++ *       cache writes) re-announces on the next flush because the saved
++ *       marker was snapshotted before the files were written. On
++ *       connect, kinds dirty since their last save are (re-)announced
++ *       in the snapshot, so a reconnect loses no dirt. resume/settings
++ *       never announce (cmus-side writers don't exist for resume, and
++ *       options changes already echo as the options event); they're
++ *       save selectors only. Note the startup restore itself dirties
++ *       library/queue/playlist (the autoload jobs are ordinary adds),
++ *       so one small-file save cycle per spawn is expected — but known
++ *       cache entries don't re-bump, keeping the big rewrite out of it.
 + *   {"type":"colorscheme","name":"..."}
 + *       a `colorscheme` command successfully sourced the named theme
 + *       file (either search dir; a failed lookup emits nothing).
@@ -144,11 +166,13 @@ index 0000000..057d49f
 + *       answered immediately with a jobs event — a fresh authoritative
 + *       check at decision time for the app's idle-quit guard (which
 + *       must never quit mid-import and re-polls while a job runs).
-+ *   android-save
-+ *       write the exit path's whole save set (resume, autosave, queue,
-+ *       library, playlists, histories, cache) without exiting, answered
-+ *       with a saved event once the files are on disk — so the app can
-+ *       zip a fresh CMUS_HOME while cmus keeps running.
++ *   android-save [kind ...]
++ *       write the named state-file kinds (resume settings library cache
++ *       playlist queue history; bare = everything, the exit path's whole
++ *       save set) without exiting, answered with a saved event once the
++ *       files are on disk — so the app can zip a fresh CMUS_HOME while
++ *       cmus keeps running, and debounce granular periodic saves off the
++ *       dirty events. Unknown kinds are ignored with a d_print.
 + */
 +
 +#include "android.h"
@@ -204,12 +228,30 @@ index 0000000..057d49f
 + * is a diff in the flush, not a hook */
 +static char *android_live_filter;
 +
++/*
++ * The dirty event's per-kind mutation counters (indexes = the
++ * ANDROID_SAVE_* bit positions). counter bumps from the mutation hooks —
++ * atomically, since the cache mutates on the worker thread; everything
++ * else is main-loop only but uniform is simpler. saved = the counter
++ * value snapshotted *before* android_save_state wrote the files (a
++ * mid-save mutation leaves counter != saved and re-announces); announced
++ * = the last value sent, so each kind emits once per save cycle.
++ */
++#define ANDROID_NR_KINDS 7
++static const char * const android_kind_names[ANDROID_NR_KINDS] = {
++	"resume", "settings", "library", "cache", "playlist", "queue",
++	"history",
++};
++static long android_kind_counter[ANDROID_NR_KINDS];
++static long android_kind_saved[ANDROID_NR_KINDS];
++static long android_kind_announced[ANDROID_NR_KINDS];
++
 +/* inbound partial-line buffer, persists across android_process calls */
 +static char android_rbuf[4096];
 +static int android_rbuf_pos;
 +
 +static void android_jobs_event(void);
-+static void android_saved_event(void);
++static void android_saved_event(int kinds);
 +
 +static void android_close_client(void)
 +{
@@ -283,6 +325,37 @@ index 0000000..057d49f
 +	fcntl(fd, F_SETFL, O_NONBLOCK);
 +	android_client_fd = fd;
 +	android_dirty_all = 1;
++
++	/* re-announce anything unsaved to the new client (a reconnect must
++	 * not lose dirt the old client hadn't saved yet) */
++	for (int i = 0; i < ANDROID_NR_KINDS; i++)
++		android_kind_announced[i] = android_kind_saved[i];
++}
++
++void android_state_dirty(int kinds)
++{
++	for (int i = 0; i < ANDROID_NR_KINDS; i++)
++		if (kinds & (1 << i))
++			__atomic_fetch_add(&android_kind_counter[i], 1,
++					__ATOMIC_RELAXED);
++}
++
++/*
++ * Classifies an editable mutation for the dirty event. The library is
++ * deliberately skipped: lib.pl is saved from the filename hash in
++ * canonical ti_cmp order (do_lib_for_each), so lib_editable
++ * sorts/moves never change the file — the hash_insert/hash_remove
++ * hooks in lib.c are the exact writers. Playlist/queue files are saved
++ * in editable order, so every mutation counts there.
++ */
++void android_editable_dirty(struct editable *e)
++{
++	if (e == &lib_editable)
++		return;
++	if (e == &pq_editable)
++		android_state_dirty(ANDROID_SAVE_QUEUE);
++	else
++		android_state_dirty(ANDROID_SAVE_PLAYLIST);
 +}
 +
 +/*
@@ -396,9 +469,43 @@ index 0000000..057d49f
 +		android_jobs_event();
 +		return;
 +	}
-+	if (strcmp(line, "android-save") == 0) {
-+		android_save_state();
-+		android_saved_event();
++	if (strcmp(line, "android-save") == 0 ||
++			strncmp(line, "android-save ", 13) == 0) {
++		long snap[ANDROID_NR_KINDS];
++		int kinds = 0, i;
++		const char *p = line + 12;
++
++		while (*p) {
++			int len;
++			while (*p == ' ')
++				p++;
++			if (!*p)
++				break;
++			len = strcspn(p, " ");
++			for (i = 0; i < ANDROID_NR_KINDS; i++) {
++				if (strlen(android_kind_names[i]) == (size_t)len &&
++						strncmp(p, android_kind_names[i], len) == 0) {
++					kinds |= 1 << i;
++					break;
++				}
++			}
++			if (i == ANDROID_NR_KINDS)
++				d_print("unknown android-save kind '%.*s'\n", len, p);
++			p += len;
++		}
++		if (line[12] == 0)
++			kinds = ANDROID_SAVE_ALL;
++
++		/* snapshot before writing: a mutation landing mid-save keeps
++		 * counter != saved and the kind re-announces next flush */
++		for (i = 0; i < ANDROID_NR_KINDS; i++)
++			snap[i] = __atomic_load_n(&android_kind_counter[i],
++					__ATOMIC_RELAXED);
++		android_save_state(kinds);
++		for (i = 0; i < ANDROID_NR_KINDS; i++)
++			if (kinds & (1 << i))
++				android_kind_saved[i] = snap[i];
++		android_saved_event(kinds);
 +		return;
 +	}
 +
@@ -605,16 +712,27 @@ index 0000000..057d49f
 +
 +/*
 + * The android-save line's ack: android_save_state has returned, so the
-+ * state files are written and renamed into place.
++ * state files are written and renamed into place. "what" echoes the
++ * request's kinds; acks arrive in request order.
 + */
-+static void android_saved_event(void)
++static void android_saved_event(int kinds)
 +{
 +	GBUF(buf);
++	int i, first = 1;
 +
 +	if (android_client_fd == -1)
 +		return;
 +
-+	gbuf_add_str(&buf, "{\"type\":\"saved\"}\n");
++	gbuf_add_str(&buf, "{\"type\":\"saved\",\"what\":[");
++	for (i = 0; i < ANDROID_NR_KINDS; i++) {
++		if (!(kinds & (1 << i)))
++			continue;
++		if (!first)
++			gbuf_add_ch(&buf, ',');
++		first = 0;
++		gbuf_addf(&buf, "\"%s\"", android_kind_names[i]);
++	}
++	gbuf_add_str(&buf, "]}\n");
 +	android_write(&buf);
 +	gbuf_free(&buf);
 +}
@@ -736,6 +854,28 @@ index 0000000..057d49f
 +		free(android_live_filter);
 +		android_live_filter = lib_live_filter ? xstrdup(lib_live_filter) : NULL;
 +	}
++	/* per-kind unsaved-change announcements, edge-triggered per save
++	 * cycle (see the protocol comment); before the jobs diff so a
++	 * client processing in order arms its debounce before it sees a
++	 * job-completion edge */
++	{
++		int i, first = 1;
++
++		for (i = 0; i < ANDROID_NR_KINDS; i++) {
++			long c = __atomic_load_n(&android_kind_counter[i],
++					__ATOMIC_RELAXED);
++			if (c == android_kind_saved[i] ||
++					c == android_kind_announced[i])
++				continue;
++			gbuf_addf(&buf, "%s\"%s\"",
++					first ? "{\"type\":\"dirty\",\"what\":[" : ",",
++					android_kind_names[i]);
++			first = 0;
++			android_kind_announced[i] = c;
++		}
++		if (!first)
++			gbuf_add_str(&buf, "]}\n");
++	}
 +	/* diffed like volume; promptness is job_fd's doing (see the
 +	 * protocol comment) */
 +	jobs_running = worker_has_job() ? 1 : 0;
@@ -757,10 +897,10 @@ index 0000000..057d49f
 +}
 diff --git a/android.h b/android.h
 new file mode 100644
-index 0000000..3563a86
+index 0000000..d9a92eb
 --- /dev/null
 +++ b/android.h
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,76 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -786,6 +926,21 @@ index 0000000..3563a86
 + * inert. */
 +#ifdef CONFIG_ANDROID
 +
++/* the granular android-save kinds; one bit per state-file group the
++ * exit path writes (names in android.c's android_kind_names) */
++enum {
++	ANDROID_SAVE_RESUME	= 1 << 0, /* resume */
++	ANDROID_SAVE_SETTINGS	= 1 << 1, /* autosave */
++	ANDROID_SAVE_LIBRARY	= 1 << 2, /* lib.pl */
++	ANDROID_SAVE_CACHE	= 1 << 3, /* cache */
++	ANDROID_SAVE_PLAYLIST	= 1 << 4, /* playlists/ */
++	ANDROID_SAVE_QUEUE	= 1 << 5, /* queue.pl */
++	ANDROID_SAVE_HISTORY	= 1 << 6, /* command+search history */
++	ANDROID_SAVE_ALL	= (1 << 7) - 1,
++};
++
++struct editable;
++
 +extern int android_fd;
 +extern int android_client_fd;
 +void android_init(void);
@@ -797,6 +952,11 @@ index 0000000..3563a86
 +void android_view_changed(void);
 +void android_selected_event(void);
 +void android_colorscheme_event(const char *name);
++/* mutation hooks feeding the dirty event's per-kind counters; safe from
++ * any thread (the cache bumps on the worker), everything else is
++ * main-loop only */
++void android_state_dirty(int kinds);
++void android_editable_dirty(struct editable *e);
 +
 +#else
 +
@@ -811,10 +971,52 @@ index 0000000..3563a86
 +#define android_view_changed() { }
 +#define android_selected_event() { }
 +#define android_colorscheme_event(name) { }
++#define android_state_dirty(kinds) { }
++#define android_editable_dirty(e) { }
 +
 +#endif
 +
 +#endif
+diff --git a/cache.c b/cache.c
+index e76cfc4..38034b1 100644
+--- a/cache.c
++++ b/cache.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "cache.h"
++#include "android.h"
+ #include "misc.h"
+ #include "file.h"
+ #include "input.h"
+@@ -191,6 +192,11 @@ struct track_info *lookup_cache_entry(const char *filename, unsigned int hash)
+ static void do_cache_remove_ti(struct track_info *ti, unsigned int hash)
+ {
+ 	unsigned int pos = hash % HASH_SIZE;
++
++	/* never the startup loader (which only add_ti's), so bumping here
++	 * + at add_ti's runtime call sites keeps a plain spawn cache-clean;
++	 * runs on the worker too, hence the hooks' atomic counters */
++	android_state_dirty(ANDROID_SAVE_CACHE);
+ 	struct track_info *t = hash_table[pos];
+ 	struct track_info *next, *prev = NULL;
+ 
+@@ -485,6 +491,7 @@ struct track_info *cache_get_ti(const char *filename, int force)
+ 		if (!ti)
+ 			return NULL;
+ 		add_ti(ti, hash);
++		android_state_dirty(ANDROID_SAVE_CACHE);
+ 	}
+ 	track_info_ref(ti);
+ 	return ti;
+@@ -539,6 +546,7 @@ struct track_info **cache_refresh(int *count, int force)
+ 			new_ti = ip_get_ti(ti->filename);
+ 			if (new_ti) {
+ 				add_ti(new_ti, hash);
++				android_state_dirty(ANDROID_SAVE_CACHE);
+ 
+ 				if (track_info_unique_ref(ti)) {
+ 					track_info_unref(ti);
 diff --git a/command_mode.c b/command_mode.c
 index b794399..b11aa62 100644
 --- a/command_mode.c
@@ -882,6 +1084,92 @@ index a017954..cdbd1be 100644
  int parse_command(const char *buf, char **cmdp, char **argp);
  char **parse_cmd(const char *cmd, int *args_idx, int *ac);
  void run_parsed_command(char *cmd, char *arg);
+diff --git a/editable.c b/editable.c
+index 065c4f9..8ab5055 100644
+--- a/editable.c
++++ b/editable.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "editable.h"
++#include "android.h"
+ #include "search.h"
+ #include "track.h"
+ #include "track_info.h"
+@@ -91,6 +92,7 @@ void editable_take_ownership(struct editable *e)
+ 
+ static void do_editable_add(struct editable *e, struct simple_track *track, int tiebreak)
+ {
++	android_editable_dirty(e);
+ 	sorted_list_add_track(&e->head, &e->tree_root, track,
+ 			e->shared->sort_keys, tiebreak);
+ 	e->nr_tracks++;
+@@ -115,6 +117,8 @@ void editable_remove_track(struct editable *e, struct simple_track *track)
+ 	struct track_info *ti = track->info;
+ 	struct iter iter;
+ 
++	android_editable_dirty(e);
++
+ 	editable_track_to_iter(e, track, &iter);
+ 	if (editable_owns_shared(e))
+ 		window_row_vanishes(e->shared->win, &iter);
+@@ -154,6 +158,7 @@ void editable_sort(struct editable *e)
+ {
+ 	if (e->nr_tracks <= 1)
+ 		return;
++	android_editable_dirty(e);
+ 	sorted_list_rebuild(&e->head, &e->tree_root, e->shared->sort_keys);
+ 
+ 	if (editable_owns_shared(e)) {
+@@ -217,6 +222,8 @@ static void move_sel(struct editable *e, struct list_head *after)
+ 	struct iter iter;
+ 	LIST_HEAD(tmp_head);
+ 
++	android_editable_dirty(e);
++
+ 	if (e->nr_marked) {
+ 		/* collect marked */
+ 		item = e->head.next;
+@@ -444,6 +451,8 @@ void editable_update_track(struct editable *e, struct track_info *old, struct tr
+ 			changed = 1;
+ 		}
+ 	}
++	if (changed)
++		android_editable_dirty(e);
+ 	if (editable_owns_shared(e))
+ 		e->shared->win->changed |= changed;
+ }
+@@ -452,6 +461,7 @@ void editable_rand(struct editable *e)
+ {
+ 	if (e->nr_tracks <=1)
+ 		return;
++	android_editable_dirty(e);
+ 	rand_list_rebuild(&e->head, &e->tree_root);
+ 
+ 	if (editable_owns_shared(e)) {
+diff --git a/history.c b/history.c
+index 1d7195e..23a6628 100644
+--- a/history.c
++++ b/history.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "history.h"
++#include "android.h"
+ #include "xmalloc.h"
+ #include "file.h"
+ #include "uchar.h"
+@@ -119,6 +120,10 @@ void history_add_line(struct history *history, const char *line)
+ 	struct history_entry *new;
+ 	struct list_head *item;
+ 
++	/* runtime-only (loads go through history_add_tail): every
++	 * TUI-typed command/search, invisible to the app otherwise */
++	android_state_dirty(ANDROID_SAVE_HISTORY);
++
+ 	new = history_entry_new(line);
+ 	list_add(&new->node, &history->head);
+ 	history->lines++;
 diff --git a/keys.c b/keys.c
 index a4862e8..c6894a8 100644
 --- a/keys.c
@@ -906,11 +1194,83 @@ index a4862e8..c6894a8 100644
  	/* view-specific key */
  	if (handle_key(key_bindings[c], k))
  		return;
+diff --git a/lib.c b/lib.c
+index f93e649..8b66ab5 100644
+--- a/lib.c
++++ b/lib.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "lib.h"
++#include "android.h"
+ #include "editable.h"
+ #include "track_info.h"
+ #include "options.h"
+@@ -136,6 +137,10 @@ static int hash_insert(struct track_info *ti)
+ 	e->ti = ti;
+ 	e->next = *entryp;
+ 	*entryp = e;
++	/* the hash is exactly what lib.pl saves (do_lib_for_each), in
++	 * canonical ti_cmp order — this and hash_remove are the library
++	 * dirty hooks; editable order changes don't move the file */
++	android_state_dirty(ANDROID_SAVE_LIBRARY);
+ 	return 1;
+ }
+ 
+@@ -154,6 +159,7 @@ static void hash_remove(struct track_info *ti)
+ 			*entryp = e->next;
+ 			track_info_unref(e->ti);
+ 			free(e);
++			android_state_dirty(ANDROID_SAVE_LIBRARY);
+ 			break;
+ 		}
+ 		entryp = &e->next;
 diff --git a/pl.c b/pl.c
-index 2d15d19..3f63b27 100644
+index 2d15d19..50af6de 100644
 --- a/pl.c
 +++ b/pl.c
-@@ -1010,6 +1010,17 @@ void pl_set_marked_pl_by_name(const char *name)
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "pl.h"
++#include "android.h"
+ #include "prog.h"
+ #include "editable.h"
+ #include "options.h"
+@@ -444,6 +445,8 @@ static void pl_save_all(void)
+ 
+ static void pl_delete(struct playlist *pl)
+ {
++	android_state_dirty(ANDROID_SAVE_PLAYLIST);
++
+ 	if (list_len(&pl_head) == 1)
+ 		pl_create_default();
+ 
+@@ -659,6 +662,7 @@ void pl_import(const char *path)
+ 	cmus_add(pl_add_cb, path, FILE_TYPE_PL, JOB_TYPE_PL, 0, pl);
+ 	list_add_tail(&pl->node, &pl_head);
+ 	pl_list_win->changed = 1;
++	android_state_dirty(ANDROID_SAVE_PLAYLIST);
+ 
+ 	free(name);
+ }
+@@ -789,6 +793,7 @@ void pl_rename_selected_pl(const char *name)
+ 
+ 	free(pl_visible->name);
+ 	pl_visible->name = xstrdup(name);
++	android_state_dirty(ANDROID_SAVE_PLAYLIST);
+ 
+ 	pl_mark_for_redraw();
+ }
+@@ -987,6 +992,7 @@ void pl_create(const char *name)
+ 	struct playlist *pl = pl_new(name);
+ 	list_add_tail(&pl->node, &pl_head);
+ 	pl_list_win->changed = 1;
++	android_state_dirty(ANDROID_SAVE_PLAYLIST);
+ }
+ 
+ int pl_visible_is_marked(void)
+@@ -1010,6 +1016,17 @@ void pl_set_marked_pl_by_name(const char *name)
  	}
  }
  
@@ -1053,7 +1413,7 @@ index 9b55874..4a0643c 100644
  void search_text(const char *text, int restricted, int beginning);
  
 diff --git a/ui_curses.c b/ui_curses.c
-index bdb766a..6765652 100644
+index bdb766a..f05ae71 100644
 --- a/ui_curses.c
 +++ b/ui_curses.c
 @@ -50,8 +50,12 @@
@@ -1118,39 +1478,52 @@ index bdb766a..6765652 100644
  
  	/* finally we can set the output plugin */
  	player_set_op(output_plugin);
-@@ -2512,6 +2530,31 @@ static void init_all(void)
+@@ -2512,6 +2530,44 @@ static void init_all(void)
  	worker_start();
  }
  
 +#ifdef CONFIG_ANDROID
 +/*
 + * exit_all's save set (resume, autosave, queue, library, playlists,
-+ * histories, cache) without exiting or freeing anything — every callee
-+ * is a plain write-tmp-and-rename writer, safe to repeat. Backs the
-+ * android-save input line (zip export wants fresh files; also the
-+ * building block for periodic state saves).
++ * histories, cache) — or any ANDROID_SAVE_* subset — without exiting
++ * or freeing anything; every callee is repeat-safe and, with patch
++ * 0004's atomic cmus_save, a write-tmp-and-rename writer. Backs the
++ * android-save input line (zip export wants fresh files; the app's
++ * debounced periodic saves send subsets). Unlike the exit path, the
++ * worker is still running here, so the cache write takes cache_lock —
++ * job.c mutates the cache hash table on the worker thread, and
++ * upstream only ever calls cache_close after job_exit.
 + */
-+void android_save_state(void)
++void android_save_state(int kinds)
 +{
-+	if (resume_cmus)
++	if ((kinds & ANDROID_SAVE_RESUME) && resume_cmus)
 +		resume_exit();
-+	options_exit();
-+	if (resume_cmus)
++	if (kinds & ANDROID_SAVE_SETTINGS)
++		options_exit();
++	if ((kinds & ANDROID_SAVE_QUEUE) && resume_cmus)
 +		cmus_save(play_queue_for_each, play_queue_autosave_filename,
 +				NULL);
-+	cmus_save(lib_for_each, lib_autosave_filename, NULL);
-+	pl_save();
-+	commands_save();
-+	search_mode_save();
-+	if (cache_close())
-+		d_print("saving cache: %s\n", strerror(errno));
++	if (kinds & ANDROID_SAVE_LIBRARY)
++		cmus_save(lib_for_each, lib_autosave_filename, NULL);
++	if (kinds & ANDROID_SAVE_PLAYLIST)
++		pl_save();
++	if (kinds & ANDROID_SAVE_HISTORY) {
++		commands_save();
++		search_mode_save();
++	}
++	if (kinds & ANDROID_SAVE_CACHE) {
++		cache_lock();
++		if (cache_close())
++			d_print("saving cache: %s\n", strerror(errno));
++		cache_unlock();
++	}
 +}
 +#endif
 +
  static void exit_all(void)
  {
  	endwin();
-@@ -2540,6 +2583,7 @@ static void exit_all(void)
+@@ -2540,6 +2596,7 @@ static void exit_all(void)
  	help_exit();
  	browser_exit();
  	mpris_free();
@@ -1159,7 +1532,7 @@ index bdb766a..6765652 100644
  
  enum {
 diff --git a/ui_curses.h b/ui_curses.h
-index 5b2a24d..bafcab2 100644
+index 5b2a24d..2b226e4 100644
 --- a/ui_curses.h
 +++ b/ui_curses.h
 @@ -59,6 +59,9 @@ void update_filterline(void);
@@ -1167,7 +1540,7 @@ index 5b2a24d..bafcab2 100644
  void update_full(void);
  void update_size(void);
 +#ifdef CONFIG_ANDROID
-+void android_save_state(void);
++void android_save_state(int kinds);
 +#endif
  void info_msg(const char *format, ...) CMUS_FORMAT(1, 2);
  void error_msg(const char *format, ...) CMUS_FORMAT(1, 2);
