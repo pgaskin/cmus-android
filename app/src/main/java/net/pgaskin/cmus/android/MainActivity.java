@@ -184,9 +184,11 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         colorschemeName = getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
                 .getString(PREF_COLORSCHEME, null);
         // restore the font before anything measures: the saved headless pty
-        // grid was sized under it (the same reasoning as the font size)
-        fontAsset = getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
-                .getString(PREF_TYPEFACE, null);
+        // grid was sized under it (the same reasoning as the font size).
+        // Iosevka is the default (Patrick); "" is the explicit System pick
+        String savedFont = getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
+                .getString(PREF_TYPEFACE, "fonts/Iosevka-Regular.ttf");
+        fontAsset = savedFont.isEmpty() ? null : savedFont;
         activeTypeface = loadTypeface(fontAsset);
 
         terminalView = new TerminalView(this, null);
@@ -211,8 +213,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             TextView tab = new TextView(this);
             tab.setText(name);
             tab.setTypeface(activeTypeface, Typeface.BOLD); // stands out from the TUI text (Patrick)
-            // matches the terminal font size, including pinch-zoom (onScale)
-            tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+            // slightly above the terminal font, tracking pinch-zoom (onScale)
+            tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, tabTextSize());
             tab.setPadding(dp(5), dp(8), dp(5), dp(8));
             tab.setOnClickListener(v -> sendCommand("view " + name));
             viewTabs[i] = tab;
@@ -235,7 +237,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         filterBox = new EditText(this);
         filterBox.setSingleLine(true);
         filterBox.setTypeface(activeTypeface);
-        filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+        // the box swaps into the tab band, so it wears the tab size too
+        filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, tabTextSize());
         filterBox.setPadding(dp(5), dp(8), dp(5), dp(8));
         filterBox.setBackground(null); // no material underline; the bar is the chrome
         // same text band as the tabs, not Material's 48dp min — the bar
@@ -613,6 +616,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             case CmusIpc.View v -> {
                 viewName = v.name();
                 applyTabColors();
+                scrollActiveTabIntoView();
                 controlBar.onView(v.name());
             }
             case CmusIpc.Filter f -> {
@@ -657,6 +661,34 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         getWindow().getInsetsController().setSystemBarsAppearance(appearance,
                 WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
                         | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+    }
+
+    /** The tabs (and the filter box in their band) read slightly larger than the TUI text (Patrick). */
+    private int tabTextSize() {
+        return Math.round(fontSize * 1.15f);
+    }
+
+    /**
+     * On narrow screens the tab row overflows and scrolls (stage 11); when
+     * the highlight moves (the echoed View event — taps, TUI 1-7 keys,
+     * resume alike), bring the active tab fully into view. Coordinates are
+     * within the row, which is the scroll content; when the tabs fit, the
+     * scroll range is 0 and this no-ops.
+     */
+    private void scrollActiveTabIntoView() {
+        for (int i = 0; i < viewTabs.length; i++) {
+            if (VIEW_NAMES[i].equals(viewName)) {
+                TextView tab = viewTabs[i];
+                tab.post(() -> { // after layout, so the edges are real
+                    if (tab.getLeft() < tabBar.getScrollX()) {
+                        tabBar.smoothScrollTo(tab.getLeft(), 0);
+                    } else if (tab.getRight() > tabBar.getScrollX() + tabBar.getWidth()) {
+                        tabBar.smoothScrollTo(tab.getRight() - tabBar.getWidth(), 0);
+                    }
+                });
+                return;
+            }
+        }
     }
 
     private void applyTabColors() {
@@ -739,9 +771,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             fontSize = Math.max(minFontSize, Math.min(Math.round(fontSize * scale), maxFontSize));
             terminalView.setTextSize(fontSize);
             for (TextView tab : viewTabs) {
-                tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+                tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, tabTextSize());
             }
-            filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+            filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, tabTextSize());
             sleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             updateTopBarButtons();
             controlBar.setFontSize(fontSize, activeTypeface);
@@ -937,8 +969,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         }
         fontAsset = asset;
         activeTypeface = loadTypeface(asset);
+        // "" = System: an absent key means the Iosevka default, not System
         getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
-                .putString(PREF_TYPEFACE, asset).apply();
+                .putString(PREF_TYPEFACE, asset == null ? "" : asset).apply();
         terminalView.setTypeface(activeTypeface);
         for (TextView tab : viewTabs) {
             tab.setTypeface(activeTypeface, Typeface.BOLD);
