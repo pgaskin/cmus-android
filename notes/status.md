@@ -3,6 +3,36 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Stage 22: termux from source, 16 KB page-size fix (built, authored as Claude)
+
+Per [plans/22-termux-from-source.md](plans/22-termux-from-source.md).
+
+- The stage-6 flagged "not 16 KB aligned" dialog traced to exactly one lib:
+  `libtermux.so` from the JitPack terminal-emulator AAR was NDK-21-built
+  (`p_align 0x1000`); our own NDK-r28 libs were already `0x4000`
+  (`llvm-readelf -l` verified). So the whole warning was one ~10 KB JNI shim.
+- Fix = build all of termux from the re-added `third_party/termux-app`
+  submodule (pinned pristine at `v0.118.3` = `5b657c6`), the third option
+  stage 6 rejected: **not** as Gradle modules (their AGP-4-era build.gradle
+  is the blocker stage 6 hit), but source straight into `:app` —
+  `java.srcDirs` for terminal-emulator + terminal-view, `res.srcDir` for
+  terminal-view's res, and `native/ports/termux/CMakeLists.txt` compiling
+  `termux.c` into `libtermux.so` in our CMake tree (NDK r28 → 16 KB aligned).
+  `'termux'` added to the app's cmake targets.
+- One patch, managed by `patch.sh` like cmus: `patches/termux-app/0001-*`
+  redirects two `import com.termux.view.R` (which no longer exists as a
+  library R) to `net.pgaskin.cmus.android.R`. Gitlink stays pristine; the
+  submodule working tree sits at the patched HEAD (same as cmus). Careful
+  ordering: `git submodule add` had staged the default-branch tip, so the
+  gitlink was re-`git add`ed at the checked-out `v0.118.3` before patching.
+- JitPack gone: the `com.github.termux.termux-app` dep and the `jitpack.io`
+  exclusiveContent repo removed; `androidx.annotation` (was transitive) is
+  now a direct `implementation 'androidx.annotation:annotation:1.3.0'`.
+- `assembleDebug` green; all 12 APK libs `p_align 0x4000`, our libtermux.so
+  still exports the five `Java_com_termux_terminal_JNI_*` symbols, arm64-v8a
+  only. **Not yet device-verified** — needs a run to confirm the terminal
+  (pty spawn, selection handles, strings) still works from source.
+
 ## 2026-07-19 — Settings screen fixes (two minor, device-verified)
 
 Unrelated follow-ups after stage 21; authored as Claude.

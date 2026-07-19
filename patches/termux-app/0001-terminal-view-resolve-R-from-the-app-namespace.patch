@@ -1,0 +1,35 @@
+From 84ee2e1c5a594ba1cbc2d380ea768de7f863fa6b Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Sun, 19 Jul 2026 18:51:25 -0400
+Subject: [PATCH 1/1] terminal-view: resolve R from the app namespace
+
+Compiled straight from source into the cmus-android :app module (no AAR),
+so the merged resources land in net.pgaskin.cmus.android.R rather than the
+library's own com.termux.view.R.
+
+diff --git a/terminal-view/src/main/java/com/termux/view/textselection/TextSelectionCursorController.java b/terminal-view/src/main/java/com/termux/view/textselection/TextSelectionCursorController.java
+index 714d56e..f2742a3 100644
+--- a/terminal-view/src/main/java/com/termux/view/textselection/TextSelectionCursorController.java
++++ b/terminal-view/src/main/java/com/termux/view/textselection/TextSelectionCursorController.java
+@@ -16,7 +16,7 @@ import androidx.annotation.Nullable;
+ 
+ import com.termux.terminal.TerminalBuffer;
+ import com.termux.terminal.WcWidth;
+-import com.termux.view.R;
++import net.pgaskin.cmus.android.R;
+ import com.termux.view.TerminalView;
+ 
+ public class TextSelectionCursorController implements CursorController {
+diff --git a/terminal-view/src/main/java/com/termux/view/textselection/TextSelectionHandleView.java b/terminal-view/src/main/java/com/termux/view/textselection/TextSelectionHandleView.java
+index 4f39e72..af27a1d 100644
+--- a/terminal-view/src/main/java/com/termux/view/textselection/TextSelectionHandleView.java
++++ b/terminal-view/src/main/java/com/termux/view/textselection/TextSelectionHandleView.java
+@@ -12,7 +12,7 @@ import android.view.ViewParent;
+ import android.view.WindowManager;
+ import android.widget.PopupWindow;
+ 
+-import com.termux.view.R;
++import net.pgaskin.cmus.android.R;
+ import com.termux.view.TerminalView;
+ 
+ @SuppressLint("ViewConstructor")

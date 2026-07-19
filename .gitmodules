@@ -45,3 +45,7 @@
 [submodule "third_party/libiconv"]
 	path = third_party/libiconv
 	url = https://git.savannah.gnu.org/git/libiconv.git
+[submodule "third_party/termux-app"]
+	path = third_party/termux-app
+	url = https://github.com/termux/termux-app
+	shallow = true

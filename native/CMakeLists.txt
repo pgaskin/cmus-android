@@ -76,6 +76,9 @@ add_subdirectory("${THIRD_PARTY}/libmad" libmad EXCLUDE_FROM_ALL)
 add_subdirectory(ports/ncurses)
 add_subdirectory(ports/libiconv)
 
+# terminal-emulator JNI, built from the termux-app submodule (see the port)
+add_subdirectory(ports/termux)
+
 # cmus core + plugins + generated config headers; gradle builds these
 # targets, pulling exactly the needed static deps transitively and keeping
 # strays (vorbisenc, opusurl, faad_drm, ...) out of the build
