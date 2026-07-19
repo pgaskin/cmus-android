@@ -33,6 +33,8 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.PopupWindow;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -41,8 +43,12 @@ import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 import com.termux.view.TerminalViewClient;
 
+import java.io.File;
 import java.util.List;
 import java.util.Objects;
+import java.util.TreeSet;
+import java.util.function.IntConsumer;
+import java.util.function.IntSupplier;
 
 public class MainActivity extends Activity implements TerminalViewClient, TermService.SessionCallback {
     private static final String TAG = "cmus";
@@ -55,6 +61,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     /** Protocol code for the right button (same in SGR and X10 encodings). */
     private static final int MOUSE_RIGHT_BUTTON = 2;
     private static final String PREF_FONT = "font";
+    /** Last colorscheme name echoed by cmus (the selector highlight). */
+    private static final String PREF_COLORSCHEME = "colorscheme";
 
     private TerminalView terminalView;
     private FrameLayout terminalWrapper;
@@ -66,6 +74,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private ImageButton filterClose;
     private ImageButton sleepBtn;
     private TextView sleepText;
+    private ImageButton settingsBtn;
     private final Runnable sleepTick = this::updateSleepSlot;
     private ControlBar controlBar;
     private KeyRow keyRow;
@@ -104,6 +113,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     // the app's cue to offer the remove dialog (uptimeMillis deadline)
     private long pendingRemoveUntil;
     private AlertDialog removeDialog;
+    // the settings popover / theme / font selector (one at a time); the
+    // refresh re-tints its rows when the selection echo moves
+    private PopupWindow selectorPopup;
+    private Runnable selectorRefresh;
+    // last colorscheme name echoed by cmus (null = never seen); the name is
+    // app-side bookkeeping — the colors themselves live in cmus's autosave
+    private String colorschemeName;
     private boolean bound;
     private boolean visible;
     private boolean crashScreen;
@@ -146,6 +162,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         fontSize = Math.max(minFontSize, Math.min(
                 getSharedPreferences(TermService.PREFS, MODE_PRIVATE).getInt(PREF_FONT, dp(13)),
                 maxFontSize));
+        colorschemeName = getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
+                .getString(PREF_COLORSCHEME, null);
 
         terminalView = new TerminalView(this, null);
         terminalView.setTerminalViewClient(this);
@@ -246,6 +264,15 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         sleepText.setOnClickListener(v -> showSleepDialog());
         sleepText.setVisibility(View.GONE);
 
+        // the spec's faint round settings icon: tap = popover fanning out
+        // to the selectors (and, come stage 17, the settings screen);
+        // long-press = straight to the theme selector
+        settingsBtn = topBarButton(R.drawable.ic_settings, this::showSettingsPopover);
+        settingsBtn.setOnLongClickListener(v -> {
+            showThemeSelector();
+            return true;
+        });
+
         topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -260,6 +287,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         topBar.addView(sleepBtn);
         topBar.addView(sleepText);
+        topBar.addView(settingsBtn);
         topBar.addView(filterClose);
 
         // TerminalView sizes itself from raw view bounds (ignores its own
@@ -414,6 +442,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         visible = false;
         controlBar.dismissPopup(); // a showing popup would leak the window
         dismissRemoveDialog(); // same, and it's stale by the time we're back
+        dismissSelectorPopup(); // same window-leak rule
         closeFilterBox(false); // the filter itself is cmus state, kept
         sleepText.removeCallbacks(sleepTick); // no ticking while invisible
         if (service != null) {
@@ -562,6 +591,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 liveFilter = f.filter();
                 applyTabColors();
             }
+            case CmusIpc.Colorscheme c -> onColorscheme(c.name());
             case CmusIpc.Status s -> {
                 controlBar.onStatus(s);
                 updateSleepSlot(); // the expiry pause echoes back as Status
@@ -616,6 +646,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         filterClose.setImageTintList(ColorStateList.valueOf(fg));
         sleepBtn.setImageTintList(ColorStateList.valueOf(dim));
         sleepText.setTextColor(fg); // armed = active, the tab convention
+        settingsBtn.setImageTintList(ColorStateList.valueOf(dim)); // always faint
     }
 
     // TermService.SessionCallback
@@ -640,6 +671,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         } else {
             crashScreen = true;
             dismissRemoveDialog(); // there's nothing left to remove from
+            dismissSelectorPopup(); // nothing left to theme either
             closeFilterBox(false); // nothing left to filter either
             joyDot.setVisibility(View.GONE); // it must not eat the tap-out
             Toast.makeText(this, "cmus exited (" + exitStatus + ") — tap to close",
@@ -662,6 +694,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             filterBtn.setLayoutParams(topBarButtonParams());
             filterClose.setLayoutParams(topBarButtonParams());
             sleepBtn.setLayoutParams(topBarButtonParams());
+            settingsBtn.setLayoutParams(topBarButtonParams());
             controlBar.setFontSize(fontSize);
             keyRow.setFontSize(fontSize);
             titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
@@ -715,6 +748,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         tabBar.setVisibility(View.GONE);
         sleepBtn.setVisibility(View.GONE);
         sleepText.setVisibility(View.GONE);
+        settingsBtn.setVisibility(View.GONE);
         filterBox.setVisibility(View.VISIBLE);
         filterClose.setVisibility(View.VISIBLE);
         filterBoxSquelch = true;
@@ -741,6 +775,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         filterBox.setVisibility(View.GONE);
         filterClose.setVisibility(View.GONE);
         tabBar.setVisibility(View.VISIBLE);
+        settingsBtn.setVisibility(View.VISIBLE);
         updateSleepSlot(); // restores whichever of icon/countdown applies
         hideImeAndFocusTerminal();
     }
@@ -755,6 +790,159 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 .hideSoftInputFromWindow(terminalView.getWindowToken(), 0);
         updateKeyRow();
         applyChromePadding();
+    }
+
+    // theme selection: the settings icon's popover fans out to the
+    // selectors; each selector is a centered scrollable list over the TUI
+    // (no scrim), applying live. cmus stays the source of truth for
+    // colorschemes — a pick sends `colorscheme <name>` and the highlight
+    // only moves when the event echoes back (TUI-typed ones land the same
+    // way); the name itself is app-side bookkeeping (cmus forgets it), the
+    // colors live in cmus's autosave
+
+    /** A successful `colorscheme` echo, from either side. */
+    private void onColorscheme(String name) {
+        colorschemeName = name;
+        getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_COLORSCHEME, name).apply();
+        if (selectorRefresh != null) {
+            selectorRefresh.run();
+        }
+    }
+
+    private void showSettingsPopover() {
+        if (theme == null || crashScreen) {
+            return;
+        }
+        showListPopup(settingsBtn, new String[]{"Theme", "Settings"}, () -> -1, true,
+                which -> {
+                    switch (which) {
+                        case 0 -> showThemeSelector();
+                        default -> Toast.makeText(this, "Not yet implemented",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
+    private void showThemeSelector() {
+        if (theme == null || crashScreen || session == null || !session.isRunning()) {
+            return;
+        }
+        List<String> names = themeNames();
+        if (names.isEmpty()) {
+            return;
+        }
+        showListPopup(null, names.toArray(new String[0]),
+                () -> names.indexOf(colorschemeName), false,
+                which -> sendCommand("colorscheme " + names.get(which)));
+    }
+
+    /**
+     * Union of user themes (cmus-home — wins in cmd_colorscheme's search
+     * order) and the bundled ones (cmus-data), sorted. A name containing
+     * whitespace can't be applied (`colorscheme` takes exactly one arg), so
+     * it isn't offered.
+     */
+    private List<String> themeNames() {
+        TreeSet<String> names = new TreeSet<>();
+        for (String dir : new String[]{"cmus-home", "cmus-data"}) {
+            File[] files = new File(getFilesDir(), dir).listFiles();
+            if (files == null) {
+                continue;
+            }
+            for (File f : files) {
+                String n = f.getName();
+                if (n.endsWith(".theme") && n.indexOf(' ') < 0 && n.indexOf('\t') < 0) {
+                    names.add(n.substring(0, n.length() - ".theme".length()));
+                }
+            }
+        }
+        return List.copyOf(names);
+    }
+
+    /**
+     * The shared list popup: anchored dropdown (popover) or centered over
+     * the terminal capped at ~60% of it (selector), win colors with a 1dp
+     * separator frame, no scrim so the TUI stays visible around it. The
+     * selected row is full win_fg, the rest dimmed (the tab convention);
+     * selectorRefresh re-reads the supplier so echo-driven selection moves
+     * without rebuilding. Picks that apply live keep the popup open.
+     */
+    private void showListPopup(View anchor, String[] items, IntSupplier selected,
+            boolean dismissOnPick, IntConsumer onPick) {
+        dismissSelectorPopup();
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        TextView[] rows = new TextView[items.length];
+        TypedValue tv = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv, true);
+        for (int i = 0; i < items.length; i++) {
+            int which = i;
+            TextView t = new TextView(this);
+            t.setText(items[i]);
+            t.setTypeface(Typeface.MONOSPACE);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+            t.setPadding(dp(14), dp(8), dp(14), dp(8));
+            // ripple as the foreground; the popup bg stays the win color
+            t.setForeground(getDrawable(tv.resourceId));
+            t.setOnClickListener(v -> {
+                if (dismissOnPick) {
+                    dismissSelectorPopup();
+                }
+                onPick.accept(which);
+            });
+            rows[i] = t;
+            list.addView(t, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.addView(list);
+        scroll.setBackgroundColor(theme.winBg());
+        FrameLayout frame = new FrameLayout(this);
+        int border = Math.max(1, dp(1));
+        frame.setPadding(border, border, border, border);
+        frame.setBackgroundColor(theme.separator());
+        frame.addView(scroll);
+        selectorRefresh = () -> {
+            int sel = selected.getAsInt();
+            int dim = (theme.winFg() & 0x00FFFFFF) | INACTIVE_TAB_ALPHA;
+            for (int i = 0; i < rows.length; i++) {
+                rows[i].setTextColor(i == sel ? theme.winFg() : dim);
+            }
+        };
+        selectorRefresh.run();
+        PopupWindow popup = new PopupWindow(frame, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, true); // focusable: back dismisses
+        popup.setOutsideTouchable(true);
+        popup.setElevation(dp(6));
+        popup.setOnDismissListener(() -> {
+            if (selectorPopup == popup) {
+                selectorPopup = null;
+                selectorRefresh = null;
+            }
+        });
+        selectorPopup = popup;
+        if (anchor != null) {
+            popup.showAsDropDown(anchor);
+            return;
+        }
+        frame.measure(
+                View.MeasureSpec.makeMeasureSpec(
+                        terminalWrapper.getWidth() * 4 / 5, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(
+                        terminalWrapper.getHeight() * 3 / 5, View.MeasureSpec.AT_MOST));
+        popup.setWidth(frame.getMeasuredWidth());
+        popup.setHeight(frame.getMeasuredHeight());
+        popup.showAtLocation(rootLayout, Gravity.CENTER, 0, 0);
+    }
+
+    private void dismissSelectorPopup() {
+        if (selectorPopup != null) {
+            selectorPopup.dismiss();
+            selectorPopup = null;
+            selectorRefresh = null;
+        }
     }
 
     /** Icon button flanking the tab bar, sized to the tab text band. */

@@ -35,7 +35,7 @@ public final class CmusIpc implements AutoCloseable {
     private static final String TAG = "cmus";
 
     public sealed interface Event permits Hello, Status, Position, Volume, View, Filter,
-            Options, Selected {
+            Options, Selected, Colorscheme {
     }
 
     /** First line after connect. */
@@ -105,6 +105,17 @@ public final class CmusIpc implements AutoCloseable {
      */
     public record Selected(String view, List<String> files, List<String> playlists,
             String playlist) implements Event {
+    }
+
+    /**
+     * A `colorscheme` command successfully sourced the named theme file —
+     * from either search dir, and either side (our sends and TUI-typed ones
+     * land identically), so this is the app's theme-selector highlight.
+     * Transient like Selected: cmus doesn't retain the name (a theme is
+     * just a batch of set commands; the resulting color_* arrive in the
+     * coalesced Options event), so there's nothing to cache or replay.
+     */
+    public record Colorscheme(String name) implements Event {
     }
 
     public enum PlayState { STOPPED, PLAYING, PAUSED }
@@ -372,6 +383,8 @@ public final class CmusIpc implements AutoCloseable {
             }
             case Selected ignored -> {
             }
+            case Colorscheme ignored -> {
+            }
         }
         for (Listener l : List.copyOf(listeners)) {
             l.onEvent(event);
@@ -388,6 +401,7 @@ public final class CmusIpc implements AutoCloseable {
         String file = null;
         String viewName = null;
         String liveFilter = null;
+        String name = null;
         int duration = -1;
         double position = -1;
         int left = -1;
@@ -411,6 +425,7 @@ public final class CmusIpc implements AutoCloseable {
                     case "right" -> right = r.nextInt();
                     case "view" -> viewName = r.nextString();
                     case "filter" -> liveFilter = r.nextString();
+                    case "name" -> name = r.nextString();
                     case "tags" -> tags = readTags(r);
                     case "options" -> options = readOptions(r);
                     case "files" -> files = readStrings(r);
@@ -430,6 +445,7 @@ public final class CmusIpc implements AutoCloseable {
             case "filter" -> new Filter(liveFilter);
             case "options" -> new Options(options);
             case "selected" -> new Selected(viewName, files, playlists, playlist);
+            case "colorscheme" -> new Colorscheme(name);
             case null -> throw new IOException("event without a type");
             default -> null;
         };
