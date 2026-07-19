@@ -97,7 +97,15 @@ full plan and rationale; this file describes what currently exists.
   (lib.pl/queue.pl/playlists were the only in-place O_TRUNC writers),
   with pl_load_all skipping `*.tmp` leftovers and .tmp-suffixed
   playlist names rejected (saving playlist X writes X.tmp, which
-  would clobber a playlist named X.tmp). The
+  would clobber a playlist named X.tmp), 0005 (Android-only, gated on
+  CONFIG_STATIC_PLUGINS) links every input/output plugin into the cmus
+  binary instead of dlopen()ing them: each plugin's fixed ABI symbols
+  (ip_ops/ip_priority/… — identical across plugins) are renamed to
+  `<name>_ip_ops` etc. by the build so they stop colliding, and a new
+  static_plugins.c gathers them into static_{ip,op}_plugins[] tables that
+  ip_load_plugins/op_load_plugins walk in place of the CMUS_LIB_DIR scan
+  (the upstream Makefile leaves the macro unset and keeps the dlopen
+  path). The
   protocol comment atop android.c is the contract the Java client codes
   against. Amending an existing patch = fixup commit in the submodule +
   `git rebase --autosquash base`, then ./patch.sh regen.
@@ -138,20 +146,23 @@ full plan and rationale; this file describes what currently exists.
 - `native/cmus/`: cmus core (the Makefile's cmus-y set, mpris off,
   http.c out, + the patch's android.c; `CONFIG_ANDROID` set as a plain
   compile definition on the core only) as an
-  executable named `libcmus.so` — ENABLE_EXPORTS so plugins resolve core
-  symbols from it at dlopen — parked in CMAKE_LIBRARY_OUTPUT_DIRECTORY,
-  which AGP packages as-is; 9 ip plugins (flac vorbis opus mad wavpack
-  aac mp4 wav cue) + op/aaudio as `libcmus_{ip,op}_*.so` SHARED libs
-  with codecs linked statically and `-z undefs` overriding the NDK's
-  `--no-undefined`. The config/*.h that upstream `./configure` would
+  executable named `libcmus.so`, parked in CMAKE_LIBRARY_OUTPUT_DIRECTORY,
+  which AGP packages as-is; the 9 ip plugins (flac vorbis opus mad wavpack
+  aac mp4 wav cue) + op/aaudio are compiled straight into that binary
+  (patch 0005 / CONFIG_STATIC_PLUGINS) as per-plugin OBJECT libs whose
+  fixed ABI symbols are `-D`-renamed to `<name>_ip_ops` etc. to avoid
+  collisions, with the codec static libs linked onto the object lib (for
+  their header dirs) and onto cmus (for the link) — so there's a single
+  `libcmus.so`, no `libcmus_{ip,op}_*.so`, and no ENABLE_EXPORTS/`-z
+  undefs`/dlopen. The config/*.h that upstream `./configure` would
   emit are generated at CMake configure time in the same format
   (values: bionic + our deps; DEBUG=1; rtsched off); VERSION = the
   Makefile's `_ver3` fallback + gitlink short sha (resolved from the
   parent repo — the submodule HEAD is the patched tip, whose sha changes
   on every patch regen).
-- Static libs land under `app/.cxx/` only. The APK carries the 11 cmus
-  libs + termux's libtermux.so (extracted at install:
-  `useLegacyPackaging` for exec + plugin symlinks), the
+- Static libs land under `app/.cxx/` only. The APK carries the single
+  `libcmus.so` + termux's libtermux.so (extracted at install:
+  `useLegacyPackaging` so the exec can be spawned by path), the
   `assets/terminfo/x/xterm-256color` compiled by ncurses' gen.sh with
   host tic, and `assets/cmus-data/*` (rc + 17 themes) copied by a
   gradle task from the pristine cmus submodule.
@@ -164,8 +175,9 @@ full plan and rationale; this file describes what currently exists.
 - `CmusService` — mediaPlayback foreground service owning the cmus
   `TerminalSession`: runs `CmusFiles.prepare`, spawns
   `nativeLibraryDir/libcmus.so` in a pty (env: HOME/TMPDIR/TERM/
-  TERMINFO/CMUS_{HOME,LIB_DIR,DATA_DIR} pointing into the
-  `filesDir/.cmus/` dotfolder (stage 18) +
+  TERMINFO/CMUS_{HOME,DATA_DIR} pointing into the
+  `filesDir/.cmus/` dotfolder (stage 18; CMUS_LIB_DIR dropped with the
+  plugin .so files — patch 0005 builds them into the binary) +
   `CMUS_ANDROID_SOCKET=<filesDir>/.cmus/android.sock`, the app IPC
   socket — beside home, not in it, so zip exports of the config never
   pick up socket files, + `CMUS_ANDROID_{EXT_FILES,EXT,FILES}`, the
@@ -327,12 +339,12 @@ full plan and rationale; this file describes what currently exists.
   debuggable builds, like the IPC-log toggle — release ships with
   both off; the settings row shows the example command).
 - `CmusFiles` — idempotent per-spawn layout under `filesDir/.cmus/`
-  ({terminfo,data,home,lib,assets.stamp,android.sock} — a dotfolder so
+  ({terminfo,data,home,assets.stamp,android.sock} — a dotfolder so
   the file browser at $HOME = filesDir shows a clean home unless
   show_hidden; stage 18): extracts the terminfo + cmus-data assets
-  (stamped by versionCode + APK install time), rebuilds
-  `lib/{ip,op}/NAME.so` symlinks into nativeLibraryDir, creates
-  `home/`; migrates pre-18 installs (old cmus-home renamed in — state
+  (stamped by versionCode + APK install time), creates
+  `home/` (plugins are built into libcmus.so, so there's no lib/ tree to
+  stage); migrates pre-18 installs (old cmus-home renamed in — state
   kept, pl_env prefixes don't move — the regenerated trees deleted).
 - `CmusSettings` — the app-managed cmus options (Patrick's curated
   settings-screen set) in a `cmus_opts` prefs file keyed by option

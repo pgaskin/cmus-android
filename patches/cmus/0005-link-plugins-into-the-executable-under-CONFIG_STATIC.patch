@@ -1,0 +1,300 @@
+From 25855fca382db395bce5605ae33604898110d7df Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Sun, 19 Jul 2026 19:34:55 -0400
+Subject: [PATCH 5/5] link plugins into the executable under
+ CONFIG_STATIC_PLUGINS
+
+Instead of dlopen()ing <libdir>/{ip,op}/*.so, compile every plugin into
+the cmus binary and register them from static tables. Each plugin's fixed
+ABI symbols (ip_ops, ip_priority, ...) are renamed to <name>_ip_ops etc.
+by the build so they no longer collide, and static_plugins.c gathers them
+into static_ip_plugins[] / static_op_plugins[] which ip_load_plugins() and
+op_load_plugins() walk in place of the directory scan.
+
+Android-specific: the build defines CONFIG_STATIC_PLUGINS; the upstream
+Makefile leaves it unset and keeps the dlopen path.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+diff --git a/input.c b/input.c
+index 0f5e5b9..16757d2 100644
+--- a/input.c
++++ b/input.c
+@@ -34,6 +34,7 @@
+ #include "ui_curses.h"
+ #include "locking.h"
+ #include "xstrjoin.h"
++#include "static_plugins.h"
+ 
+ #include <unistd.h>
+ #include <stdbool.h>
+@@ -508,6 +509,35 @@ static int sort_ip(const struct list_head *a_, const struct list_head *b_)
+ 
+ void ip_load_plugins(void)
+ {
++#ifdef CONFIG_STATIC_PLUGINS
++	int i;
++
++	plugin_dir = "built-in";
++
++	ip_wrlock();
++	for (i = 0; i < static_ip_plugins_nr; i++) {
++		const struct static_ip *sp = &static_ip_plugins[i];
++		struct ip *ip;
++
++		if (!sp->abi_version || *sp->abi_version != IP_ABI_VERSION) {
++			error_msg("%s: incompatible plugin version", sp->name);
++			continue;
++		}
++
++		ip = xnew(struct ip, 1);
++		ip->extensions = sp->extensions;
++		ip->mime_types = sp->mime_types;
++		ip->ops = sp->ops;
++		ip->options = sp->options;
++		ip->priority = *sp->priority;
++		ip->name = xstrdup(sp->name);
++		ip->handle = NULL;
++
++		list_add_tail(&ip->node, &ip_head);
++	}
++	list_mergesort(&ip_head, sort_ip);
++	ip_unlock();
++#else
+ 	DIR *dir;
+ 	struct dirent *d;
+ 
+@@ -575,6 +605,7 @@ void ip_load_plugins(void)
+ 	list_mergesort(&ip_head, sort_ip);
+ 	closedir(dir);
+ 	ip_unlock();
++#endif
+ }
+ 
+ struct input_plugin *ip_new(const char *filename)
+diff --git a/output.c b/output.c
+index a31677a..44461ed 100644
+--- a/output.c
++++ b/output.c
+@@ -28,6 +28,7 @@
+ #include "options.h"
+ #include "xstrjoin.h"
+ #include "misc.h"
++#include "static_plugins.h"
+ 
+ #include <string.h>
+ #include <strings.h>
+@@ -82,6 +83,36 @@ static void add_plugin(struct output_plugin *plugin)
+ 
+ void op_load_plugins(void)
+ {
++#ifdef CONFIG_STATIC_PLUGINS
++	int i;
++
++	plugin_dir = "built-in";
++
++	for (i = 0; i < static_op_plugins_nr; i++) {
++		const struct static_op *sp = &static_op_plugins[i];
++		struct output_plugin *plug;
++
++		if (!sp->abi_version || *sp->abi_version != OP_ABI_VERSION) {
++			error_msg("%s: incompatible plugin version", sp->name);
++			continue;
++		}
++
++		plug = xnew(struct output_plugin, 1);
++		plug->abi_version_ptr = sp->abi_version;
++		plug->pcm_ops = sp->pcm_ops;
++		plug->pcm_options = sp->pcm_options;
++		plug->mixer_ops = sp->mixer_ops;
++		plug->mixer_options = sp->mixer_options;
++		plug->priority = *sp->priority;
++		plug->name = xstrdup(sp->name);
++		plug->handle = NULL;
++		plug->pcm_initialized = 0;
++		plug->mixer_initialized = 0;
++		plug->mixer_open = 0;
++
++		add_plugin(plug);
++	}
++#else
+ 	DIR *dir;
+ 	struct dirent *d;
+ 
+@@ -151,6 +182,7 @@ void op_load_plugins(void)
+ 		add_plugin(plug);
+ 	}
+ 	closedir(dir);
++#endif
+ }
+ 
+ static void init_plugin(struct output_plugin *o)
+diff --git a/static_plugins.c b/static_plugins.c
+new file mode 100644
+index 0000000..d02da96
+--- /dev/null
++++ b/static_plugins.c
+@@ -0,0 +1,94 @@
++/*
++ * Copyright 2008-2013 Various Authors
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#include "static_plugins.h"
++
++#ifdef CONFIG_STATIC_PLUGINS
++
++#include <stddef.h>
++
++/*
++ * Each plugin translation unit is compiled with its fixed ABI symbols renamed
++ * to <sym>_ip_* / <sym>_op_* (see native/cmus/CMakeLists.txt). Declare the
++ * renamed symbols and gather them into the tables the loaders walk.
++ */
++
++#define IP_DECL(sym) \
++	extern const unsigned sym##_ip_abi_version; \
++	extern const int sym##_ip_priority; \
++	extern const char * const sym##_ip_extensions[]; \
++	extern const char * const sym##_ip_mime_types[]; \
++	extern const struct input_plugin_ops sym##_ip_ops; \
++	extern const struct input_plugin_opt sym##_ip_options[];
++
++#define IP_ENTRY(nm, sym) { \
++	nm, &sym##_ip_abi_version, &sym##_ip_priority, \
++	sym##_ip_extensions, sym##_ip_mime_types, &sym##_ip_ops, sym##_ip_options }
++
++#define OP_DECL(sym) \
++	extern const unsigned sym##_op_abi_version; \
++	extern const int sym##_op_priority; \
++	extern const struct output_plugin_ops sym##_op_pcm_ops; \
++	extern const struct output_plugin_opt sym##_op_pcm_options[];
++
++#define OP_MIXER_DECL(sym) \
++	OP_DECL(sym) \
++	extern const struct mixer_plugin_ops sym##_op_mixer_ops; \
++	extern const struct mixer_plugin_opt sym##_op_mixer_options[];
++
++#define OP_ENTRY(nm, sym) { \
++	nm, &sym##_op_abi_version, &sym##_op_priority, \
++	&sym##_op_pcm_ops, sym##_op_pcm_options, NULL, NULL }
++
++#define OP_MIXER_ENTRY(nm, sym) { \
++	nm, &sym##_op_abi_version, &sym##_op_priority, \
++	&sym##_op_pcm_ops, sym##_op_pcm_options, &sym##_op_mixer_ops, sym##_op_mixer_options }
++
++IP_DECL(flac)
++IP_DECL(vorbis)
++IP_DECL(opus)
++IP_DECL(mad)
++IP_DECL(wavpack)
++IP_DECL(aac)
++IP_DECL(mp4)
++IP_DECL(wav)
++IP_DECL(cue)
++
++const struct static_ip static_ip_plugins[] = {
++	IP_ENTRY("flac", flac),
++	IP_ENTRY("vorbis", vorbis),
++	IP_ENTRY("opus", opus),
++	IP_ENTRY("mad", mad),
++	IP_ENTRY("wavpack", wavpack),
++	IP_ENTRY("aac", aac),
++	IP_ENTRY("mp4", mp4),
++	IP_ENTRY("wav", wav),
++	IP_ENTRY("cue", cue),
++};
++const int static_ip_plugins_nr =
++	sizeof(static_ip_plugins) / sizeof(static_ip_plugins[0]);
++
++OP_MIXER_DECL(aaudio)
++
++const struct static_op static_op_plugins[] = {
++	OP_MIXER_ENTRY("aaudio", aaudio),
++};
++const int static_op_plugins_nr =
++	sizeof(static_op_plugins) / sizeof(static_op_plugins[0]);
++
++#endif
+diff --git a/static_plugins.h b/static_plugins.h
+new file mode 100644
+index 0000000..ef20d14
+--- /dev/null
++++ b/static_plugins.h
+@@ -0,0 +1,63 @@
++/*
++ * Copyright 2008-2013 Various Authors
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#ifndef CMUS_STATIC_PLUGINS_H
++#define CMUS_STATIC_PLUGINS_H
++
++#ifdef CONFIG_STATIC_PLUGINS
++
++#include "ip.h"
++#include "op.h"
++#include "mixer.h"
++
++/*
++ * When plugins are linked into the cmus executable instead of loaded from
++ * <libdir>/{ip,op}/*.so, each plugin's fixed ABI symbols (ip_ops, ip_priority,
++ * ...) are renamed to <name>_ip_ops etc. at compile time, and these tables
++ * take the place of the dlopen()/dlsym() scan. See static_plugins.c.
++ */
++
++struct static_ip {
++	const char *name;
++	const unsigned *abi_version;
++	const int *priority;
++	const char * const *extensions;
++	const char * const *mime_types;
++	const struct input_plugin_ops *ops;
++	const struct input_plugin_opt *options;
++};
++
++struct static_op {
++	const char *name;
++	const unsigned *abi_version;
++	const int *priority;
++	const struct output_plugin_ops *pcm_ops;
++	const struct output_plugin_opt *pcm_options;
++	/* mixer_ops/mixer_options are NULL for plugins without a mixer */
++	const struct mixer_plugin_ops *mixer_ops;
++	const struct mixer_plugin_opt *mixer_options;
++};
++
++extern const struct static_ip static_ip_plugins[];
++extern const int static_ip_plugins_nr;
++extern const struct static_op static_op_plugins[];
++extern const int static_op_plugins_nr;
++
++#endif
++
++#endif

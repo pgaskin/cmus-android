@@ -3,6 +3,40 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Single libcmus.so: plugins linked into the binary (built + device-tested, authored as Claude)
+
+- Goal: one `libcmus.so` with every input/output plugin linked in, instead of
+  the core executable + 10 `libcmus_{ip,op}_*.so` dlopen()ed at runtime.
+- Blocker was symbol collision: every ip plugin exports the same globals
+  (`ip_ops`/`ip_priority`/`ip_extensions`/`ip_mime_types`/`ip_options`/
+  `ip_abi_version`), every op plugin the same `op_*` set. Plugin internals are
+  otherwise all `static` (audited), and `nomad_*` is unique to mad — so the six
+  ABI names are the only clash.
+- New cmus patch `0005` (Android-only, gated on `CONFIG_STATIC_PLUGINS`; the
+  upstream Makefile leaves the macro unset and keeps the dlopen path):
+  - `static_plugins.{c,h}`: `static_{ip,op}_plugins[]` tables of function/name
+    pointers, built from the renamed ABI symbols via extern decls + macros.
+  - `input.c`/`output.c`: `ip_load_plugins`/`op_load_plugins` grow a
+    `#ifdef CONFIG_STATIC_PLUGINS` branch that walks the tables (setting
+    `plugin_dir = "built-in"` for the dumps) instead of scanning
+    `CMUS_LIB_DIR/{ip,op}/*.so`. No dlopen/dlsym/dlclose on this path;
+    `op_exit_plugins` never dlclose()d, so nothing else changed.
+- Build (`native/cmus/CMakeLists.txt`): each plugin is now a per-plugin OBJECT
+  lib whose fixed ABI symbols are `-D`-renamed to `<name>_ip_ops` etc.
+  (`cmake_parse`-free: `cmus_plugin(kind name "libs" sources…)`); codec static
+  libs link onto the object lib (header dirs) and onto `cmus` (final link);
+  `$<TARGET_OBJECTS>` folds them into the executable. Dropped ENABLE_EXPORTS
+  and `-z undefs`; added `static_plugins.c` + `CONFIG_STATIC_PLUGINS` to cmus.
+- App: `CmusFiles.linkPlugins` (the `.cmus/lib/{ip,op}/NAME.so` symlink tree)
+  and `lib()` deleted — it would now always throw ("no ip plugins", since there
+  are no `libcmus_ip_*.so` to link); `CMUS_LIB_DIR` env dropped from
+  `CmusService`; `Os`/`ErrnoException` imports removed.
+- Verified on device (arm64): APK carries only `libcmus.so` + `libtermux.so`
+  (no plugin .so); `nm` shows all 9 ip + aaudio ABI symbols + the tables inside
+  `libcmus.so`; app launches with no "incompatible plugin"/"missing symbol";
+  pressed play on the restored `song.opus` → PLAYING→STOPPED after exactly its
+  3 s (opus input + aaudio output both resolving from the one image).
+
 ## 2026-07-19 — Stage 22: termux from source, 16 KB page-size fix (built, authored as Claude)
 
 Per [plans/22-termux-from-source.md](plans/22-termux-from-source.md).

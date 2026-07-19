@@ -181,7 +181,6 @@ public class CmusService extends Service implements TerminalSessionClient {
                     "TERM=xterm-256color",
                     "TERMINFO=" + CmusFiles.terminfo(this),
                     "CMUS_HOME=" + CmusFiles.home(this),
-                    "CMUS_LIB_DIR=" + CmusFiles.lib(this),
                     "CMUS_DATA_DIR=" + CmusFiles.data(this),
                     // app-facing IPC socket (patches/cmus/0001); beside
                     // home, not in it, so zip exports of the config never

@@ -130,6 +130,7 @@ add_executable(cmus
     ${src}/search_mode.c
     ${src}/server.c
     ${src}/spawn.c
+    ${src}/static_plugins.c
     ${src}/tabexp.c
     ${src}/tabexp_file.c
     ${src}/track.c
@@ -144,12 +145,12 @@ add_executable(cmus
     ${src}/xstrjoin.c
 )
 
-# plugins are linked with undefined core symbols and resolve them from the
-# executable at dlopen time -> ENABLE_EXPORTS = upstream's -Wl,--export-dynamic
+# plugins are compiled into the executable (CONFIG_STATIC_PLUGINS below), so
+# there's nothing to dlopen and no need to export the core symbols they used to
+# resolve at load time -> ENABLE_EXPORTS (--export-dynamic) stays off.
 set_target_properties(cmus PROPERTIES
     OUTPUT_NAME libcmus
-    SUFFIX .so
-    ENABLE_EXPORTS ON)
+    SUFFIX .so)
 
 # AGP packages lib*.so from the library output dir; park the executable
 # there (wireguard-android pattern). Unset on plain cmake runs.
@@ -162,9 +163,10 @@ target_include_directories(cmus PRIVATE "${gen}")
 # CONFIG_ANDROID enables the patches' app-only code (android.c IPC socket,
 # remote streams out); deliberately a plain definition, not a config/*.h,
 # so the patched tree still builds unchanged with the upstream Makefile.
-# Core only -- plugins don't need it.
+# Core only -- plugins don't need it. CONFIG_STATIC_PLUGINS swaps the
+# dlopen()/dlsym() plugin scan for the compiled-in static_plugins.c tables.
 target_compile_definitions(cmus PRIVATE HAVE_CONFIG _FILE_OFFSET_BITS=64
-    CONFIG_ANDROID)
+    CONFIG_ANDROID CONFIG_STATIC_PLUGINS)
 target_compile_options(cmus PRIVATE ${cmus_cflags})
 # pthread is in bionic libc; the GNU iconv.h from the iconv target's
 # interface must (and does) precede bionic's own limited <iconv.h>
@@ -182,40 +184,57 @@ set_source_files_properties(${src}/server.c
 # gen/config that makes it land on the generated headers.
 file(MAKE_DIRECTORY "${gen}/ip")
 
-function(cmus_plugin target)
-    add_library(${target} SHARED ${ARGN})
+# Each plugin is compiled into the cmus executable rather than a standalone
+# dlopen()ed .so (CONFIG_STATIC_PLUGINS). Its fixed ABI symbols (ip_ops,
+# ip_priority, ... / op_pcm_ops, ...) would collide across plugins linked into
+# one image, so rename them per-plugin to <name>_<sym>; static_plugins.c
+# declares the renamed symbols and builds the registration tables the loaders
+# walk. codec deps (per the Makefile's ld_dl lines) are linked onto the plugin
+# object lib for their header search paths and onto cmus for the final link.
+function(cmus_plugin kind name libs)
+    set(target cmus_${kind}_${name})
+    add_library(${target} OBJECT ${ARGN})
     target_include_directories(${target} PRIVATE "${gen}" "${gen}/ip")
     target_compile_definitions(${target} PRIVATE HAVE_CONFIG _FILE_OFFSET_BITS=64)
     target_compile_options(${target} PRIVATE ${cmus_cflags})
-    # core symbols stay undefined until dlopen(RTLD_NOW) from the
-    # executable; -z undefs overrides the NDK's default -Wl,--no-undefined
-    target_link_options(${target} PRIVATE -Wl,-z,undefs)
+    if(kind STREQUAL "ip")
+        target_compile_definitions(${target} PRIVATE
+            ip_ops=${name}_ip_ops
+            ip_priority=${name}_ip_priority
+            ip_extensions=${name}_ip_extensions
+            ip_mime_types=${name}_ip_mime_types
+            ip_options=${name}_ip_options
+            ip_abi_version=${name}_ip_abi_version)
+    else()
+        target_compile_definitions(${target} PRIVATE
+            op_pcm_ops=${name}_op_pcm_ops
+            op_pcm_options=${name}_op_pcm_options
+            op_priority=${name}_op_priority
+            op_abi_version=${name}_op_abi_version
+            op_mixer_ops=${name}_op_mixer_ops
+            op_mixer_options=${name}_op_mixer_options)
+    endif()
+    # PRIVATE on an OBJECT lib brings in the codec's INTERFACE include dirs at
+    # compile time without linking anything; cmus does the actual link below.
+    target_link_libraries(${target} PRIVATE ${libs})
+    target_link_libraries(cmus PRIVATE ${libs})
+    target_sources(cmus PRIVATE $<TARGET_OBJECTS:${target}>)
 endfunction()
 
-# codec deps statically linked into each plugin, per the Makefile's
-# ld_dl lines (mad also gets iconv; vorbis/cue also -lm)
-cmus_plugin(cmus_ip_flac "${src}/ip/flac.c")
-target_link_libraries(cmus_ip_flac PRIVATE FLAC)
-cmus_plugin(cmus_ip_vorbis "${src}/ip/vorbis.c")
-target_link_libraries(cmus_ip_vorbis PRIVATE vorbisfile m)
-cmus_plugin(cmus_ip_opus "${src}/ip/opus.c")
-target_link_libraries(cmus_ip_opus PRIVATE opusfile)
-cmus_plugin(cmus_ip_mad "${src}/ip/mad.c" "${src}/ip/nomad.c")
-target_link_libraries(cmus_ip_mad PRIVATE mad-static iconv m)
-cmus_plugin(cmus_ip_wavpack "${src}/ip/wavpack.c")
-target_link_libraries(cmus_ip_wavpack PRIVATE wavpack)
 # cmus includes <wavpack/wavpack.h> (installed layout); the in-tree header
 # is include/wavpack.h -- mirror it under the installed name
 file(MAKE_DIRECTORY "${gen}/compat/wavpack")
 file(COPY_FILE "${THIRD_PARTY}/wavpack/include/wavpack.h"
     "${gen}/compat/wavpack/wavpack.h" ONLY_IF_DIFFERENT)
+
+cmus_plugin(ip flac "FLAC" "${src}/ip/flac.c")
+cmus_plugin(ip vorbis "vorbisfile;m" "${src}/ip/vorbis.c")
+cmus_plugin(ip opus "opusfile" "${src}/ip/opus.c")
+cmus_plugin(ip mad "mad-static;iconv;m" "${src}/ip/mad.c" "${src}/ip/nomad.c")
+cmus_plugin(ip wavpack "wavpack" "${src}/ip/wavpack.c")
 target_include_directories(cmus_ip_wavpack PRIVATE "${gen}/compat")
-cmus_plugin(cmus_ip_aac "${src}/ip/aac.c")
-target_link_libraries(cmus_ip_aac PRIVATE faad)
-cmus_plugin(cmus_ip_mp4 "${src}/ip/mp4.c")
-target_link_libraries(cmus_ip_mp4 PRIVATE mp4v2 faad)
-cmus_plugin(cmus_ip_wav "${src}/ip/wav.c")
-cmus_plugin(cmus_ip_cue "${src}/ip/cue.c")
-target_link_libraries(cmus_ip_cue PRIVATE m)
-cmus_plugin(cmus_op_aaudio "${src}/op/aaudio.c")
-target_link_libraries(cmus_op_aaudio PRIVATE aaudio)
+cmus_plugin(ip aac "faad" "${src}/ip/aac.c")
+cmus_plugin(ip mp4 "mp4v2;faad" "${src}/ip/mp4.c")
+cmus_plugin(ip wav "" "${src}/ip/wav.c")
+cmus_plugin(ip cue "m" "${src}/ip/cue.c")
+cmus_plugin(op aaudio "aaudio" "${src}/op/aaudio.c")

@@ -3,8 +3,6 @@ package net.pgaskin.cmus.android;
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.system.ErrnoException;
-import android.system.Os;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -22,7 +20,6 @@ import java.nio.file.Files;
  * <pre>
  * filesDir/.cmus/terminfo/x/xterm-256color   extracted asset (TERMINFO)
  * filesDir/.cmus/data/{rc,*.theme}           extracted assets (CMUS_DATA_DIR)
- * filesDir/.cmus/lib/{ip,op}/NAME.so         symlinks into nativeLibraryDir (CMUS_LIB_DIR)
  * filesDir/.cmus/home/                       autosave state (CMUS_HOME)
  * filesDir/.cmus/assets.stamp
  * filesDir/.cmus/android.sock                (CMUS_ANDROID_SOCKET; outside home
@@ -50,10 +47,6 @@ final class CmusFiles {
         return new File(root(context), "data");
     }
 
-    static File lib(Context context) {
-        return new File(root(context), "lib");
-    }
-
     static File terminfo(Context context) {
         return new File(root(context), "terminfo");
     }
@@ -65,7 +58,6 @@ final class CmusFiles {
     static void prepare(Context context) throws IOException {
         migrate(context);
         extractAssets(context);
-        linkPlugins(context);
         home(context).mkdirs();
     }
 
@@ -145,38 +137,6 @@ final class CmusFiles {
         }
         for (String child : children) {
             extractAssetTree(context, assetPath + "/" + child, new File(dst, child));
-        }
-    }
-
-    /**
-     * cmus scans CMUS_LIB_DIR/{ip,op}/*.so and takes the plugin name from the
-     * filename, so give it symlinks named vorbis.so etc. pointing at the
-     * libcmus_ip_vorbis.so AGP extracted. Rebuilt from scratch on every spawn:
-     * cheap, and immune to nativeLibraryDir moving between installs.
-     */
-    private static void linkPlugins(Context context) throws IOException {
-        File libDir = lib(context);
-        deleteTree(libDir);
-
-        File nativeDir = new File(context.getApplicationInfo().nativeLibraryDir);
-        for (String kind : new String[]{"ip", "op"}) {
-            File kindDir = new File(libDir, kind);
-            if (!kindDir.mkdirs()) {
-                throw new IOException("mkdirs failed: " + kindDir);
-            }
-            String prefix = "libcmus_" + kind + "_";
-            String[] libs = nativeDir.list((dir, name) -> name.startsWith(prefix) && name.endsWith(".so"));
-            if (libs == null || libs.length == 0) {
-                throw new IOException("no " + kind + " plugins in " + nativeDir);
-            }
-            for (String lib : libs) {
-                String name = lib.substring(prefix.length());
-                try {
-                    Os.symlink(new File(nativeDir, lib).getPath(), new File(kindDir, name).getPath());
-                } catch (ErrnoException e) {
-                    throw new IOException("symlink " + name + " failed", e);
-                }
-            }
         }
     }
 
