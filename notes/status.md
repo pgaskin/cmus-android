@@ -829,21 +829,15 @@ command. Needs design: maybe an android.c intent line
 access(2)-checking lib entries (worker job, like update-cache), or an
 app-side diff of the saved library against the filesystem.
 
-After 18 comes stage 19 (new, Patrick): continuous state save —
-periodic resume/autosave/library/cache saves during runtime, closing
-the stage-10 loss window for exits that skip SIGHUP entirely
-(force-stop's uid SIGKILL, battery death, panics); then stage 20
-polish.
+After 18 come stage 19 (continuous state save — periodic
+resume/autosave/library/cache saves during runtime, closing the
+stage-10 loss window for exits that skip SIGHUP entirely: force-stop's
+uid SIGKILL, battery death, panics) and stage 20 (ogg/opus embedded
+art — both new stages from Patrick), then stage 21 polish.
 
-Note for stage 20 polish: Iosevka-Regular.ttf is 10.8 MB (most of the
+Note for stage 21 polish: Iosevka-Regular.ttf is 10.8 MB (most of the
 APK bump); a pyftsubset pass over the bundled fonts could reclaim most
 of it if size ever matters.
-
-Note for later (stage 20 polish at the latest): ogg/opus embedded
-art — the framework extractor doesn't read METADATA_BLOCK_PICTURE,
-so MediaControl falls back to folder art for those; implement a
-small Java-side parser (base64 FLAC PICTURE block in the vorbis
-comment header) as another step in MediaControl's art chain.
 
 Pending verification (hardware, Patrick): Bluetooth — headset keys
 + AVRCP metadata, BT-drop/unplug becoming-noisy pause, and

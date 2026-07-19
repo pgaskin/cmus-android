@@ -216,7 +216,12 @@ Authorship:
     (force-stop's uid SIGKILL, battery death, panics; stage 10
     documented it). Likely a small timer in the android.c patch or a
     save-ish line the app triggers.
-20. **Polish/verify**: on-device pass over the whole spec, perf, edge
+20. **ogg/opus embedded art**: the framework extractor doesn't read
+    METADATA_BLOCK_PICTURE, so MediaControl falls back to folder art
+    for those — a small Java-side parser (base64 FLAC PICTURE block in
+    the vorbis comment header) as another step in MediaControl's art
+    chain (stage-9 note).
+21. **Polish/verify**: on-device pass over the whole spec, perf, edge
     cases.
 
 ## Open items (flagged, defaults chosen)

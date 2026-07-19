@@ -429,4 +429,4 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Settings screen (18), then continuous state save (19), polish/verify (20).
+Settings screen (18), then continuous state save (19), ogg/opus embedded art (20), polish/verify (21).
