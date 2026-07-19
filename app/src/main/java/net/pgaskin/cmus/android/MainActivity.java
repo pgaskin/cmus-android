@@ -170,7 +170,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         joyDot = new JoyDot(this, this::injectKey);
         FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(
                 dp(76), dp(76), Gravity.BOTTOM | Gravity.END);
-        dotLp.setMargins(0, 0, dp(16), dp(16));
+        dotLp.setMargins(0, 0, dp(28), dp(36));
         terminalWrapper.addView(joyDot, dotLp);
 
         controlBar = new ControlBar(this, new ControlBar.Callback() {

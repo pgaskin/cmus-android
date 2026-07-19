@@ -14,7 +14,7 @@ import android.view.ViewConfiguration;
 /**
  * Faint minecraft-style joystick dot floating over the terminal's
  * bottom-right: tap = enter, slide up/down = repeating arrows (deeper =
- * faster), slide far left = tab (once per crossing). Keys inject through
+ * faster), slide far left or right = tab (once per crossing). Keys inject through
  * the same TerminalView path as the key row, so its sticky modifiers merge
  * here too. Fixed dp size — it's a control, not TUI-flush chrome.
  */
@@ -40,7 +40,7 @@ public final class JoyDot extends View {
     private final int vertThreshold = dp(15);
     /** Vertical displacement where the repeat reaches full speed. */
     private final int vertFull = dp(60);
-    /** "Far left": where tab fires... */
+    /** "Far left"/"far right": where tab fires... */
     private final int tabThreshold = dp(40);
     /** ...and where it re-arms on the way back (hysteresis). */
     private final int tabRearm = dp(30);
@@ -97,15 +97,16 @@ public final class JoyDot extends View {
                 }
                 dx = e.getX() - downX;
                 dy = e.getY() - downY;
-                if (dx <= -tabThreshold) {
-                    // far left = tab, once per crossing; arrows pause here
+                if (Math.abs(dx) >= tabThreshold) {
+                    // far left/right = tab, once per crossing; arrows
+                    // pause here
                     stopRepeat();
                     if (tabArmed) {
                         tabArmed = false;
                         sendKey(KeyEvent.KEYCODE_TAB);
                     }
                 } else {
-                    if (dx >= -tabRearm) {
+                    if (Math.abs(dx) <= tabRearm) {
                         tabArmed = true;
                     }
                     int dir = dy <= -vertThreshold ? -1 : dy >= vertThreshold ? 1 : 0;
