@@ -72,9 +72,13 @@ full plan and rationale; this file describes what currently exists.
   exit save set; bare = everything) acked by a `saved` event carrying
   `what`, with the cache written under cache_lock — the worker is
   live here, unlike the exit path (stage-19 fix); and
-  android-nav-left/right + android-pl-add/delete + android-winch
-  app-intent input lines resolved inside android.c [pane-aware
-  joystick navigation; verbatim-name playlist add/delete; a tty-size
+  android-nav-left/right + android-selected + android-pl-add/delete +
+  android-winch app-intent input lines resolved inside android.c
+  [pane-aware joystick navigation; a coordinate-free `selected` event
+  for the *current* selection (stage 21, the floating-joystick /
+  mouse=false path — no button report can reach a non-tracking cmus),
+  reusing android_selected_event so it emits nothing exactly where the
+  right-click did; verbatim-name playlist add/delete; a tty-size
   re-check the app sends after every pty resize — a SIGWINCH can beat
   cmus's handler install or its select entry, so update_size() sets
   the flag and the line itself is the wakeup]. player_pos_exact
@@ -195,7 +199,8 @@ full plan and rationale; this file describes what currently exists.
   `set resume=true` + `quit` — the normal session-death teardown, a
   visible activity finishing through its usual path.
   Owns the `CmusIpc` client (created with the session, closed on
-  session exit/destroy): forces `set mouse=true` + `set resume=true`
+  session exit/destroy): forces `set mouse=<Direct-touch-input pref>`
+  (default true; stage 21) + `set resume=true`
   + `set pl_env_vars=…` plus an `android-winch` size re-check on every
   (re)connect (an attach can resize the pty before cmus installs its
   WINCH handler; the connect is after init by definition), then
@@ -542,6 +547,22 @@ full plan and rationale; this file describes what currently exists.
   140/150dp in from the bottom-right corner), re-derived on every
   wrapper resize (rotation, IME), center clamped ≥64dp from the
   wrapper edges while dragging and on restore.
+  Floating mode (Direct touch input off + joystick on, stage 21):
+  JoyDot fills the wrapper (MATCH_PARENT, placeJoyDot no-ops),
+  draws nothing at rest, and is summoned under the finger wherever a
+  terminal touch lands — the gesture origin is that press, not the view
+  center, so every threshold/knob is measured from it. Tap/slides/nav
+  are the same; the rest-in-place hold, which repositions the fixed dot,
+  instead fires a right-click at the platform long-press timeout →
+  `android-selected` (acts on the joystick-moved selection regardless of
+  where the finger landed) → the same 800ms-window onSelected dialog.
+  The stick owns the whole terminal there, so a plain tap is Enter, not
+  the tap-to-toggle-keyboard (still on the control-bar button / popover),
+  and pinch-zoom is unavailable (settings Zoom slider instead); floatBar
+  stays above the stick, so the hidden-top-bar buttons still work.
+  MainActivity.applyBarVisibility swaps the mode + layout params from the
+  pref on attach/onStart, and TermService.applyMouse pushes cmus `mouse`
+  live when the settings switch flips.
 - Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout)
   as the pre-first-Options fallback; live chrome colors come from
   CmusTheme above.

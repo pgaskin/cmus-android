@@ -3,6 +3,53 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Stage 21: direct touch toggle + floating joystick (done, device-verified)
+
+- Per [plans/21-touch-joystick.md](plans/21-touch-joystick.md). One cmus
+  change (amended into 0001) + app wiring; implementation authored as
+  Claude (Patrick's call for this stage). Device-verified by Patrick.
+- **"Direct touch input"** app switch (App section, default on): the
+  `mouse` option, forced true unconditionally until now, becomes a pref
+  in the `term` file. onConnected forces `set mouse=<pref>`; a new
+  `TermService.applyMouse()` re-sends it live when the switch flips.
+  `mouse` stays *out* of `CmusSettings.MANAGED` — it's app touch
+  behaviour, not a synced-back option, and staying forced means autosave
+  can't strand it. The tap/long-press branches already gate on the
+  emulator's `isMouseTrackingActive()` (which follows the option), so
+  `mouse=false` makes terminal taps toggle the keyboard and terminal
+  long-press inert *for free* — this stage only adds the floating stick.
+- **Coordinate problem, and the fix**: a right-click needs a button
+  report, but a `mouse=false` cmus never enables tracking, so an SGR/X10
+  sequence would be parsed as stray key bytes (random binds), not a
+  click. Patrick's steer — *the right-click acts on the current
+  selection regardless of touch position* — dissolved it: new
+  coordinate-free **`android-selected`** intent line (0001) calls the
+  existing `android_selected_event()`, which reads `cur_view` + the live
+  cursor/marked set and (via `android_for_each_sel`) already emits
+  nothing in browser/filters/settings and the playlist list-pane's
+  non-editable side — the exact gating the mouse right-click relied on.
+  So it's safe from any view and feeds the unchanged
+  pendingRemove→onSelected dialog.
+- **Floating joystick** (Direct touch off + joystick on): JoyDot flips to
+  MATCH_PARENT filling the wrapper, invisible at rest, summoned under the
+  finger — the gesture origin is the press point, not the view center
+  (onDraw + the DOWN hit-test are the only geometry changes; dx/dy were
+  already origin-relative). The 2s reposition-drag arm is repurposed to a
+  right-click at the platform long-press timeout (`rightClicked` flag
+  short-circuits any later slide so a held finger can't also fire
+  arrows). MainActivity.applyBarVisibility computes `!directTouch &&
+  joyShown`, calls `joyDot.setFloating`, swaps the layout params, and
+  `placeJoyDot` no-ops while floating. floatBar sits above the stick
+  (added later to the wrapper) so the hidden-top-bar buttons still work.
+- **Trade-offs (accepted on device)**: with the stick owning the whole
+  terminal, a plain tap is Enter — tap-to-toggle-keyboard moves to the
+  control-bar button / popover — and **pinch-zoom is unavailable** in
+  floating mode (it's inherent to "touch anywhere summons the stick";
+  the settings Zoom slider covers it). Flagged post-plan, Patrick kept
+  the simple design.
+- `./patch.sh check` green (0001 amend + regen, 0002–0004 headers only);
+  clean assembleDebug (Java + native cmus).
+
 ## 2026-07-19 — Stage 20: ogg/opus embedded art (done, device-verified)
 
 - Per [plans/20-ogg-opus-art.md](plans/20-ogg-opus-art.md). App-only, no
