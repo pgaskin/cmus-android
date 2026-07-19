@@ -37,7 +37,13 @@ pick up where things left off.
   mFontLineSpacingAndAscent down, so the terminal's top offset px
   stayed default-bg — a black hairline between tab bar and title row;
   a non-clickable titleStrip View (win_title_bg, firstRowOffset tall)
-  overlaid on the terminal's top edge closes it.
+  overlaid on the terminal's top edge closes it. And Patrick's "seek
+  release is flaky" turned out to be upstream player.c clamping
+  *absolute* seeks to duration−5 (stage-5/9 notes) — on the 8s test
+  tracks 63% of the bar snapped back to 3s; 0001 now relaxes the
+  clamp to duration under CONFIG_ANDROID (seeking to eof just ends
+  the track), verified `seek 6` → 6.0 where it used to echo 3.0.
+  MediaControl's notification seekbar gains the same reach.
 - ControlBar (horizontal LinearLayout beside a CmusSlider custom view):
   play/pause · repeat · shuffle · seek (weight 1) · volume · add-q ·
   keyboard, statusline colors, sized 3 terminal rows (icons 2) tracking

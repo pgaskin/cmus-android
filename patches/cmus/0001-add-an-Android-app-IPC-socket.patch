@@ -1,4 +1,4 @@
-From 9b8df570cda4736d005daa7dd768a30f11ab421c Mon Sep 17 00:00:00 2001
+From fa27b6f8674ea8ff98cfaefc3ba22d557101695e Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -496,10 +496,30 @@ index b794399..8528b8b 100644
  
  void run_command(const char *buf)
 diff --git a/player.c b/player.c
-index 383fd94..2d8235b 100644
+index 383fd94..c7d179e 100644
 --- a/player.c
 +++ b/player.c
-@@ -1309,6 +1309,22 @@ void player_seek(double offset, int relative, int start_playing)
+@@ -1280,11 +1280,19 @@ void player_seek(double offset, int relative, int start_playing)
+ 				player_unlock();
+ 				return;
+ 			}
++#ifdef CONFIG_ANDROID
++			/* the app's touch seek bar expects to reach the whole
++			 * track (on short tracks duration-5 makes most of the
++			 * bar snap back); seeking to eof just ends the track */
++			if (new_pos > duration)
++				new_pos = duration;
++#else
+ 			if (new_pos > duration - 5.0) {
+ 				new_pos = duration - 5.0;
+ 				if (new_pos < 0.0)
+ 					new_pos = 0.0;
+ 			}
++#endif
+ 		}
+ /* 		d_print("seeking %g/%g (%g from eof)\n", new_pos, duration, duration - new_pos); */
+ 		rc = ip_seek(ip, new_pos);
+@@ -1309,6 +1317,22 @@ void player_seek(double offset, int relative, int start_playing)
  	player_unlock();
  }
  
