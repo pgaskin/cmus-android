@@ -1,5 +1,5 @@
-From f48551ff258885225a88b45e842bbe32ae192ec7 Mon Sep 17 00:00:00 2001
-From: Patrick Gaskin <patrick@pgaskin.net>
+From c7b066f800878d4eeb66c165cfda43318fa7b3e2 Mon Sep 17 00:00:00 2001
+From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 14:53:47 -0400
 Subject: [PATCH 4/4] save playlists atomically via a temporary file
 MIME-Version: 1.0

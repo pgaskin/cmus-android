@@ -221,8 +221,14 @@ Authorship:
     for those — a small Java-side parser (base64 FLAC PICTURE block in
     the vorbis comment header) as another step in MediaControl's art
     chain (stage-9 note).
-21. **Polish/verify**: on-device pass over the whole spec, perf, edge
-    cases.
+21. **Direct touch + joystick**: direct-touch input toggle driving cmus
+    mouse mode (tap = click, long-press = right-click) with a live apply
+    path; an on-demand floating joystick shown when direct touch is off.
+22. **termux from source**: build terminal-emulator/-view from the
+    `third_party/termux-app` submodule (their Java into `:app` via
+    `sourceSets`, `termux.c` via our CMake) instead of the JitPack AAR, so
+    `libtermux.so` gets NDK-r28 16 KB alignment and the jitpack dependency
+    is dropped. Fixes Android 16's "not 16 KB aligned" dialog.
 
 ## Open items (flagged, defaults chosen)
 
