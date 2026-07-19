@@ -8,6 +8,7 @@ import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
+import android.content.res.Configuration;
 import android.os.Binder;
 import android.os.Environment;
 import android.os.Handler;
@@ -16,6 +17,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 
+import com.termux.terminal.TerminalColors;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
 
@@ -47,12 +49,22 @@ public class TermService extends Service implements TerminalSessionClient {
      * linger), so the receiver checks this instead.
      */
     static final String PREF_RESURRECT = "resurrect";
+    /** The generated Material You scheme is the active one (stage 16). */
+    static final String PREF_MATERIAL = "material_you";
 
     /** What the attached activity cares about; safe to leave unregistered. */
     public interface SessionCallback {
         void onTextChanged();
 
         void onSessionFinished();
+
+        /**
+         * The app rewrote (or reset) the live terminal palette — the
+         * Material You scheme redefines entries in place of anything
+         * OSC-4-ish, so cmus never knows: the view needs an invalidate and
+         * the chrome a re-resolve through the new palette.
+         */
+        void onPaletteChanged();
     }
 
     public final class LocalBinder extends Binder {
@@ -79,10 +91,13 @@ public class TermService extends Service implements TerminalSessionClient {
     private boolean activityVisible = true; // the activity starts the service
     private boolean idleQuitArmed;
     private boolean pendingMediaPlay;
+    private boolean materialActive;
 
     @Override
     public void onCreate() {
         instance = this;
+        materialActive = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_MATERIAL, false);
         NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
                 getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
@@ -159,6 +174,11 @@ public class TermService extends Service implements TerminalSessionClient {
             SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
             session.updateSize(prefs.getInt(PREF_COLS, 80), prefs.getInt(PREF_ROWS, 24), 8, 16);
             prefs.edit().putBoolean(PREF_RESURRECT, true).apply();
+            if (materialActive) {
+                // a fresh emulator starts on the stock palette; the
+                // autosave-restored color_* indexes need their entries back
+                pushPalette();
+            }
             ipc = new CmusIpc(new File(filesDir, "cmus-android.sock"));
             ipc.addListener(ipcListener);
             mediaControl = new MediaControl(this, ipc);
@@ -202,6 +222,15 @@ public class TermService extends Service implements TerminalSessionClient {
             // onEmulatorSet is dropped pre-connect): re-check once per
             // connect, which is after cmus's init by definition
             ipc.send("android-winch");
+            if (materialActive) {
+                // material is a direct-set scheme with no theme file behind
+                // it: re-force the role indexes so a stale autosave (a
+                // force-stop skips every save path) can't leave them
+                // pointing elsewhere — same forcing stance as the above
+                for (String cmd : MaterialYouTheme.commands()) {
+                    ipc.send(cmd);
+                }
+            }
         }
 
         @Override
@@ -238,7 +267,18 @@ public class TermService extends Service implements TerminalSessionClient {
                 case CmusIpc.Volume v -> Log.d(TAG, "ipc volume " + v.left() + "/" + v.right());
                 case CmusIpc.View v -> Log.d(TAG, "ipc view " + v.name());
                 case CmusIpc.Filter f -> Log.d(TAG, "ipc filter " + f.filter());
-                case CmusIpc.Colorscheme c -> Log.d(TAG, "ipc colorscheme " + c.name());
+                case CmusIpc.Colorscheme c -> {
+                    Log.d(TAG, "ipc colorscheme " + c.name());
+                    if (materialActive) {
+                        // a sourced theme file replaces the generated
+                        // scheme (from either side — the app's selector or
+                        // a TUI :colorscheme): back to the stock palette
+                        materialActive = false;
+                        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                                .putBoolean(PREF_MATERIAL, false).apply();
+                        pushPalette();
+                    }
+                }
                 case CmusIpc.Options o -> Log.d(TAG, "ipc options n=" + o.values().size()
                         + " mouse=" + o.values().get("mouse")
                         + " softvol=" + o.values().get("softvol")
@@ -250,6 +290,69 @@ public class TermService extends Service implements TerminalSessionClient {
 
     public void setSessionCallback(SessionCallback callback) {
         this.callback = callback;
+    }
+
+    // Material You (stage 16): the app redefines terminal palette entries
+    // to exact dynamic-color ARGB and points the color_* roles at them —
+    // the service owns the push because it owns the emulator and outlives
+    // the activity (a light/dark toggle lands here even headless)
+
+    /**
+     * The theme selector's Material You pick: push the entries, then the
+     * constant `set` burst pointing every role at them. The burst echoes
+     * back as one coalesced options event, so the chrome re-tints through
+     * the usual path; leaving the scheme is the Colorscheme echo of
+     * whatever replaces it.
+     */
+    public void applyMaterialYou() {
+        materialActive = true;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(PREF_MATERIAL, true).apply();
+        pushPalette();
+        if (ipc != null) {
+            for (String cmd : MaterialYouTheme.commands()) {
+                ipc.send(cmd);
+            }
+        }
+    }
+
+    /** For the selector highlight. */
+    public boolean materialYouActive() {
+        return materialActive;
+    }
+
+    /**
+     * Writes the Material entries into the live emulator palette — exactly
+     * what an OSC 4 would do, which is why CmusTheme resolves through the
+     * live copy — or resets it to stock when the scheme is switched away.
+     * No cmus traffic: the autosaved color_* indexes keep pointing at the
+     * entries, only the ARGB behind them moves.
+     */
+    private void pushPalette() {
+        if (session != null && session.getEmulator() != null) {
+            TerminalColors colors = session.getEmulator().mColors;
+            if (materialActive) {
+                int[] argb = MaterialYouTheme.colors(this);
+                System.arraycopy(argb, 0, colors.mCurrentColors,
+                        MaterialYouTheme.BASE_INDEX, argb.length);
+            } else {
+                colors.reset();
+            }
+        }
+        if (callback != null) {
+            callback.onPaletteChanged();
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // light/dark toggles and wallpaper-palette changes land here even
+        // with the activity gone; a Material update is palette-push only
+        // (stable indexes — cmus never hears about it)
+        if (materialActive) {
+            pushPalette();
+        }
     }
 
     /** Reported from the activity's onStart/onStop for the idle-quit timer. */

@@ -571,7 +571,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private final CmusIpc.Listener ipcListener = event -> {
         switch (event) {
             case CmusIpc.Options o -> {
-                CmusTheme t = CmusTheme.from(o);
+                CmusTheme t = CmusTheme.from(o, palette());
                 if (!t.equals(theme)) {
                     theme = t;
                     applyTheme();
@@ -649,11 +649,35 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         settingsBtn.setImageTintList(ColorStateList.valueOf(dim)); // always faint
     }
 
+    /** The live emulator palette CmusTheme resolves through; null pre-attach. */
+    private int[] palette() {
+        return session != null && session.getEmulator() != null
+                ? session.getEmulator().mColors.mCurrentColors : null;
+    }
+
     // TermService.SessionCallback
 
     @Override
     public void onTextChanged() {
         terminalView.onScreenUpdated();
+    }
+
+    @Override
+    public void onPaletteChanged() {
+        // the service moved ARGB under the indexes (Material You push or
+        // reset): repaint the terminal and re-resolve the chrome — the
+        // cached options haven't changed, the palette behind them has
+        terminalView.onScreenUpdated();
+        if (ipc != null && ipc.options() != null) {
+            CmusTheme t = CmusTheme.from(ipc.options(), palette());
+            if (!t.equals(theme)) {
+                theme = t;
+                applyTheme();
+            }
+        }
+        if (selectorRefresh != null) {
+            selectorRefresh.run(); // the Material entry's highlight
+        }
     }
 
     @Override
@@ -828,13 +852,33 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         if (theme == null || crashScreen || session == null || !session.isRunning()) {
             return;
         }
+        // Material You pinned first, then the theme files; the generated
+        // scheme's highlight is service state (it flips instantly on apply
+        // and on the Colorscheme echo of whatever replaces it), the files'
+        // is the last echoed name
         List<String> names = themeNames();
-        if (names.isEmpty()) {
-            return;
+        String[] items = new String[names.size() + 1];
+        items[0] = "Material You";
+        for (int i = 0; i < names.size(); i++) {
+            items[i + 1] = names.get(i);
         }
-        showListPopup(null, names.toArray(new String[0]),
-                () -> names.indexOf(colorschemeName), false,
-                which -> sendCommand("colorscheme " + names.get(which)));
+        showListPopup(null, items,
+                () -> {
+                    if (service != null && service.materialYouActive()) {
+                        return 0;
+                    }
+                    int i = names.indexOf(colorschemeName);
+                    return i < 0 ? -1 : i + 1;
+                }, false,
+                which -> {
+                    if (which == 0) {
+                        if (service != null) {
+                            service.applyMaterialYou();
+                        }
+                    } else {
+                        sendCommand("colorscheme " + names.get(which - 1));
+                    }
+                });
     }
 
     /**

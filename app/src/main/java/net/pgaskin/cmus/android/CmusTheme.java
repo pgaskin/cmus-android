@@ -12,10 +12,12 @@ import java.util.Map;
  * terminal palette, so chrome painted with these matches what TerminalView
  * renders. cmus serializes each color_* option as "default" (terminal
  * default fg/bg), one of 16 names, or a bare 16-255 palette index
- * (options.c get_color); the palette is termux's static scheme — the live
- * emulator's copy only diverges via OSC 4/10/11, which cmus never sends.
- * Being a record, {@link #equals} is the change detector for options
- * events that touch no colors.
+ * (options.c get_color). Resolution goes through the live emulator palette
+ * when given one: cmus never sends OSC 4/10/11, but since stage 16 the app
+ * itself rewrites entries in place of one (the Material You scheme), so
+ * the static scheme is only the no-emulator fallback. Being a record,
+ * {@link #equals} is the change detector for options events that touch no
+ * colors — and for palette pushes that move ARGB under unchanged indexes.
  */
 public record CmusTheme(int winBg, int winFg, int winTitleBg, int winTitleFg,
         int statuslineBg, int statuslineFg, int cmdlineBg, int separator) {
@@ -27,17 +29,19 @@ public record CmusTheme(int winBg, int winFg, int winTitleBg, int winTitleFg,
             "lightmagenta", "lightcyan", "white",
     };
 
-    public static CmusTheme from(CmusIpc.Options options) {
+    /** palette = the live emulator copy; null falls back to the static scheme. */
+    public static CmusTheme from(CmusIpc.Options options, int[] palette) {
         Map<String, String> o = options.values();
+        int[] p = palette != null ? palette : TerminalColors.COLOR_SCHEME.mDefaultColors;
         return new CmusTheme(
-                bg(o.get("color_win_bg")),
-                fg(o.get("color_win_fg")),
-                bg(o.get("color_win_title_bg")),
-                fg(o.get("color_win_title_fg")),
-                bg(o.get("color_statusline_bg")),
-                fg(o.get("color_statusline_fg")),
-                bg(o.get("color_cmdline_bg")),
-                fg(o.get("color_separator")));
+                bg(o.get("color_win_bg"), p),
+                fg(o.get("color_win_fg"), p),
+                bg(o.get("color_win_title_bg"), p),
+                fg(o.get("color_win_title_fg"), p),
+                bg(o.get("color_statusline_bg"), p),
+                fg(o.get("color_statusline_fg"), p),
+                bg(o.get("color_cmdline_bg"), p),
+                fg(o.get("color_separator"), p));
     }
 
     /** For the APPEARANCE_LIGHT_* system-bar icon flips. */
@@ -45,18 +49,17 @@ public record CmusTheme(int winBg, int winFg, int winTitleBg, int winTitleFg,
         return Color.luminance(color) > 0.5f;
     }
 
-    private static int bg(String value) {
-        return resolve(value, TextStyle.COLOR_INDEX_BACKGROUND);
+    private static int bg(String value, int[] palette) {
+        return resolve(value, TextStyle.COLOR_INDEX_BACKGROUND, palette);
     }
 
-    private static int fg(String value) {
-        return resolve(value, TextStyle.COLOR_INDEX_FOREGROUND);
+    private static int fg(String value, int[] palette) {
+        return resolve(value, TextStyle.COLOR_INDEX_FOREGROUND, palette);
     }
 
-    private static int resolve(String value, int defaultIndex) {
+    private static int resolve(String value, int defaultIndex, int[] palette) {
         int index = parseColor(value);
-        return TerminalColors.COLOR_SCHEME.mDefaultColors[
-                index >= 0 && index <= 255 ? index : defaultIndex];
+        return palette[index >= 0 && index <= 255 ? index : defaultIndex];
     }
 
     /** -1 for "default"; unknown/missing also -1 rather than crashing. */
