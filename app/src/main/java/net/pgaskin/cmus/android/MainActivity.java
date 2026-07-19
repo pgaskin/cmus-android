@@ -42,6 +42,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private View titleStrip;
     private HorizontalScrollView tabBar;
     private ControlBar controlBar;
+    private KeyRow keyRow;
     private final TextView[] viewTabs = new TextView[VIEW_NAMES.length];
     private android.graphics.Insets chromeInsets = android.graphics.Insets.NONE;
     // each bar's share of the terminal's row-quantization remainder, worn as
@@ -157,6 +158,14 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         });
         controlBar.setFontSize(fontSize);
 
+        // the same injection termux's extra-keys row uses: onKeyDown emits
+        // the key's escape sequence and merges readShift/Ctrl/AltKey into
+        // the meta state, so sticky modifiers apply here too
+        keyRow = new KeyRow(this, keyCode -> terminalView.onKeyDown(keyCode,
+                new KeyEvent(0, 0, KeyEvent.ACTION_UP, keyCode, 0, 0)));
+        keyRow.setFontSize(fontSize);
+        keyRow.setVisibility(View.GONE); // until the IME shows
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.addView(tabBar, new LinearLayout.LayoutParams(
@@ -165,9 +174,20 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         root.addView(controlBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(keyRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             chromeInsets = insets.getInsets(WindowInsets.Type.systemBars()
                     | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+            // the key row exists exactly while the IME does, sitting
+            // directly atop it below the control bar
+            boolean ime = insets.isVisible(WindowInsets.Type.ime());
+            if (ime != (keyRow.getVisibility() == View.VISIBLE)) {
+                keyRow.setVisibility(ime ? View.VISIBLE : View.GONE);
+                if (!ime) {
+                    keyRow.clearModifiers();
+                }
+            }
             applyChromePadding();
             return WindowInsets.CONSUMED;
         });
@@ -245,8 +265,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private void applyChromePadding() {
         tabBar.setPadding(chromeInsets.left, chromeInsets.top, chromeInsets.right, tabExtra);
         terminalWrapper.setPadding(chromeInsets.left, 0, chromeInsets.right, 0);
+        // the bottom-most visible chrome wears the bottom inset (the IME
+        // height while the key row is visible)
+        boolean rowVisible = keyRow.getVisibility() == View.VISIBLE;
         controlBar.setPadding(chromeInsets.left, barExtra, chromeInsets.right,
-                chromeInsets.bottom);
+                rowVisible ? 0 : chromeInsets.bottom);
+        keyRow.setPadding(chromeInsets.left, 0, chromeInsets.right,
+                rowVisible ? chromeInsets.bottom : 0);
     }
 
     private void updateRowGapPadding() {
@@ -327,6 +352,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // cmdline_bg so the bar blends with the TUI's bottom row (default =
         // terminal bg in every bundled theme)
         controlBar.applyTheme(theme.cmdlineBg(), theme.statuslineFg());
+        keyRow.applyTheme(theme.cmdlineBg(), theme.statuslineFg());
         applyTabColors();
         int appearance = 0;
         if (CmusTheme.isLight(theme.winTitleBg())) {
@@ -389,6 +415,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             }
             controlBar.setFontSize(fontSize);
+            keyRow.setFontSize(fontSize);
             titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ControlBar.firstRowOffset(fontSize)));
             return 1.0f;
@@ -475,17 +502,17 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     @Override
     public boolean readControlKey() {
-        return false;
+        return keyRow.readCtrl();
     }
 
     @Override
     public boolean readAltKey() {
-        return false;
+        return keyRow.readAlt();
     }
 
     @Override
     public boolean readShiftKey() {
-        return false;
+        return keyRow.readShift();
     }
 
     @Override
