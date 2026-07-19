@@ -197,6 +197,11 @@ public class TermService extends Service implements TerminalSessionClient {
             ipc.send("set mouse=true");
             ipc.send("set resume=true");
             ipc.send("set pl_env_vars=" + plEnvVars);
+            // an attach can resize the pty before cmus installs its WINCH
+            // handler (the signal is silently lost and the nudge from
+            // onEmulatorSet is dropped pre-connect): re-check once per
+            // connect, which is after cmus's init by definition
+            ipc.send("android-winch");
         }
 
         @Override

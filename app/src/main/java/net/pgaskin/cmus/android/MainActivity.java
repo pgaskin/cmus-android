@@ -23,6 +23,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowInsetsAnimation;
 import android.view.WindowInsetsController;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -70,7 +71,19 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private KeyRow keyRow;
     private JoyDot joyDot;
     private final TextView[] viewTabs = new TextView[VIEW_NAMES.length];
+    // bar/cutout insets and the IME inset separately, handled asymmetrically
+    // around the IME animation (one layout pass, one terminal resize, no
+    // flicker either way): a hide treats the IME as gone the moment it's
+    // requested (imeVisible false optimistically, re-synced by the insets
+    // listener) so the layout expands under the departing keyboard; a show
+    // lays out fully at animation start but *translates* the bottom chrome
+    // down by the not-yet-arrived IME height and rides it up per frame on
+    // the keyboard's edge (onProgress), the vacated band painted by the
+    // root's cmdline background — no gap, no end-of-animation jump
     private android.graphics.Insets chromeInsets = android.graphics.Insets.NONE;
+    private int imeInset;
+    private boolean imeAnimating;
+    private LinearLayout rootLayout;
     // each bar's share of the terminal's row-quantization remainder, worn as
     // padding on its terminal-adjoining edge
     private int tabExtra;
@@ -182,6 +195,10 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
         filterBox.setPadding(dp(5), dp(8), dp(5), dp(8));
         filterBox.setBackground(null); // no material underline; the bar is the chrome
+        // same text band as the tabs, not Material's 48dp min — the bar
+        // must not change height when the box swaps in
+        filterBox.setMinHeight(0);
+        filterBox.setMinimumHeight(0);
         filterBox.setHint("filter");
         // raw substring match server-side; autocorrect would fight it
         filterBox.setInputType(InputType.TYPE_CLASS_TEXT
@@ -232,9 +249,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setBaselineAligned(false);
         topBar.addView(filterBtn);
+        // wrap-content height: the tabs are the bar's intrinsic height (a
+        // match_parent weighted child would instead be forced to the
+        // largest fixed child — the icon squares — clipping the tab text)
         topBar.addView(tabBar, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         topBar.addView(filterBox, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         topBar.addView(sleepBtn);
@@ -299,7 +320,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         keyRow.setFontSize(fontSize);
         keyRow.setVisibility(View.GONE); // until the IME shows
 
-        LinearLayout root = new LinearLayout(this);
+        LinearLayout root = rootLayout = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.addView(topBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -311,11 +332,44 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             chromeInsets = insets.getInsets(WindowInsets.Type.systemBars()
-                    | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+                    | WindowInsets.Type.displayCutout());
+            imeInset = insets.getInsets(WindowInsets.Type.ime()).bottom;
             imeVisible = insets.isVisible(WindowInsets.Type.ime());
             updateKeyRow();
             applyChromePadding();
+            // a show's insets land at animation start (onPrepare has
+            // already run): start the chrome fully dropped so the first
+            // frame doesn't flash it at its final position
+            setBottomChromeRide(imeVisible && imeAnimating ? imeInset : 0);
             return WindowInsets.CONSUMED;
+        });
+        root.setWindowInsetsAnimationCallback(new WindowInsetsAnimation.Callback(
+                WindowInsetsAnimation.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+            @Override
+            public void onPrepare(WindowInsetsAnimation animation) {
+                if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) {
+                    imeAnimating = true;
+                }
+            }
+
+            @Override
+            public WindowInsets onProgress(WindowInsets insets,
+                    List<WindowInsetsAnimation> running) {
+                if (imeVisible) {
+                    // ride the keyboard's animated edge up
+                    setBottomChromeRide(Math.max(0,
+                            imeInset - insets.getInsets(WindowInsets.Type.ime()).bottom));
+                }
+                return insets;
+            }
+
+            @Override
+            public void onEnd(WindowInsetsAnimation animation) {
+                if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) {
+                    imeAnimating = false;
+                    setBottomChromeRide(0);
+                }
+            }
         });
         // the terminal shows whole rows and leaves the remainder as a gap
         // under the last one; absorb it into the bars so the chrome stays
@@ -397,6 +451,12 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
      * it, sitting directly atop it below the control bar — its keys inject
      * terminal sequences, so it hides while the filter box has focus.
      */
+    /** The show-animation ride: bottom chrome translated onto the rising keyboard's edge. */
+    private void setBottomChromeRide(int dy) {
+        controlBar.setTranslationY(dy);
+        keyRow.setTranslationY(dy);
+    }
+
     private void updateKeyRow() {
         boolean want = imeVisible && !filterBox.hasFocus();
         if (want == (keyRow.getVisibility() == View.VISIBLE)) {
@@ -414,12 +474,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         topBar.setPadding(chromeInsets.left, chromeInsets.top, chromeInsets.right, tabExtra);
         terminalWrapper.setPadding(chromeInsets.left, 0, chromeInsets.right, 0);
         // the bottom-most visible chrome wears the bottom inset (the IME
-        // height while the key row is visible)
+        // height while the IME is (still) treated as visible)
+        int bottom = imeVisible ? Math.max(chromeInsets.bottom, imeInset) : chromeInsets.bottom;
         boolean rowVisible = keyRow.getVisibility() == View.VISIBLE;
         controlBar.setPadding(chromeInsets.left, barExtra, chromeInsets.right,
-                rowVisible ? 0 : chromeInsets.bottom);
+                rowVisible ? 0 : bottom);
         keyRow.setPadding(chromeInsets.left, 0, chromeInsets.right,
-                rowVisible ? chromeInsets.bottom : 0);
+                rowVisible ? bottom : 0);
     }
 
     private void updateRowGapPadding() {
@@ -513,6 +574,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     };
 
     private void applyTheme() {
+        // the band the bottom chrome vacates while riding the keyboard up
+        // (and any transient unpainted area) reads as the bar's own bg
+        rootLayout.setBackgroundColor(theme.cmdlineBg());
         topBar.setBackgroundColor(theme.winTitleBg());
         filterBox.setTextColor(theme.winTitleFg());
         filterBox.setHintTextColor((theme.winTitleFg() & 0x00FFFFFF) | INACTIVE_TAB_ALPHA);
@@ -624,13 +688,12 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     }
 
     private void toggleSoftKeyboard() {
-        terminalView.requestFocus();
-        InputMethodManager imm = getSystemService(InputMethodManager.class);
         WindowInsets insets = terminalView.getRootWindowInsets();
         if (insets != null && insets.isVisible(WindowInsets.Type.ime())) {
-            imm.hideSoftInputFromWindow(terminalView.getWindowToken(), 0);
+            hideImeAndFocusTerminal(); // optimistic: layout lands at once
         } else {
-            imm.showSoftInput(terminalView, 0);
+            terminalView.requestFocus();
+            getSystemService(InputMethodManager.class).showSoftInput(terminalView, 0);
         }
     }
 
@@ -683,9 +746,15 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     }
 
     private void hideImeAndFocusTerminal() {
+        // optimistic (see the insets fields): the box losing focus would
+        // otherwise flash the key row in for the hide animation, and the
+        // chrome would wear the stale IME inset until the insets land
+        imeVisible = false;
         terminalView.requestFocus();
         getSystemService(InputMethodManager.class)
                 .hideSoftInputFromWindow(terminalView.getWindowToken(), 0);
+        updateKeyRow();
+        applyChromePadding();
     }
 
     /** Icon button flanking the tab bar, sized to the tab text band. */
@@ -983,6 +1052,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     @Override
     public void onEmulatorSet() {
+        // fires whenever the view resized the pty grid: nudge cmus to
+        // re-check the tty size — the kernel's SIGWINCH is lost if it beats
+        // cmus's handler install (attaching to a just-spawned session does)
+        // and racy against its select entry; the intent line both sets the
+        // resize flag and wakes the loop (dropped harmlessly when the IPC
+        // isn't up yet; the connect-time nudge covers that window)
+        sendCommand("android-winch");
     }
 
     // logging
