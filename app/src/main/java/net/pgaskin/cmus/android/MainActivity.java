@@ -1,6 +1,7 @@
 package net.pgaskin.cmus.android;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -11,6 +12,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -24,9 +26,12 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 import com.termux.view.TerminalViewClient;
+
+import java.util.Objects;
 
 public class MainActivity extends Activity implements TerminalViewClient, TermService.SessionCallback {
     private static final String TAG = "cmus";
@@ -36,6 +41,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             "tree", "sorted", "playlist", "queue", "browser", "filters", "settings"};
     /** Inactive tab text: win_title_fg at ~55% alpha, blending toward bg. */
     private static final int INACTIVE_TAB_ALPHA = 0x8C000000;
+    /** Protocol code for the right button (same in SGR and X10 encodings). */
+    private static final int MOUSE_RIGHT_BUTTON = 2;
 
     private TerminalView terminalView;
     private FrameLayout terminalWrapper;
@@ -54,6 +61,11 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private CmusIpc ipc; // the instance ipcListener is registered on
     private CmusTheme theme;
     private String viewName;
+    // resize_tree_view's inputs, mirrored so long-press can tell the panes
+    // of the tree/playlist views apart (cmus defaults until the snapshot)
+    private int treeWidthPercent = 33;
+    private int treeWidthMax = 0;
+    private AlertDialog removeDialog;
     private boolean bound;
     private boolean visible;
     private boolean crashScreen;
@@ -232,6 +244,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         super.onStop();
         visible = false;
         controlBar.dismissPopup(); // a showing popup would leak the window
+        dismissRemoveDialog(); // same, and it's stale by the time we're back
         if (service != null) {
             service.setActivityVisible(false);
         }
@@ -328,6 +341,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                     applyTheme();
                 }
                 controlBar.onOptions(o.values());
+                treeWidthPercent = parseIntOption(o.values().get("tree_width_percent"),
+                        treeWidthPercent);
+                treeWidthMax = parseIntOption(o.values().get("tree_width_max"), treeWidthMax);
             }
             // cmus is the single source of truth for the active view: taps
             // don't move the highlight until the event comes back, and
@@ -399,6 +415,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             finish();
         } else {
             crashScreen = true;
+            dismissRemoveDialog(); // there's nothing left to remove from
             Toast.makeText(this, "cmus exited (" + exitStatus + ") — tap to close",
                     Toast.LENGTH_LONG).show();
         }
@@ -490,14 +507,120 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     @Override
     public boolean onLongPress(MotionEvent event) {
-        // in mouse mode taps are clicks, so the keyboard needs another way
-        // in; interim until the stage-12 control bar gets a toggle (text
-        // selection is disabled in stage 14 anyway)
-        if (terminalView.mEmulator != null && terminalView.mEmulator.isMouseTrackingActive()) {
-            toggleSoftKeyboard();
+        // always consumed: returning true is TerminalView's only entry into
+        // text-selection mode, so this is also the no-text-selection switch
+        TerminalEmulator emu = terminalView.mEmulator;
+        if (crashScreen || emu == null || session == null || !session.isRunning()
+                || !emu.isMouseTrackingActive()) {
             return true;
         }
-        return false;
+        terminalView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        int[] cell = terminalView.getColumnAndRow(event, false);
+        // long-press = right-click: no mrb_* key is bound in the default rc,
+        // so cmus's whole reaction is moving the selection to the pressed
+        // row (switching the active pane if needed) — which is exactly what
+        // the confirm-then-remove flow needs to act on the right item
+        emu.sendMouseEvent(MOUSE_RIGHT_BUTTON, cell[0] + 1, cell[1] + 1, true);
+        emu.sendMouseEvent(MOUSE_RIGHT_BUTTON, cell[0] + 1, cell[1] + 1, false);
+        maybeConfirmRemove(emu, cell[0], cell[1]);
+        return true;
+    }
+
+    /**
+     * Offers the native remove dialog for the pressed row, but only where
+     * cmd_win_remove acts immediately: tree (either pane), sorted, the
+     * playlist view's track pane, and the queue. Everywhere else — the
+     * playlist list pane, browser, filters, settings — cmus asks its own
+     * [y/N] through yes_no_query, which blocks its main loop reading the
+     * pty until answered, so those views keep the fully native flow (the
+     * key row's del key, prompt in the cmdline).
+     */
+    private void maybeConfirmRemove(TerminalEmulator emu, int col, int row) {
+        int cols = emu.mColumns;
+        int rows = emu.mRows;
+        // list area only: row 0 is the title, the last two are the
+        // statusline and the cmdline (clicks there don't move the selection)
+        if (row < 1 || row >= rows - 2) {
+            return;
+        }
+        // in command/search mode the click can't move the list selection, so
+        // win-remove would act on a stale row; those modes are exactly when
+        // the cmdline renders a :, / or ? prefix
+        String cmdline = rowText(emu, 0, cols - 1, rows - 1);
+        if (cmdline.startsWith(":") || cmdline.startsWith("/") || cmdline.startsWith("?")) {
+            return;
+        }
+        // pane text bounds; two-pane views split at the mirrored track_win_x
+        String view = viewName;
+        int x1 = 0;
+        int x2 = cols - 1;
+        if ("tree".equals(view) || "playlist".equals(view)) {
+            int trackWinX = trackWinX(cols);
+            if (col >= trackWinX) {
+                x1 = trackWinX;
+            } else if ("playlist".equals(view)) {
+                return; // list pane: deleting a whole playlist prompts
+            } else if (col == trackWinX - 1) {
+                return; // tree separator column: cmus ignores the click
+            } else {
+                x2 = trackWinX - 2;
+            }
+        } else if (!"sorted".equals(view) && !"queue".equals(view)) {
+            return; // browser/filters/settings (or no view yet)
+        }
+        String text = rowText(emu, x1, x2, row);
+        if (text.isEmpty()) {
+            return; // past the end of the list; the selection didn't move
+        }
+        dismissRemoveDialog();
+        removeDialog = new AlertDialog.Builder(this)
+                .setTitle("Remove?")
+                .setMessage(text)
+                .setPositiveButton("Remove", (d, w) -> {
+                    // a TUI-side view switch behind the dialog would retarget
+                    // win-remove; cmus is the source of truth, so re-check
+                    if (Objects.equals(view, viewName)) {
+                        sendCommand("win-remove");
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /** Rendered text of one screen row ([x1,x2] inclusive), trimmed. */
+    private static String rowText(TerminalEmulator emu, int x1, int x2, int row) {
+        return emu.getScreen().getSelectedText(x1, row, x2, row).trim();
+    }
+
+    /**
+     * Mirror of resize_tree_view's pane split (identical float truncation):
+     * the first column of the track pane in the tree/playlist views.
+     */
+    private int trackWinX(int cols) {
+        int w = Math.max(cols, 4); // update_window_size clamps before the call
+        int treeWinW = (int) (w * ((float) treeWidthPercent / 100.0f));
+        if (treeWidthMax > 0 && treeWinW > treeWidthMax) {
+            treeWinW = treeWidthMax;
+        }
+        if (treeWinW < 3) {
+            treeWinW = 3;
+        }
+        return treeWinW + 1;
+    }
+
+    private static int parseIntOption(String value, int fallback) {
+        try {
+            return value != null ? Integer.parseInt(value) : fallback;
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private void dismissRemoveDialog() {
+        if (removeDialog != null) {
+            removeDialog.dismiss();
+            removeDialog = null;
+        }
     }
 
     @Override
