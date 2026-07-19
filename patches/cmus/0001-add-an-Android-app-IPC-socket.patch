@@ -1,4 +1,4 @@
-From 8ae047f02371a66ed01345544e6d61237bd96efb Mon Sep 17 00:00:00 2001
+From f2b4c690b335bd40667da357f78febfe659e3aa1 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..5142918
+index 0000000..a81dc52
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,595 @@
+@@ -0,0 +1,620 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -68,6 +68,14 @@ index 0000000..5142918
 + *   {"type":"view","view":"tree|sorted|playlist|queue|browser|filters|settings"}
 + *       the active view (the 1-7 keys / `view` command); on connect and
 + *       on change
++ *   {"type":"filter","filter":"..."}
++ *       the library live filter (the `live-filter` command: plain text =
++ *       substring match over all tags, `~`-style expressions per
++ *       expr_is_short; narrows the tree/sorted views only); on connect
++ *       and on change, the field omitted when unset. Changes don't only
++ *       come from commands — the resume file restores it at startup and
++ *       lib_set_filter (filters-view activation) silently clears it, so
++ *       this is diffed against the actual lib state every flush.
 + *   {"type":"options","options":{"name":"value",...}}
 + *       every cmus option as the string its getter returns (includes all
 + *       color_*); on connect and after any executed command, coalesced
@@ -153,6 +161,11 @@ index 0000000..5142918
 +static int android_vol_l = -2;
 +static int android_vol_r = -2;
 +
++/* last live filter sent; lib_live_filter has writers that bypass any
++ * command (resume restore, lib_set_filter's clear), so change detection
++ * is a diff in the flush, not a hook */
++static char *android_live_filter;
++
 +/* inbound partial-line buffer, persists across android_process calls */
 +static char android_rbuf[4096];
 +static int android_rbuf_pos;
@@ -213,6 +226,8 @@ index 0000000..5142918
 +		free(android_socket_path);
 +		android_socket_path = NULL;
 +	}
++	free(android_live_filter);
++	android_live_filter = NULL;
 +}
 +
 +void android_accept(void)
@@ -603,6 +618,16 @@ index 0000000..5142918
 +	if (android_dirty_all || android_dirty_view)
 +		gbuf_addf(&buf, "{\"type\":\"view\",\"view\":\"%s\"}\n",
 +				view_names[cur_view]);
++	if (android_dirty_all || strcmp0(lib_live_filter, android_live_filter)) {
++		gbuf_add_str(&buf, "{\"type\":\"filter\"");
++		if (lib_live_filter) {
++			gbuf_add_str(&buf, ",\"filter\":");
++			android_json_str(&buf, lib_live_filter);
++		}
++		gbuf_add_str(&buf, "}\n");
++		free(android_live_filter);
++		android_live_filter = lib_live_filter ? xstrdup(lib_live_filter) : NULL;
++	}
 +	if (android_dirty_all || android_dirty_options)
 +		android_options_event(&buf);
 +
