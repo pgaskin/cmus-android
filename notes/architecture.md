@@ -196,9 +196,9 @@ full plan and rationale; this file describes what currently exists.
   (targetSdk 36: setStatusBarColor is a no-op): the tab bar consumes
   top+sides so its background (win_title_bg) paints the status-bar
   strip; the wrapper consumes sides only; the control bar consumes
-  sides+bottom+ime so its background (statusline_bg) paints the nav
-  strip; icon appearance via setSystemBarsAppearance by the adjacent
-  bar's bg luminance. A root layout listener additionally absorbs the
+  sides+bottom+ime so its background (cmdline_bg — it adjoins the
+  cmdline row) paints the nav strip; icon appearance via
+  setSystemBarsAppearance by the adjacent bar's bg luminance. A root layout listener additionally absorbs the
   terminal's row-quantization remainder
   (`(wrapperH − firstRowOffset) % lineSpacing`, the TerminalRenderer
   formulas mirrored in ControlBar statics) as padding split between
@@ -226,7 +226,7 @@ full plan and rationale; this file describes what currently exists.
   backgrounded: stays in recents for the respawn.
 - `ControlBar` — compact bottom control bar (play/pause · repeat ·
   shuffle · seek · volume · add-to-queue · keyboard toggle), Material
-  Symbols icons, statusline colors, sized 3 terminal rows (icons 2)
+  Symbols icons, cmdline bg + statusline fg, sized 3 terminal rows (icons 2)
   from the same Paint metrics TerminalRenderer uses, tracking
   pinch-zoom. Pure mirror of echoed cmus state: repeat/tristate
   shuffle (albums = badge icon)/softvol from Options (TUI toggles

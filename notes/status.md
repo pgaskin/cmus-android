@@ -5,7 +5,7 @@ pick up where things left off.
 
 ## 2026-07-18 — Stage 12: chrome B (done)
 
-- Per [plans/12-chrome-b.md](plans/12-chrome-b.md) with four live tweaks
+- Per [plans/12-chrome-b.md](plans/12-chrome-b.md) with five live tweaks
   from Patrick: (1) chrome absorbs the terminal's row-quantization
   remainder — a root layout listener computes
   `(wrapperH − firstRowOffset) % lineSpacing` (mirroring TerminalView's
@@ -30,6 +30,9 @@ pick up where things left off.
   player_info.pos is int; event *cadence* still keys off the
   whole-second position_changed flag (≤1/s). 0001 amended via fixup +
   `rebase --autosquash base`, regen clean, patch.sh check green.
+  (5) The bar's background is **cmdline_bg**, not the plan's
+  statusline_bg — it adjoins the cmdline row, and statusline_bg reads
+  as a band there; icons/sliders stay statusline_fg.
 - ControlBar (horizontal LinearLayout beside a CmusSlider custom view):
   play/pause · repeat · shuffle · seek (weight 1) · volume · add-q ·
   keyboard, statusline colors, sized 3 terminal rows (icons 2) tracking
@@ -42,8 +45,8 @@ pick up where things left off.
   Volume button GONE unless softvol=true; tap opens a focusable
   PopupWindow above it with a vertical CmusSlider (drag sends `vol n`
   per integer change; left channel shown). The bar now takes the
-  bottom+ime insets, its statuslineBg paints the nav strip, and nav
-  icon appearance follows statuslineBg instead of winBg.
+  bottom+ime insets, its cmdlineBg paints the nav strip, and nav
+  icon appearance follows cmdlineBg instead of winBg.
 - Verified on device (Pixel 8, wifi adb + debug receiver; Patrick
   hands-on throughout for feel): play/pause round-trips from paused
   and playing with the icon following the Status echo; repeat+shuffle

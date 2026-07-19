@@ -312,14 +312,16 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private void applyTheme() {
         tabBar.setBackgroundColor(theme.winTitleBg());
         terminalWrapper.setBackgroundColor(theme.winBg());
-        controlBar.applyTheme(theme.statuslineBg(), theme.statuslineFg());
+        // cmdline_bg so the bar blends with the TUI's bottom row (default =
+        // terminal bg in every bundled theme)
+        controlBar.applyTheme(theme.cmdlineBg(), theme.statuslineFg());
         applyTabColors();
         int appearance = 0;
         if (CmusTheme.isLight(theme.winTitleBg())) {
             appearance |= WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS;
         }
         // the control bar's background paints the nav-bar strip now
-        if (CmusTheme.isLight(theme.statuslineBg())) {
+        if (CmusTheme.isLight(theme.cmdlineBg())) {
             appearance |= WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
         }
         getWindow().getInsetsController().setSystemBarsAppearance(appearance,
