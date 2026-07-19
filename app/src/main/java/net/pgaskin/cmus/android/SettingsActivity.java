@@ -71,7 +71,7 @@ public class SettingsActivity extends Activity {
 
     private static final long SAVE_TIMEOUT_MS = 5_000;
 
-    private TermService service;
+    private CmusService service;
     private CmusIpc ipc;
     private boolean bound;
     private boolean started;
@@ -83,7 +83,7 @@ public class SettingsActivity extends Activity {
     private final ServiceConnection connection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder binder) {
-            service = ((TermService.LocalBinder) binder).getService();
+            service = ((CmusService.LocalBinder) binder).getService();
             if (started) {
                 service.setActivityVisible(true); // the +1 onStart skipped
             }
@@ -136,7 +136,7 @@ public class SettingsActivity extends Activity {
         buildDataSection();
         buildDebugSection();
 
-        bound = bindService(new Intent(this, TermService.class), connection,
+        bound = bindService(new Intent(this, CmusService.class), connection,
                 Context.BIND_AUTO_CREATE);
     }
 
@@ -215,7 +215,7 @@ public class SettingsActivity extends Activity {
     }
 
     private SharedPreferences appPrefs() {
-        return getSharedPreferences(TermService.PREFS, MODE_PRIVATE);
+        return getSharedPreferences(CmusService.PREFS, MODE_PRIVATE);
     }
 
     // sections
@@ -238,19 +238,19 @@ public class SettingsActivity extends Activity {
 
         switchPrefRow("Show top bar", "The view tabs, filter, and sleep timer. When "
                         + "hidden, the sleep timer and settings are shown as floating buttons.",
-                TermService.PREF_SHOW_TOP_BAR, true, null);
+                CmusService.PREF_SHOW_TOP_BAR, true, null);
         switchPrefRow("Show bottom bar", "Playback controls and seek bar",
-                TermService.PREF_SHOW_CONTROL_BAR, true, () -> {
+                CmusService.PREF_SHOW_CONTROL_BAR, true, () -> {
                     if (service != null) {
                         service.applyProgressBar(); // auto derives from this
                     }
                 });
         switchPrefRow("Show joystick", "The floating navigation dot",
-                TermService.PREF_SHOW_JOYSTICK, true, null);
+                CmusService.PREF_SHOW_JOYSTICK, true, null);
         switchPrefRow("Direct touch input",
                 "Tap and long-press act on the item you touch. When off, touch summons "
                         + "the joystick under your finger and long-press removes the selection.",
-                TermService.PREF_DIRECT_TOUCH, true, () -> {
+                CmusService.PREF_DIRECT_TOUCH, true, () -> {
                     if (service != null) {
                         service.applyMouse();
                     }
@@ -260,17 +260,17 @@ public class SettingsActivity extends Activity {
         int minFont = dp(5), maxFont = dp(36);
         seekRow("Zoom level", "Terminal font size. Pinch zooming changes this too.",
                 minFont, maxFont,
-                () -> clamp(appPrefs().getInt(TermService.PREF_FONT, dp(13)), minFont, maxFont),
-                v -> appPrefs().edit().putInt(TermService.PREF_FONT, v).apply(),
+                () -> clamp(appPrefs().getInt(CmusService.PREF_FONT, dp(13)), minFont, maxFont),
+                v -> appPrefs().edit().putInt(CmusService.PREF_FONT, v).apply(),
                 v -> String.valueOf(v));
 
         seekRow("Material You hue rotation",
                 "How far the status and control bar accent is rotated away from the "
                         + "wallpaper color. Only used while the Material You theme is active.",
                 0, 359,
-                () -> appPrefs().getInt(TermService.PREF_HUE_ROTATION, 180),
+                () -> appPrefs().getInt(CmusService.PREF_HUE_ROTATION, 180),
                 v -> {
-                    appPrefs().edit().putInt(TermService.PREF_HUE_ROTATION, v).apply();
+                    appPrefs().edit().putInt(CmusService.PREF_HUE_ROTATION, v).apply();
                     if (service != null) {
                         service.materialSettingChanged(); // live re-push
                     }
@@ -281,12 +281,12 @@ public class SettingsActivity extends Activity {
         String[] idleLabels = {"Off", "5 minutes", "15 minutes", "30 minutes", "60 minutes"};
         TextView idleSubtitle = new TextView(this);
         addRow(row("Idle quit", idleSubtitle, null, () -> {
-            int cur = indexOf(idleChoices, appPrefs().getInt(TermService.PREF_IDLE_QUIT_MIN, 15));
+            int cur = indexOf(idleChoices, appPrefs().getInt(CmusService.PREF_IDLE_QUIT_MIN, 15));
             new AlertDialog.Builder(this)
                     .setTitle("Idle quit")
                     .setSingleChoiceItems(idleLabels, cur, (d, which) -> {
                         appPrefs().edit()
-                                .putInt(TermService.PREF_IDLE_QUIT_MIN, idleChoices[which]).apply();
+                                .putInt(CmusService.PREF_IDLE_QUIT_MIN, idleChoices[which]).apply();
                         if (service != null) {
                             service.idleQuitSettingChanged();
                         }
@@ -296,7 +296,7 @@ public class SettingsActivity extends Activity {
                     .show();
         }));
         refreshers.add(() -> {
-            int min = appPrefs().getInt(TermService.PREF_IDLE_QUIT_MIN, 15);
+            int min = appPrefs().getInt(CmusService.PREF_IDLE_QUIT_MIN, 15);
             idleSubtitle.setText(min == 0 ? "Off. cmus keeps running in the background."
                     : "Quit cmus after " + min + " minutes paused in the background. "
                             + "Everything is saved first.");
@@ -304,25 +304,25 @@ public class SettingsActivity extends Activity {
 
         switchPrefRow("Always resume paused",
                 "Start paused at the saved position even if cmus was playing when it quit",
-                TermService.PREF_RESUME_PAUSED, false, null);
+                CmusService.PREF_RESUME_PAUSED, false, null);
 
         TextView sleepSubtitle = new TextView(this);
         addRow(row("Sleep timer action", sleepSubtitle, null, () -> {
-            boolean exit = appPrefs().getBoolean(TermService.PREF_SLEEP_EXIT, false);
+            boolean exit = appPrefs().getBoolean(CmusService.PREF_SLEEP_EXIT, false);
             new AlertDialog.Builder(this)
                     .setTitle("Sleep timer action")
                     .setSingleChoiceItems(
                             new String[]{"Pause playback", "Exit the app"}, exit ? 1 : 0,
                             (d, which) -> {
                                 appPrefs().edit()
-                                        .putBoolean(TermService.PREF_SLEEP_EXIT, which == 1).apply();
+                                        .putBoolean(CmusService.PREF_SLEEP_EXIT, which == 1).apply();
                                 refreshAll();
                                 d.dismiss();
                             })
                     .show();
         }));
         refreshers.add(() -> sleepSubtitle.setText(
-                appPrefs().getBoolean(TermService.PREF_SLEEP_EXIT, false)
+                appPrefs().getBoolean(CmusService.PREF_SLEEP_EXIT, false)
                         ? "Exit the app entirely instead of just pausing"
                         : "Pause playback"));
     }
@@ -509,14 +509,14 @@ public class SettingsActivity extends Activity {
                 + ".CmusDebugReceiver -e cmd 'player-pause'\"");
         Switch sw = switchPrefRow("Debug command receiver",
                 "Let adb (root) send cmus commands through the app",
-                TermService.PREF_DEBUG_RECEIVER,
+                CmusService.PREF_DEBUG_RECEIVER,
                 (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0, null);
         list.addView(example);
         refreshers.add(() -> example.setVisibility(sw.isChecked() ? View.VISIBLE : View.GONE));
 
         switchPrefRow("IPC event logging",
                 "Log every cmus IPC event at info level with the logcat tag cmus",
-                TermService.PREF_IPC_LOG,
+                CmusService.PREF_IPC_LOG,
                 (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0, () -> {
                     if (service != null) {
                         service.ipcLogSettingChanged();
@@ -570,7 +570,7 @@ public class SettingsActivity extends Activity {
             return;
         }
         // ensure started semantics for the respawn's startForeground
-        startForegroundService(new Intent(this, TermService.class));
+        startForegroundService(new Intent(this, CmusService.class));
         Toast.makeText(this, "Restarting cmus…", Toast.LENGTH_SHORT).show();
         service.resetData(fileOp, () -> {
             attachIpc(); // fresh CmusIpc after the respawn

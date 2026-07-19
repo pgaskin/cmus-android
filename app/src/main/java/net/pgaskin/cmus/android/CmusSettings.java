@@ -115,8 +115,8 @@ final class CmusSettings {
         if (!PROGRESS_AUTO.equals(pref)) {
             return pref;
         }
-        boolean controlBar = context.getSharedPreferences(TermService.PREFS, Context.MODE_PRIVATE)
-                .getBoolean(TermService.PREF_SHOW_CONTROL_BAR, true);
+        boolean controlBar = context.getSharedPreferences(CmusService.PREFS, Context.MODE_PRIVATE)
+                .getBoolean(CmusService.PREF_SHOW_CONTROL_BAR, true);
         return controlBar ? "disabled" : "line";
     }
 }

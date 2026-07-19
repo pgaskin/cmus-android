@@ -11,9 +11,9 @@ import android.view.KeyEvent;
  * (idle-quit or any other death while backgrounded): the system routes keys
  * to the live session while one exists and falls back to this receiver
  * ({@link android.media.session.MediaSession#setMediaButtonBroadcastReceiver}),
- * which restarts the FGS with {@link TermService#ACTION_MEDIA_PLAY} — forced
+ * which restarts the FGS with {@link CmusService#ACTION_MEDIA_PLAY} — forced
  * resume=true makes playback continue from the saved position. A foreground
- * TUI quit flips {@link TermService#PREF_RESURRECT} off, so an
+ * TUI quit flips {@link CmusService#PREF_RESURRECT} off, so an
  * explicitly-quit app never comes back from a stray headset reconnect (the
  * system-side registration itself can't be cleared: null NPEs server-side,
  * and older archived sessions' registrations linger anyway).
@@ -33,14 +33,14 @@ public class MediaButtonReceiver extends BroadcastReceiver {
         switch (event.getKeyCode()) {
             case KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                     KeyEvent.KEYCODE_HEADSETHOOK -> {
-                if (!context.getSharedPreferences(TermService.PREFS, Context.MODE_PRIVATE)
-                        .getBoolean(TermService.PREF_RESURRECT, false)) {
+                if (!context.getSharedPreferences(CmusService.PREFS, Context.MODE_PRIVATE)
+                        .getBoolean(CmusService.PREF_RESURRECT, false)) {
                     Log.d(TAG, "media button ignored, resurrect disabled (foreground quit)");
                     return;
                 }
                 Log.i(TAG, "media button resurrect: " + event.getKeyCode());
-                context.startForegroundService(new Intent(context, TermService.class)
-                        .setAction(TermService.ACTION_MEDIA_PLAY));
+                context.startForegroundService(new Intent(context, CmusService.class)
+                        .setAction(CmusService.ACTION_MEDIA_PLAY));
             }
             default -> {
                 // pause/stop/next/prev with no cmus running: nothing to do

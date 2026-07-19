@@ -161,7 +161,7 @@ full plan and rationale; this file describes what currently exists.
 - `net.pgaskin.cmus.android`, minSdk 34 (Android 14), target/compileSdk 36.
 - Framework APIs + the termux terminal libs; androidx allowed where it
   makes sense (currently only androidx.annotation, transitively).
-- `TermService` — mediaPlayback foreground service owning the cmus
+- `CmusService` — mediaPlayback foreground service owning the cmus
   `TerminalSession`: runs `CmusFiles.prepare`, spawns
   `nativeLibraryDir/libcmus.so` in a pty (env: HOME/TMPDIR/TERM/
   TERMINFO/CMUS_{HOME,LIB_DIR,DATA_DIR} pointing into the
@@ -230,7 +230,7 @@ full plan and rationale; this file describes what currently exists.
   (registered as a second IPC listener, closed the same way); the
   FGS notification is MediaControl's media notification. Owns a
   `StateSaver` the same way (third listener, per-CmusIpc lifecycle);
-  TermService.saveState (the export/pre-reset bounded save) delegates
+  CmusService.saveState (the export/pre-reset bounded save) delegates
   into its FIFO ack queue. Session
   exit → stopSelf + finish the activity.
 - `CmusIpc` — client for the android.c socket (the protocol comment
@@ -349,7 +349,7 @@ full plan and rationale; this file describes what currently exists.
   from the popover. Hand-rolled rows; the cmus rows render only from
   the replayed/live Options echoes and taps only send `set` (bad
   input snaps back on the next echo); app rows write prefs applied by
-  MainActivity.onStart on return. Binds TermService with its own IPC
+  MainActivity.onStart on return. Binds CmusService with its own IPC
   listener (re-attached after resets — respawn = fresh CmusIpc) and
   reports visibility into the service's count. Data section
   (troubleshooting, file-level only): zip export (`android-save` →
@@ -358,7 +358,7 @@ full plan and rationale; this file describes what currently exists.
   restore replaces, never merges; zip-slip guarded) / delete
   library|playlists|autosave|everything / reset app prefs (clears
   term + cmus_opts; RESULT_RESET_PREFS → MainActivity recreates),
-  all through TermService.resetData = kill→mutate→respawn (SIGKILL
+  all through CmusService.resetData = kill→mutate→respawn (SIGKILL
   deliberately — no exit save can rewrite a delete, a wedged cmus
   can't block; file op on a worker thread; the respawn keeps the
   FGS), the partial deletes behind a default-on "save current state
@@ -561,7 +561,7 @@ full plan and rationale; this file describes what currently exists.
   and pinch-zoom is unavailable (settings Zoom slider instead); floatBar
   stays above the stick, so the hidden-top-bar buttons still work.
   MainActivity.applyBarVisibility swaps the mode + layout params from the
-  pref on attach/onStart, and TermService.applyMouse pushes cmus `mouse`
+  pref on attach/onStart, and CmusService.applyMouse pushes cmus `mouse`
   live when the settings switch flips.
 - Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout)
   as the pre-first-Options fallback; live chrome colors come from

@@ -35,7 +35,7 @@
             android:parentActivityName=".MainActivity" />
 
         <service
-            android:name=".TermService"
+            android:name=".CmusService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 

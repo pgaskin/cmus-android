@@ -46,7 +46,7 @@ import java.util.TreeSet;
  * FIFO against the request queue (one socket, cmus replies in order), so
  * {@link #saveNow}'s bounded waits (zip export, pre-reset saves) can never
  * be satisfied by a stray periodic ack. Everything runs on the main
- * thread; the owning TermService closes this with the CmusIpc instance it
+ * thread; the owning CmusService closes this with the CmusIpc instance it
  * was created for (a respawn gets a fresh pair, and cmus re-announces
  * still-dirty kinds in the connect snapshot, so nothing here needs to
  * survive).

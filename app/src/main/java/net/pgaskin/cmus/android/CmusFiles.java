@@ -29,7 +29,7 @@ import java.nio.file.Files;
  *                                             so zip exports never carry it)
  * </pre>
  *
- * Idempotent; called by {@link TermService} before each spawn.
+ * Idempotent; called by {@link CmusService} before each spawn.
  */
 final class CmusFiles {
     /** APK asset tree name → extraction dir name under the dotfolder. */

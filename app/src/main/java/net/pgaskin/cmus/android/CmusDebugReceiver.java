@@ -22,14 +22,14 @@ public class CmusDebugReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (!context.getSharedPreferences(TermService.PREFS, Context.MODE_PRIVATE)
-                .getBoolean(TermService.PREF_DEBUG_RECEIVER,
+        if (!context.getSharedPreferences(CmusService.PREFS, Context.MODE_PRIVATE)
+                .getBoolean(CmusService.PREF_DEBUG_RECEIVER,
                         (context.getApplicationInfo().flags
                                 & ApplicationInfo.FLAG_DEBUGGABLE) != 0)) {
             return;
         }
         String cmd = intent.getStringExtra("cmd");
-        CmusIpc ipc = TermService.debugIpc();
+        CmusIpc ipc = CmusService.debugIpc();
         if (cmd == null || ipc == null) {
             Log.w(TAG, "debug command ignored (cmd=" + cmd + ", service running=" + (ipc != null) + ")");
             return;

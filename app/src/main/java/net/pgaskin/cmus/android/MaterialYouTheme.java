@@ -18,7 +18,7 @@ import java.util.List;
  * The role→entry assignment is stable ({@code BASE_INDEX + i}), so the
  * command burst is a constant: once cmus's autosave carries the indexes, a
  * light/dark toggle or wallpaper change is a palette re-push with no cmus
- * traffic at all — only the ARGB behind the entries moves. TermService owns
+ * traffic at all — only the ARGB behind the entries moves. CmusService owns
  * the push (it owns the emulator); {@link CmusTheme} resolves chrome colors
  * through the same live palette.
  */
@@ -86,8 +86,8 @@ final class MaterialYouTheme {
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         // the control-color rotation is a setting (stage 18); 180 = the
         // original complement
-        int rotation = context.getSharedPreferences(TermService.PREFS, Context.MODE_PRIVATE)
-                .getInt(TermService.PREF_HUE_ROTATION, 180);
+        int rotation = context.getSharedPreferences(CmusService.PREFS, Context.MODE_PRIVATE)
+                .getInt(CmusService.PREF_HUE_ROTATION, 180);
         if (night) {
             int bg = mix(c(context, android.R.color.system_neutral1_900), 0xFF000000);
             int band = c(context, android.R.color.system_neutral1_800); // bottom title, active sel

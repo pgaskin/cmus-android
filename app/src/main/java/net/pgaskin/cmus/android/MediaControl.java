@@ -69,7 +69,7 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
             "album.jpg", "album.jpeg", "album.png",
     };
 
-    private final TermService service;
+    private final CmusService service;
     private final CmusIpc ipc;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final MediaSession session;
@@ -97,7 +97,7 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
     private String artDirPath;
     private Bitmap artDirBitmap;
 
-    public MediaControl(TermService service, CmusIpc ipc) {
+    public MediaControl(CmusService service, CmusIpc ipc) {
         this.service = service;
         this.ipc = ipc;
         activityIntent = PendingIntent.getActivity(service, 0,
@@ -118,7 +118,7 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
         // media-key fallback once the session is gone: resurrects cmus after
         // an idle-quit. The registration is never cleared — passing null
         // here NPEs server-side (MediaButtonReceiverHolder.create, Android
-        // 16) — so foreground quits are gated by TermService.PREF_RESURRECT
+        // 16) — so foreground quits are gated by CmusService.PREF_RESURRECT
         // in the receiver instead
         session.setMediaButtonBroadcastReceiver(
                 new ComponentName(service, MediaButtonReceiver.class));
@@ -130,13 +130,13 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
     }
 
     /**
-     * The current media notification; TermService uses it for
+     * The current media notification; CmusService uses it for
      * startForeground, updates go through notify() on status/metadata/art
      * changes (never per-position — the system renders controls, art, and
      * the seekbar from the session on its own).
      */
     public Notification buildNotification() {
-        Notification.Builder nb = new Notification.Builder(service, TermService.CHANNEL_ID)
+        Notification.Builder nb = new Notification.Builder(service, CmusService.CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setStyle(new Notification.MediaStyle()
                         .setMediaSession(session.getSessionToken()))
@@ -216,14 +216,14 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
                     }
                     art = bitmap;
                     updateMetadata();
-                    notificationManager.notify(TermService.NOTIFICATION_ID, buildNotification());
+                    notificationManager.notify(CmusService.NOTIFICATION_ID, buildNotification());
                 });
             });
         }
         updatePlaybackState(s.position() < 0
                 ? PlaybackState.PLAYBACK_POSITION_UNKNOWN : (long) (s.position() * 1000));
         updateMetadata();
-        notificationManager.notify(TermService.NOTIFICATION_ID, buildNotification());
+        notificationManager.notify(CmusService.NOTIFICATION_ID, buildNotification());
     }
 
     private void onPosition(CmusIpc.Position p) {

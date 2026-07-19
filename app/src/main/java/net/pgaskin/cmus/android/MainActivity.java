@@ -55,7 +55,7 @@ import java.util.TreeSet;
 import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
 
-public class MainActivity extends Activity implements TerminalViewClient, TermService.SessionCallback {
+public class MainActivity extends Activity implements TerminalViewClient, CmusService.SessionCallback {
     private static final String TAG = "cmus";
 
     /** Tab order = the 1-7 keys; names are what the `view` command takes. */
@@ -70,7 +70,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     /** requestPermissions code for the refresh action (0 = notifications). */
     private static final int REQUEST_REFRESH = 1;
     private static final int REQUEST_SETTINGS = 2;
-    private static final String PREF_FONT = TermService.PREF_FONT; // settings zoom slider shares it
+    private static final String PREF_FONT = CmusService.PREF_FONT; // settings zoom slider shares it
     /** Last colorscheme name echoed by cmus (the selector highlight). */
     private static final String PREF_COLORSCHEME = "colorscheme";
     /** Selected terminal font: an asset path from FONT_ASSETS, absent = system. */
@@ -148,7 +148,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     // padding on its terminal-adjoining edge
     private int tabExtra;
     private int barExtra;
-    private TermService service;
+    private CmusService service;
     private TerminalSession session;
     private CmusIpc ipc; // the instance ipcListener is registered on
     private CmusTheme theme;
@@ -189,7 +189,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private final ServiceConnection connection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, android.os.IBinder binder) {
-            service = ((TermService.LocalBinder) binder).getService();
+            service = ((CmusService.LocalBinder) binder).getService();
             service.setSessionCallback(MainActivity.this);
             // binding is async: this is our +1 for the visibility count
             // (onStart skipped it while service was null); a matched -1
@@ -223,14 +223,14 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // reopening at a reset font would immediately resize it (layout
         // shift + a cmus redraw); keep the pinch-zoomed size instead
         fontSize = Math.max(minFontSize, Math.min(
-                getSharedPreferences(TermService.PREFS, MODE_PRIVATE).getInt(PREF_FONT, dp(13)),
+                getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).getInt(PREF_FONT, dp(13)),
                 maxFontSize));
-        colorschemeName = getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
+        colorschemeName = getSharedPreferences(CmusService.PREFS, MODE_PRIVATE)
                 .getString(PREF_COLORSCHEME, null);
         // restore the font before anything measures: the saved headless pty
         // grid was sized under it (the same reasoning as the font size).
         // Iosevka is the default (Patrick); "" is the explicit System pick
-        String savedFont = getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
+        String savedFont = getSharedPreferences(CmusService.PREFS, MODE_PRIVATE)
                 .getString(PREF_TYPEFACE, "fonts/Iosevka-Regular.ttf");
         fontAsset = savedFont.isEmpty() ? null : savedFont;
         activeTypeface = loadTypeface(fontAsset);
@@ -416,7 +416,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                     return;
                 }
                 String sfx = joyKeySuffix();
-                getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
+                getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).edit()
                         .putFloat(PREF_JOY_X + sfx, joyCx / w)
                         .putFloat(PREF_JOY_Y + sfx, joyCy / h)
                         .apply();
@@ -554,7 +554,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 0);
         }
 
-        Intent intent = new Intent(this, TermService.class);
+        Intent intent = new Intent(this, CmusService.class);
         startForegroundService(intent);
         bound = bindService(intent, connection, Context.BIND_AUTO_CREATE);
     }
@@ -567,7 +567,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // apply here; no-ops when nothing moved
         applyBarVisibility();
         applyFontSize(Math.max(minFontSize, Math.min(
-                getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
+                getSharedPreferences(CmusService.PREFS, MODE_PRIVATE)
                         .getInt(PREF_FONT, dp(13)), maxFontSize)));
         if (service != null) {
             service.setActivityVisible(true);
@@ -576,7 +576,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             // the fresh MediaControl notification), spawn, re-attach; forced
             // resume=true makes the round trip invisible
             if (!crashScreen && (session == null || !session.isRunning())) {
-                startForegroundService(new Intent(this, TermService.class));
+                startForegroundService(new Intent(this, CmusService.class));
                 session = service.getSession();
                 terminalView.attachSession(session);
                 attachIpc(); // respawn = a fresh CmusIpc instance
@@ -660,7 +660,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         if (w == 0 || h == 0) {
             return;
         }
-        SharedPreferences prefs = getSharedPreferences(TermService.PREFS, MODE_PRIVATE);
+        SharedPreferences prefs = getSharedPreferences(CmusService.PREFS, MODE_PRIVATE);
         String sfx = joyKeySuffix();
         float fx = prefs.getFloat(PREF_JOY_X + sfx, Float.NaN);
         float fy = prefs.getFloat(PREF_JOY_Y + sfx, Float.NaN);
@@ -778,11 +778,11 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
      * moment MainActivity returns to the front.
      */
     private void applyBarVisibility() {
-        SharedPreferences prefs = getSharedPreferences(TermService.PREFS, MODE_PRIVATE);
-        topBarShown = prefs.getBoolean(TermService.PREF_SHOW_TOP_BAR, true);
-        controlBarShown = prefs.getBoolean(TermService.PREF_SHOW_CONTROL_BAR, true);
-        joyShown = prefs.getBoolean(TermService.PREF_SHOW_JOYSTICK, true);
-        directTouch = prefs.getBoolean(TermService.PREF_DIRECT_TOUCH, true);
+        SharedPreferences prefs = getSharedPreferences(CmusService.PREFS, MODE_PRIVATE);
+        topBarShown = prefs.getBoolean(CmusService.PREF_SHOW_TOP_BAR, true);
+        controlBarShown = prefs.getBoolean(CmusService.PREF_SHOW_CONTROL_BAR, true);
+        joyShown = prefs.getBoolean(CmusService.PREF_SHOW_JOYSTICK, true);
+        directTouch = prefs.getBoolean(CmusService.PREF_DIRECT_TOUCH, true);
         if (!topBarShown && filterBoxOpen) {
             closeFilterBox(false); // the box lives in the bar; filter kept
         }
@@ -973,7 +973,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 ? session.getEmulator().mColors.mCurrentColors : null;
     }
 
-    // TermService.SessionCallback
+    // CmusService.SessionCallback
 
     @Override
     public void onTextChanged() {
@@ -1055,7 +1055,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ControlBar.firstRowOffset(fontSize, activeTypeface)));
-        getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
+        getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).edit()
                 .putInt(PREF_FONT, fontSize).apply();
     }
 
@@ -1065,7 +1065,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             finish(); // frozen crash screen (back only backgrounds the task)
             return;
         }
-        // when cmus has mouse tracking on (TermService forces it), the tap
+        // when cmus has mouse tracking on (CmusService forces it), the tap
         // was already sent as a click by TerminalView — same gate as termux
         if (terminalView.mEmulator != null && terminalView.mEmulator.isMouseTrackingActive()) {
             return;
@@ -1156,7 +1156,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     /** A successful `colorscheme` echo, from either side. */
     private void onColorscheme(String name) {
         colorschemeName = name;
-        getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
+        getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).edit()
                 .putString(PREF_COLORSCHEME, name).apply();
         if (selectorRefresh != null) {
             selectorRefresh.run();
@@ -1177,8 +1177,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         menu.getMenu().add("Update cache");
         // the control bar owns the keyboard toggle; when it's hidden the
         // menu is the way in (stage 18)
-        if (!getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
-                .getBoolean(TermService.PREF_SHOW_CONTROL_BAR, true)) {
+        if (!getSharedPreferences(CmusService.PREFS, MODE_PRIVATE)
+                .getBoolean(CmusService.PREF_SHOW_CONTROL_BAR, true)) {
             menu.getMenu().add("Keyboard");
         }
         menu.getMenu().add("Settings");
@@ -1314,7 +1314,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         fontAsset = asset;
         activeTypeface = loadTypeface(asset);
         // "" = System: an absent key means the Iosevka default, not System
-        getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
+        getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).edit()
                 .putString(PREF_TYPEFACE, asset == null ? "" : asset).apply();
         terminalView.setTypeface(activeTypeface);
         for (TextView tab : viewTabs) {

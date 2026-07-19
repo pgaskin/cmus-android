@@ -32,7 +32,7 @@ import java.util.List;
  * one stable {@link TerminalSessionClient}; the activity registers a
  * {@link SessionCallback} to receive screen updates while attached.
  */
-public class TermService extends Service implements TerminalSessionClient {
+public class CmusService extends Service implements TerminalSessionClient {
     private static final String TAG = "cmus";
     static final String CHANNEL_ID = "term";
     static final int NOTIFICATION_ID = 1;
@@ -90,8 +90,8 @@ public class TermService extends Service implements TerminalSessionClient {
     }
 
     public final class LocalBinder extends Binder {
-        public TermService getService() {
-            return TermService.this;
+        public CmusService getService() {
+            return CmusService.this;
         }
     }
 
@@ -102,7 +102,7 @@ public class TermService extends Service implements TerminalSessionClient {
     /** Re-poll cadence while a worker job defers an idle-quit. */
     private static final long IDLE_QUIT_JOBS_POLL_MS = 30 * 1000;
 
-    private static TermService instance; // for CmusDebugReceiver only
+    private static CmusService instance; // for CmusDebugReceiver only
 
     private final IBinder binder = new LocalBinder();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -241,7 +241,7 @@ public class TermService extends Service implements TerminalSessionClient {
 
     /** For {@link CmusDebugReceiver}; null unless the service is running. */
     static CmusIpc debugIpc() {
-        TermService service = instance;
+        CmusService service = instance;
         return service != null ? service.ipc : null;
     }
 
@@ -282,7 +282,7 @@ public class TermService extends Service implements TerminalSessionClient {
             }
             // the app-managed cmus settings (stage 18): prefs override
             // whatever autosave restored; the echoes sync changes back
-            CmusSettings.forceAll(TermService.this, ipc);
+            CmusSettings.forceAll(CmusService.this, ipc);
         }
 
         @Override
@@ -363,7 +363,7 @@ public class TermService extends Service implements TerminalSessionClient {
                 case CmusIpc.Options o -> {
                     // echo → prefs: the sync-back half of the stage-18
                     // managed settings (TUI :set changes persist too)
-                    CmusSettings.syncBack(TermService.this, o.values());
+                    CmusSettings.syncBack(CmusService.this, o.values());
                     logIpc("ipc options n=" + o.values().size()
                             + " mouse=" + o.values().get("mouse")
                             + " softvol=" + o.values().get("softvol")
