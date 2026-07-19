@@ -219,11 +219,11 @@ public class SettingsActivity extends Activity {
             }
         }));
         refreshers.add(() -> permSubtitle.setText(hasMusicPermission()
-                ? "Granted — Refresh can add tracks from the Music folder"
-                : "Not granted — tap to allow reading the Music folder"));
+                ? "Granted. Refresh can add tracks from the Music folder."
+                : "Not granted. Tap to allow reading the Music folder."));
 
-        switchPrefRow("Show top bar", "View tabs, filter, sleep timer; when hidden, "
-                        + "a floating button keeps settings reachable",
+        switchPrefRow("Show top bar", "The view tabs, filter, and sleep timer. When "
+                        + "hidden, floating buttons keep settings and the timer reachable.",
                 TermService.PREF_SHOW_TOP_BAR, true, null);
         switchPrefRow("Show bottom bar", "Playback controls and seek bar",
                 TermService.PREF_SHOW_CONTROL_BAR, true, () -> {
@@ -236,15 +236,15 @@ public class SettingsActivity extends Activity {
 
         // terminal zoom: the same value pinch-zoom writes, same clamp
         int minFont = dp(5), maxFont = dp(36);
-        seekRow("Zoom level", "Terminal font size — pinch-zooming changes this too",
+        seekRow("Zoom level", "Terminal font size. Pinch zooming changes this too.",
                 minFont, maxFont,
                 () -> clamp(appPrefs().getInt(TermService.PREF_FONT, dp(13)), minFont, maxFont),
                 v -> appPrefs().edit().putInt(TermService.PREF_FONT, v).apply(),
                 v -> String.valueOf(v));
 
         seekRow("Material You hue rotation",
-                "Degrees the control color is rotated from the wallpaper accent "
-                        + "(180 = complement); only while the Material You theme is active",
+                "How far the status and control bar accent is rotated away from the "
+                        + "wallpaper color. Only used while the Material You theme is active.",
                 0, 359,
                 () -> appPrefs().getInt(TermService.PREF_HUE_ROTATION, 180),
                 v -> {
@@ -275,8 +275,9 @@ public class SettingsActivity extends Activity {
         }));
         refreshers.add(() -> {
             int min = appPrefs().getInt(TermService.PREF_IDLE_QUIT_MIN, 15);
-            idleSubtitle.setText(min == 0 ? "Off — cmus keeps running in the background"
-                    : "Quit cmus after " + min + " min paused in the background (state is saved)");
+            idleSubtitle.setText(min == 0 ? "Off. cmus keeps running in the background."
+                    : "Quit cmus after " + min + " minutes paused in the background. "
+                            + "Everything is saved first.");
         });
 
         switchPrefRow("Always resume paused",
@@ -300,14 +301,14 @@ public class SettingsActivity extends Activity {
         }));
         refreshers.add(() -> sleepSubtitle.setText(
                 appPrefs().getBoolean(TermService.PREF_SLEEP_EXIT, false)
-                        ? "Exit the app entirely (no media-key resurrection)"
+                        ? "Exit the app entirely instead of just pausing"
                         : "Pause playback"));
     }
 
     private void buildAudioSection() {
         header("Audio");
-        boolOptRow("Software volume", "cmus scales samples itself (softvol); "
-                + "the volume button appears in the bottom bar", "softvol");
+        boolOptRow("Software volume", "cmus scales samples itself and the volume "
+                + "button appears in the bottom bar", "softvol");
         enumOptRow("AAudio performance mode", "dsp.aaudio.performance_mode",
                 new String[]{"none", "power_saving"}, RESTART_NOTE);
         enumOptRow("AAudio allowed capture", "dsp.aaudio.allowed_capture",
@@ -317,13 +318,14 @@ public class SettingsActivity extends Activity {
         boolOptRow("AAudio disable spatialization", RESTART_NOTE,
                 "dsp.aaudio.disable_spatialization");
         textOptRow("AAudio min buffer capacity",
-                "Milliseconds, 0–1000; 0 = device default. " + RESTART_NOTE,
+                "Milliseconds from 0 to 1000, where 0 keeps the device default. "
+                        + RESTART_NOTE + ".",
                 "dsp.aaudio.min_buffer_capacity_ms",
                 InputType.TYPE_CLASS_NUMBER);
         boolOptRow("Pause on output change",
-                "cmus pauses when the output device changes; the system/app already "
-                        + "pause on unplug and via media controls in some cases, so "
-                        + "both may fire (harmless)", "pause_on_output_change");
+                "cmus pauses when the output device changes. The system already "
+                        + "pauses on unplug and sometimes via media controls, so both "
+                        + "may fire, which is harmless.", "pause_on_output_change");
     }
 
     /** All aaudio options apply at the next output-stream open. */
@@ -336,10 +338,10 @@ public class SettingsActivity extends Activity {
                 "display_artist_sort_name");
         boolOptRow("Ignore duplicates", "Hide duplicate tracks in the library",
                 "ignore_duplicates");
-        textOptRow("Library sort keys", "lib_sort — e.g. albumartist date album discnumber "
-                + "tracknumber title", "lib_sort", InputType.TYPE_CLASS_TEXT);
-        textOptRow("Playlist sort keys", "pl_sort — empty keeps manual order", "pl_sort",
-                InputType.TYPE_CLASS_TEXT);
+        textOptRow("Library sort keys", "Sort keys for the library, like albumartist "
+                + "date album tracknumber title", "lib_sort", InputType.TYPE_CLASS_TEXT);
+        textOptRow("Playlist sort keys", "Sort keys for playlists. Leave empty to keep "
+                + "manual order.", "pl_sort", InputType.TYPE_CLASS_TEXT);
 
         // progress_bar is app-managed (auto = hidden while the bottom bar's
         // own seek slider is visible, `line` otherwise), never synced back
@@ -366,7 +368,8 @@ public class SettingsActivity extends Activity {
             String cur = CmusSettings.prefs(this)
                     .getString(CmusSettings.PREF_PROGRESS_BAR, CmusSettings.PROGRESS_AUTO);
             pbSubtitle.setText(CmusSettings.PROGRESS_AUTO.equals(cur)
-                    ? "auto — hidden while the bottom bar is shown, line otherwise" : cur);
+                    ? "auto, which hides it while the bottom bar is shown and uses "
+                            + "line otherwise" : cur);
         });
 
         enumOptRow("ReplayGain", "replaygain", new String[]{"disabled", "track", "album",
@@ -377,24 +380,26 @@ public class SettingsActivity extends Activity {
                 "replaygain_preamp",
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
                         | InputType.TYPE_NUMBER_FLAG_SIGNED);
-        boolOptRow("Show hidden files", "Dotfiles in the file browser", "show_hidden");
+        boolOptRow("Show hidden files", "Show dotfiles in the file browser", "show_hidden");
         boolOptRow("Show all tracks", "Show every artist's tracks under the "
                 + "special All Tracks entry", "show_all_tracks");
         boolOptRow("Show current bitrate", "In the status line", "show_current_bitrate");
         boolOptRow("Show playback position", "In the status line", "show_playback_position");
         boolOptRow("Show remaining time", "Count down instead of up", "show_remaining_time");
-        boolOptRow("Skip track info", "Faster adds: don't read metadata up front "
-                + "(tracks sort by filename until played)", "skip_track_info");
+        boolOptRow("Skip track info", "Don't read metadata when adding tracks. Adds get "
+                + "much faster for huge libraries, but tracks show as bare filenames "
+                + "until :update-cache loads their tags.", "skip_track_info");
         enumOptRow("Start view", "start_view",
                 new String[]{"tree", "sorted", "playlist", "queue", "browser",
                         "filters", "settings"}, null);
-        textOptRow("Tree width percent", "Left pane width in the library view (1–100)",
+        textOptRow("Tree width percent", "Left pane width in the library view, from 1 to 100",
                 "tree_width_percent", InputType.TYPE_CLASS_NUMBER);
-        textOptRow("Tree width max", "Column cap for the left pane; 0 = no cap",
+        textOptRow("Tree width max", "Column cap for the left pane, where 0 means no cap",
                 "tree_width_max", InputType.TYPE_CLASS_NUMBER);
 
         TextView note = new TextView(this);
-        note.setText("Other cmus settings: use the keyboard — :set option=value");
+        note.setText("Other cmus settings can be changed from the keyboard "
+                + "with :set option=value");
         note.setTextAppearance(android.R.style.TextAppearance_Material_Body1);
         note.setAlpha(0.6f);
         note.setPadding(dp(16), dp(8), dp(16), dp(8));
@@ -422,27 +427,27 @@ public class SettingsActivity extends Activity {
                     startActivityForResult(intent, REQUEST_IMPORT);
                 }));
 
-        addRow(row("Delete library", subtitle("Remove every track from the library; "
-                        + "playlists are kept. Files on disk are untouched"), null,
+        addRow(row("Delete library", subtitle("Remove every track from the library. "
+                        + "Playlists and the audio files on disk are kept."), null,
                 () -> confirmPartialReset("Delete library",
-                        "Remove all tracks from the library? Playlists are kept; audio "
-                                + "files on disk are not touched.",
+                        "Remove all tracks from the library? Playlists and the audio "
+                                + "files on disk are kept.",
                         () -> new File(CmusFiles.home(this), "lib.pl").delete())));
-        addRow(row("Delete playlists", subtitle("Remove every playlist; the library is kept"),
+        addRow(row("Delete playlists", subtitle("Remove every playlist. The library is kept."),
                 null,
                 () -> confirmPartialReset("Delete playlists",
                         "Remove all playlists? The library is kept.",
                         () -> CmusFiles.deleteTree(new File(CmusFiles.home(this), "playlists")))));
-        addRow(row("Delete saved settings", subtitle("Remove cmus's autosaved options and "
-                        + "key bindings (back to defaults; app-managed settings are re-applied)"),
-                null,
+        addRow(row("Delete saved settings", subtitle("Remove cmus's autosaved options "
+                        + "and key bindings. The settings on this screen are applied "
+                        + "again on top."), null,
                 () -> confirmPartialReset("Delete saved settings",
                         "Remove cmus's autosaved configuration? Options and key bindings "
-                                + "return to defaults; the settings on this screen are "
-                                + "re-applied from the app.",
+                                + "return to defaults, and the settings on this screen "
+                                + "are applied again on top.",
                         () -> new File(CmusFiles.home(this), "autosave").delete())));
-        addRow(row("Delete all cmus data", subtitle("Library, playlists, settings, cache, "
-                        + "resume state — everything"), null,
+        addRow(row("Delete all cmus data", subtitle("The library, playlists, settings, "
+                        + "cache, and resume state"), null,
                 () -> confirm("Delete all cmus data",
                         "Remove the library, playlists, saved settings, cache, and resume "
                                 + "state? Audio files on disk are not touched.",
@@ -487,7 +492,7 @@ public class SettingsActivity extends Activity {
         refreshers.add(() -> example.setVisibility(sw.isChecked() ? View.VISIBLE : View.GONE));
 
         switchPrefRow("IPC event logging",
-                "Log every cmus IPC event at info level (logcat tag: cmus)",
+                "Log every cmus IPC event at info level with the logcat tag cmus",
                 TermService.PREF_IPC_LOG,
                 (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0, () -> {
                     if (service != null) {
@@ -782,7 +787,8 @@ public class SettingsActivity extends Activity {
                 .show()));
         refreshers.add(() -> {
             String cur = opts.get(key);
-            subtitle.setText(cur == null ? "—" : (note == null ? cur : cur + " — " + note));
+            subtitle.setText(cur == null ? "unknown"
+                    : (note == null ? cur : cur + " (" + note.toLowerCase(Locale.US) + ")"));
         });
     }
 
@@ -809,7 +815,7 @@ public class SettingsActivity extends Activity {
         refreshers.add(() -> {
             String cur = opts.get(key);
             subtitle.setText(cur == null || cur.isEmpty() ? subtitleText
-                    : cur + " — " + subtitleText);
+                    : subtitleText + " (now " + cur + ")");
         });
     }
 

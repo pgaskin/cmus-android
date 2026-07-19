@@ -106,9 +106,13 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private ImageButton sleepBtn;
     private TextView sleepText;
     private ImageButton settingsBtn;
-    /** With the top bar hidden, settings stays reachable via this faint
-     * overlay in the terminal's top-right (stage 18). */
+    /** With the top bar hidden, settings and the sleep timer stay
+     * reachable via this faint overlay row in the terminal's top-right
+     * (stage 18). */
+    private LinearLayout floatBar;
     private ImageButton floatSettingsBtn;
+    private ImageButton floatSleepBtn;
+    private TextView floatSleepText;
     private final Runnable sleepTick = this::updateSleepSlot;
     private ControlBar controlBar;
     private KeyRow keyRow;
@@ -418,17 +422,30 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         terminalWrapper.addView(joyDot, new FrameLayout.LayoutParams(
                 dp(120), dp(120), Gravity.TOP | Gravity.START));
 
-        // the floating settings entry for the hidden-top-bar mode; sits
-        // below the status-bar inset because the wrapper wears that inset
-        // as top padding whenever the bar is gone
+        // the floating sleep + settings entries for the hidden-top-bar
+        // mode; the row sits below the status-bar inset because the wrapper
+        // wears that inset as top padding whenever the bar is gone
         floatSettingsBtn = topBarButton(R.drawable.ic_settings, this::showSettingsPopover);
-        floatSettingsBtn.setVisibility(View.GONE);
+        floatSleepBtn = topBarButton(R.drawable.ic_sleep, this::showSleepDialog);
+        floatSleepText = new TextView(this);
+        floatSleepText.setTypeface(activeTypeface);
+        floatSleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+        floatSleepText.setPadding(dp(5), dp(8), dp(5), dp(8));
+        floatSleepText.setOnClickListener(v -> showSleepDialog());
+        floatSleepText.setVisibility(View.GONE);
+        floatBar = new LinearLayout(this);
+        floatBar.setOrientation(LinearLayout.HORIZONTAL);
+        floatBar.setGravity(Gravity.CENTER_VERTICAL);
+        floatBar.addView(floatSleepBtn);
+        floatBar.addView(floatSleepText);
+        floatBar.addView(floatSettingsBtn);
+        floatBar.setVisibility(View.GONE);
         FrameLayout.LayoutParams floatLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.END);
         floatLp.topMargin = dp(6);
         floatLp.setMarginEnd(dp(6));
-        terminalWrapper.addView(floatSettingsBtn, floatLp);
+        terminalWrapper.addView(floatBar, floatLp);
         terminalWrapper.addOnLayoutChangeListener(
                 (v, l, t, r, b, ol, ot, or, ob) -> {
                     if (r - l != or - ol || b - t != ob - ot) {
@@ -726,7 +743,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         topBar.setVisibility(topBarShown ? View.VISIBLE : View.GONE);
         controlBar.setVisibility(controlBarShown ? View.VISIBLE : View.GONE);
         joyDot.setVisibility(joyShown && !crashScreen ? View.VISIBLE : View.GONE);
-        floatSettingsBtn.setVisibility(!topBarShown && !crashScreen
+        floatBar.setVisibility(!topBarShown && !crashScreen
                 ? View.VISIBLE : View.GONE);
         applyChromePadding();
     }
@@ -828,8 +845,10 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         keyRow.applyTheme(theme.cmdlineBg(), theme.statuslineFg());
         joyDot.applyTheme(theme.winFg());
         // faint over the terminal like the joystick (translucent fg tint)
-        floatSettingsBtn.setImageTintList(ColorStateList.valueOf(
-                (theme.winFg() & 0x00FFFFFF) | 0x66000000));
+        int floatTint = (theme.winFg() & 0x00FFFFFF) | 0x66000000;
+        floatSettingsBtn.setImageTintList(ColorStateList.valueOf(floatTint));
+        floatSleepBtn.setImageTintList(ColorStateList.valueOf(floatTint));
+        floatSleepText.setTextColor((theme.winFg() & 0x00FFFFFF) | 0xAA000000);
         applyTabColors();
         int appearance = 0;
         if (CmusTheme.isLight(theme.winTitleBg())) {
@@ -946,7 +965,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             dismissSelectorPopup(); // nothing left to theme either
             closeFilterBox(false); // nothing left to filter either
             joyDot.setVisibility(View.GONE); // it must not eat the tap-out
-            floatSettingsBtn.setVisibility(View.GONE); // same rule
+            floatBar.setVisibility(View.GONE); // same rule
             Toast.makeText(this, "cmus exited (" + exitStatus + ") — tap to close",
                     Toast.LENGTH_LONG).show();
         }
@@ -1230,6 +1249,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         }
         filterBox.setTypeface(activeTypeface);
         sleepText.setTypeface(activeTypeface);
+        floatSleepText.setTypeface(activeTypeface);
         keyRow.setTypeface(activeTypeface);
         updateTopBarButtons(); // the row metrics moved with the typeface
         controlBar.setFontSize(fontSize, activeTypeface);
@@ -1384,14 +1404,12 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private void updateTopBarButtons() {
         int line = ControlBar.lineSpacing(fontSize, activeTypeface);
         int pad = line / 2; // (3 lines - 2-line icon) / 2, the ControlBar math
-        if (floatSettingsBtn != null) { // built after the first call
-            floatSettingsBtn.setPadding(pad, pad, pad, pad);
-            ViewGroup.LayoutParams lp = floatSettingsBtn.getLayoutParams();
-            if (lp != null) {
-                lp.width = 3 * line;
-                lp.height = 3 * line;
-                floatSettingsBtn.setLayoutParams(lp);
+        if (floatBar != null) { // built after the first call
+            for (ImageButton b : new ImageButton[]{floatSleepBtn, floatSettingsBtn}) {
+                b.setPadding(pad, pad, pad, pad);
+                b.setLayoutParams(new LinearLayout.LayoutParams(3 * line, 3 * line));
             }
+            floatSleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
         }
         for (ImageButton b : new ImageButton[]{filterBtn, filterClose, sleepBtn, settingsBtn}) {
             b.setPadding(pad, pad, pad, pad);
@@ -1418,11 +1436,17 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         if (remaining == 0) {
             sleepBtn.setVisibility(View.VISIBLE);
             sleepText.setVisibility(View.GONE);
+            floatSleepBtn.setVisibility(View.VISIBLE);
+            floatSleepText.setVisibility(View.GONE);
             return;
         }
-        sleepText.setText((remaining + 59_999) / 60_000 + "m");
+        String left = (remaining + 59_999) / 60_000 + "m";
+        sleepText.setText(left);
         sleepBtn.setVisibility(View.GONE);
         sleepText.setVisibility(View.VISIBLE);
+        floatSleepText.setText(left);
+        floatSleepBtn.setVisibility(View.GONE);
+        floatSleepText.setVisibility(View.VISIBLE);
         if (visible) {
             sleepText.postDelayed(sleepTick, remaining % 60_000 + 100);
         }
