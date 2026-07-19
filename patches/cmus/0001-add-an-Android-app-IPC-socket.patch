@@ -1,4 +1,4 @@
-From 5ebc439d543a8eac4c1ce1062f9a0ed7cf0f525d Mon Sep 17 00:00:00 2001
+From 812e48668ddbc947dce569acb393f8047430688c Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..abe0f23
+index 0000000..1b3e289
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,381 @@
+@@ -0,0 +1,394 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -63,6 +63,9 @@ index 0000000..abe0f23
 + *       position too)
 + *   {"type":"volume","left":n,"right":n}
 + *       percent, -1 = unknown; on connect and on change
++ *   {"type":"view","view":"tree|sorted|playlist|queue|browser|filters|settings"}
++ *       the active view (the 1-7 keys / `view` command); on connect and
++ *       on change
 + *   {"type":"options","options":{"name":"value",...}}
 + *       every cmus option as the string its getter returns (includes all
 + *       color_*); on connect and after any executed command, coalesced
@@ -107,6 +110,7 @@ index 0000000..abe0f23
 +/* connect-dirty: next flush sends the full snapshot */
 +static int android_dirty_all;
 +static int android_dirty_options;
++static int android_dirty_view;
 +
 +/* last volume sent; -2 = never sent */
 +static int android_vol_l = -2;
@@ -260,6 +264,11 @@ index 0000000..abe0f23
 +	android_dirty_options = 1;
 +}
 +
++void android_view_changed(void)
++{
++	android_dirty_view = 1;
++}
++
 +static void android_json_str(struct gbuf *buf, const char *str)
 +{
 +	/* tags aren't guaranteed UTF-8 and JSON requires it (mpris.c
@@ -373,11 +382,15 @@ index 0000000..abe0f23
 +		android_vol_l = vol_l;
 +		android_vol_r = vol_r;
 +	}
++	if (android_dirty_all || android_dirty_view)
++		gbuf_addf(&buf, "{\"type\":\"view\",\"view\":\"%s\"}\n",
++				view_names[cur_view]);
 +	if (android_dirty_all || android_dirty_options)
 +		android_options_event(&buf);
 +
 +	android_dirty_all = 0;
 +	android_dirty_options = 0;
++	android_dirty_view = 0;
 +
 +	if (buf.len) {
 +		size_t off = 0;
@@ -402,10 +415,10 @@ index 0000000..abe0f23
 +}
 diff --git a/android.h b/android.h
 new file mode 100644
-index 0000000..d161a71
+index 0000000..d7a8abe
 --- /dev/null
 +++ b/android.h
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,50 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -439,6 +452,7 @@ index 0000000..d161a71
 +void android_process(void);
 +void android_flush(void);
 +void android_options_changed(void);
++void android_view_changed(void);
 +
 +#else
 +
@@ -450,6 +464,7 @@ index 0000000..d161a71
 +#define android_process() { }
 +#define android_flush() { }
 +#define android_options_changed() { }
++#define android_view_changed() { }
 +
 +#endif
 +
@@ -479,7 +494,7 @@ index b794399..8528b8b 100644
  
  void run_command(const char *buf)
 diff --git a/ui_curses.c b/ui_curses.c
-index bdb766a..a462af9 100644
+index bdb766a..ebd77fc 100644
 --- a/ui_curses.c
 +++ b/ui_curses.c
 @@ -50,6 +50,7 @@
@@ -490,7 +505,15 @@ index bdb766a..a462af9 100644
  #include "locking.h"
  #include "pl_env.h"
  #ifdef HAVE_CONFIG
-@@ -2241,6 +2242,8 @@ static void main_loop(void)
+@@ -1688,6 +1689,7 @@ void set_view(int view)
+ 
+ 	prev_view = cur_view;
+ 	cur_view = view;
++	android_view_changed();
+ 	switch (cur_view) {
+ 	case TREE_VIEW:
+ 		searchable = tree_searchable;
+@@ -2241,6 +2243,8 @@ static void main_loop(void)
  
  		update();
  
@@ -499,7 +522,7 @@ index bdb766a..a462af9 100644
  		/* Timeout must be so small that screen updates seem instant.
  		 * Only affects changes done in other threads (player).
  		 *
-@@ -2264,6 +2267,10 @@ static void main_loop(void)
+@@ -2264,6 +2268,10 @@ static void main_loop(void)
  		SELECT_ADD_FD(server_socket);
  		if (mpris_fd != -1)
  			SELECT_ADD_FD(mpris_fd);
@@ -510,7 +533,7 @@ index bdb766a..a462af9 100644
  		list_for_each_entry(client, &client_head, node) {
  			SELECT_ADD_FD(client->fd);
  		}
-@@ -2344,6 +2351,12 @@ static void main_loop(void)
+@@ -2344,6 +2352,12 @@ static void main_loop(void)
  		if (mpris_fd != -1 && FD_ISSET(mpris_fd, &set))
  			mpris_process();
  
@@ -523,7 +546,7 @@ index bdb766a..a462af9 100644
  		if (FD_ISSET(job_fd, &set))
  			job_handle();
  
-@@ -2471,6 +2484,7 @@ static void init_all(void)
+@@ -2471,6 +2485,7 @@ static void init_all(void)
  	pl_init_options();
  	if (mpris)
  		mpris_init();
@@ -531,7 +554,7 @@ index bdb766a..a462af9 100644
  
  	/* finally we can set the output plugin */
  	player_set_op(output_plugin);
-@@ -2540,6 +2554,7 @@ static void exit_all(void)
+@@ -2540,6 +2555,7 @@ static void exit_all(void)
  	help_exit();
  	browser_exit();
  	mpris_free();
