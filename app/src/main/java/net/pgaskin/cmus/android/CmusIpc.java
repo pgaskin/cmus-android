@@ -34,7 +34,7 @@ import java.util.Map;
 public final class CmusIpc implements AutoCloseable {
     private static final String TAG = "cmus";
 
-    public sealed interface Event permits Hello, Status, Position, Volume, Options {
+    public sealed interface Event permits Hello, Status, Position, Volume, View, Options {
     }
 
     /** First line after connect. */
@@ -61,6 +61,15 @@ public final class CmusIpc implements AutoCloseable {
 
     /** Percent; -1 = unknown. On connect and on change. */
     public record Volume(int left, int right) implements Event {
+    }
+
+    /**
+     * The active view by cmus name (tree, sorted, playlist, queue, browser,
+     * filters, settings; treat others as unknown-but-valid). On connect and
+     * on change — the 1-7 keys, the `view` command, and resume all funnel
+     * through it.
+     */
+    public record View(String name) implements Event {
     }
 
     /**
@@ -102,6 +111,7 @@ public final class CmusIpc implements AutoCloseable {
     // volatile so the getters work from any thread
     private volatile Status status;
     private volatile Volume volume;
+    private volatile View view;
     private volatile Options options;
     private volatile String version;
 
@@ -132,6 +142,9 @@ public final class CmusIpc implements AutoCloseable {
             if (volume != null) {
                 listener.onEvent(volume);
             }
+            if (view != null) {
+                listener.onEvent(view);
+            }
             if (options != null) {
                 listener.onEvent(options);
             }
@@ -150,6 +163,11 @@ public final class CmusIpc implements AutoCloseable {
     /** Last known volume; null before the first event. */
     public Volume volume() {
         return volume;
+    }
+
+    /** Last known view; null before the first event. */
+    public View view() {
+        return view;
     }
 
     /** Last known options; null before the first event. */
@@ -311,6 +329,7 @@ public final class CmusIpc implements AutoCloseable {
             case Hello h -> version = h.version();
             case Status s -> status = s;
             case Volume v -> volume = v;
+            case View v -> view = v;
             case Options o -> options = o;
             case Position ignored -> {
             }
@@ -328,6 +347,7 @@ public final class CmusIpc implements AutoCloseable {
         String version = null;
         String state = null;
         String file = null;
+        String viewName = null;
         int duration = -1;
         int position = -1;
         int left = -1;
@@ -346,6 +366,7 @@ public final class CmusIpc implements AutoCloseable {
                     case "position" -> position = r.nextInt();
                     case "left" -> left = r.nextInt();
                     case "right" -> right = r.nextInt();
+                    case "view" -> viewName = r.nextString();
                     case "tags" -> tags = readTags(r);
                     case "options" -> options = readOptions(r);
                     default -> r.skipValue();
@@ -358,6 +379,7 @@ public final class CmusIpc implements AutoCloseable {
             case "status" -> new Status(parseState(state), file, duration, position, tags);
             case "position" -> new Position(position);
             case "volume" -> new Volume(left, right);
+            case "view" -> new View(viewName);
             case "options" -> new Options(options);
             case null -> throw new IOException("event without a type");
             default -> null;

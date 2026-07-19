@@ -227,6 +227,7 @@ public class TermService extends Service implements TerminalSessionClient {
                 }
                 case CmusIpc.Position p -> Log.d(TAG, "ipc position " + p.position());
                 case CmusIpc.Volume v -> Log.d(TAG, "ipc volume " + v.left() + "/" + v.right());
+                case CmusIpc.View v -> Log.d(TAG, "ipc view " + v.name());
                 case CmusIpc.Options o -> Log.d(TAG, "ipc options n=" + o.values().size()
                         + " mouse=" + o.values().get("mouse")
                         + " softvol=" + o.values().get("softvol")
