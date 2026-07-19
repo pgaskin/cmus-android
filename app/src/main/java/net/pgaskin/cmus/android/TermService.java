@@ -58,6 +58,9 @@ public class TermService extends Service implements TerminalSessionClient {
     static final String PREF_SHOW_TOP_BAR = "show_top_bar";
     static final String PREF_SHOW_CONTROL_BAR = "show_control_bar";
     static final String PREF_SHOW_JOYSTICK = "show_joystick";
+    /** cmus `mouse`: tap/long-press act on the touched cell directly. Off =
+     * the joystick becomes an on-demand floating stick (stage 21). */
+    static final String PREF_DIRECT_TOUCH = "direct_touch";
     /** Degrees for MaterialYouTheme's control-color complement (default 180). */
     static final String PREF_HUE_ROTATION = "material_hue_rotation";
     /** Minutes; 0 disables the idle quit. */
@@ -248,7 +251,9 @@ public class TermService extends Service implements TerminalSessionClient {
      * command channel leaves user config files alone; autosave persisting
      * the forced value is the point). mouse: touch gestures only behave
      * like termux (tap = click, drag = wheel scroll) with mouse tracking
-     * on. resume: every quit — user, idle-quit, task-swipe, even SIGHUP
+     * on — driven by the Direct-touch-input pref (default on), and off
+     * hands the terminal to the floating joystick (stage 21). resume:
+     * every quit — user, idle-quit, task-swipe, even SIGHUP
      * from app-process death — writes track/position/playback state/view
      * for the next launch to restore. pl_env_vars: saved paths keep the
      * env var, not the base path (see the spawn env). Each command echoes
@@ -258,7 +263,7 @@ public class TermService extends Service implements TerminalSessionClient {
         @Override
         public void onConnected() {
             Log.d(TAG, "ipc: connected");
-            ipc.send("set mouse=true");
+            ipc.send("set mouse=" + directTouch());
             ipc.send("set resume=true");
             ipc.send("set pl_env_vars=" + plEnvVars);
             // an attach can resize the pty before cmus installs its WINCH
@@ -439,6 +444,23 @@ public class TermService extends Service implements TerminalSessionClient {
     public void applyProgressBar() {
         if (ipc != null) {
             ipc.send("set progress_bar=" + CmusSettings.effectiveProgressBar(this));
+        }
+    }
+
+    /** The Direct-touch-input pref, default on (today's forced mouse=true). */
+    private boolean directTouch() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_DIRECT_TOUCH, true);
+    }
+
+    /**
+     * (Re)sends cmus `mouse` from the Direct-touch-input pref — the
+     * connect-time force and the settings toggle's live path. The echo
+     * reaches the emulator, so MainActivity's tap/long-press branches
+     * (gated on isMouseTrackingActive) re-arm without a restart.
+     */
+    public void applyMouse() {
+        if (ipc != null) {
+            ipc.send("set mouse=" + directTouch());
         }
     }
 

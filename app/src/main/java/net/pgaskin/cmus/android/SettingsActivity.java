@@ -233,6 +233,14 @@ public class SettingsActivity extends Activity {
                 });
         switchPrefRow("Show joystick", "The floating navigation dot",
                 TermService.PREF_SHOW_JOYSTICK, true, null);
+        switchPrefRow("Direct touch input",
+                "Tap and long-press act on the item you touch. When off, touch summons "
+                        + "the joystick under your finger and long-press removes the selection.",
+                TermService.PREF_DIRECT_TOUCH, true, () -> {
+                    if (service != null) {
+                        service.applyMouse();
+                    }
+                });
 
         // terminal zoom: the same value pinch-zoom writes, same clamp
         int minFont = dp(5), maxFont = dp(36);
