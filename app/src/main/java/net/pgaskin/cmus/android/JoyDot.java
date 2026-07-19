@@ -22,6 +22,13 @@ import android.view.ViewConfiguration;
  * Resting on the center for 3s vibrates and turns the rest of the touch
  * into a reposition drag; the owner moves/clamps/persists via the drag
  * callbacks (this view only reports raw deltas).
+ * <p>
+ * In <b>floating</b> mode (direct touch off, stage 21) the view instead
+ * fills the terminal, stays invisible at rest, and materialises under the
+ * finger wherever a touch lands — the gesture origin is that press, not
+ * the view center. There the rest-in-place hold fires a right-click
+ * (callback.rightClick) instead of the reposition drag, since a stick that
+ * appears on demand has nowhere to be repositioned to.
  */
 public final class JoyDot extends View {
     public interface Callback {
@@ -35,6 +42,9 @@ public final class JoyDot extends View {
 
         /** Reposition drag released: persist wherever the dot ended up. */
         void dragEnd();
+
+        /** Floating-mode long-press: right-click the current selection. */
+        void rightClick();
     }
 
     // knob alphas over the terminal; faint at rest, firmer under a finger
@@ -72,11 +82,17 @@ public final class JoyDot extends View {
     /** Nav displacement where its repeat reaches full speed. */
     private final int navFull = dp(100);
     private final int touchSlop;
+    private final int longPressTimeout = ViewConfiguration.getLongPressTimeout();
     private int fg = 0xFFFFFFFF;
 
+    /** Direct touch off: fill the terminal, invisible until touched, and
+     * the hold fires a right-click instead of a reposition drag. */
+    private boolean floating;
     private boolean tracking;
     private boolean fired;
     private boolean dragging;
+    /** Floating hold fired a right-click: ignore the rest of the touch. */
+    private boolean rightClicked;
     private int repeatDir;
     private int navDir;
     private float downX;
@@ -104,17 +120,24 @@ public final class JoyDot extends View {
     };
 
     /** Armed on DOWN, cancelled the moment the finger leaves the middle;
-     * firing flips the rest of this touch into a reposition drag. */
+     * firing flips the rest of this touch into a reposition drag (fixed) or
+     * a right-click on the current selection (floating). */
     private final Runnable dragArm = new Runnable() {
         @Override
         public void run() {
             if (!tracking || fired || Math.hypot(dx, dy) > touchSlop) {
                 return;
             }
-            dragging = true;
-            dx = 0;
-            dy = 0;
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            if (floating) {
+                fired = true;      // the release must not also send Enter
+                rightClicked = true; // ...nor any later slide fire arrows
+                callback.rightClick();
+            } else {
+                dragging = true;
+                dx = 0;
+                dy = 0;
+            }
             invalidate();
         }
     };
@@ -131,14 +154,28 @@ public final class JoyDot extends View {
         invalidate();
     }
 
+    /** Switch between the fixed corner dot and the on-demand floating stick
+     * (the owner also resizes the view to match). Any in-flight gesture is
+     * dropped so a mode flip mid-touch can't strand a repeat. */
+    public void setFloating(boolean floating) {
+        if (this.floating == floating) {
+            return;
+        }
+        this.floating = floating;
+        reset();
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     @Override
     public boolean onTouchEvent(MotionEvent e) {
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN -> {
-                if (Math.hypot(e.getX() - getWidth() / 2f, e.getY() - getHeight() / 2f)
-                        > grabRadius) {
-                    return false; // not on the dot: the terminal's touch
+                // fixed mode consumes only touches on the dot (the rest are
+                // the terminal's); floating mode owns the whole terminal and
+                // summons the stick at the press point
+                if (!floating && Math.hypot(e.getX() - getWidth() / 2f,
+                        e.getY() - getHeight() / 2f) > grabRadius) {
+                    return false;
                 }
                 downX = e.getX();
                 downY = e.getY();
@@ -147,11 +184,14 @@ public final class JoyDot extends View {
                 tracking = true;
                 fired = false;
                 dragging = false;
+                rightClicked = false;
                 repeatDir = 0;
                 navDir = 0;
                 lastRawX = e.getRawX();
                 lastRawY = e.getRawY();
-                postDelayed(dragArm, DRAG_HOLD_MS);
+                // fixed: a long centre-hold repositions; floating: a normal
+                // long-press right-clicks the current selection
+                postDelayed(dragArm, floating ? longPressTimeout : DRAG_HOLD_MS);
                 invalidate();
             }
             case MotionEvent.ACTION_MOVE -> {
@@ -163,6 +203,9 @@ public final class JoyDot extends View {
                     lastRawX = e.getRawX();
                     lastRawY = e.getRawY();
                     break;
+                }
+                if (rightClicked) {
+                    break; // right-click fired: the stick waits for release
                 }
                 dx = e.getX() - downX;
                 dy = e.getY() - downY;
@@ -223,8 +266,13 @@ public final class JoyDot extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        float cx = getWidth() / 2f;
-        float cy = getHeight() / 2f;
+        // floating: nothing at rest, and the stick sits at the press point;
+        // fixed: always the view center (its corner spot)
+        if (floating && !tracking) {
+            return;
+        }
+        float cx = floating ? downX : getWidth() / 2f;
+        float cy = floating ? downY : getHeight() / 2f;
         paint.setColor((fg & 0x00FFFFFF)
                 | (tracking ? BASE_ALPHA_ACTIVE : BASE_ALPHA) << 24);
         canvas.drawCircle(cx, cy, baseRadius, paint);
@@ -274,6 +322,7 @@ public final class JoyDot extends View {
     private void reset() {
         tracking = false;
         dragging = false;
+        rightClicked = false;
         stopRepeat();
         navDir = 0;
         removeCallbacks(navRepeater);

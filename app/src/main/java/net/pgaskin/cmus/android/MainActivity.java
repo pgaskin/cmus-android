@@ -121,9 +121,14 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private boolean topBarShown = true;
     private boolean controlBarShown = true;
     private boolean joyShown = true;
+    // Direct touch input (stage 21): off = the joystick becomes an on-demand
+    // floating stick filling the terminal, summoned under the finger
+    private boolean directTouch = true;
     /** Joystick center in wrapper px, kept clamped by applyJoyPos. */
     private float joyCx;
     private float joyCy;
+    /** The joystick is in floating mode (fills the terminal, no fixed spot). */
+    private boolean joyFloating;
     private final TextView[] viewTabs = new TextView[VIEW_NAMES.length];
     // bar/cutout insets and the IME inset separately, handled asymmetrically
     // around the IME animation (one layout pass, one terminal resize, no
@@ -415,6 +420,19 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                         .putFloat(PREF_JOY_Y + sfx, joyCy / h)
                         .apply();
             }
+
+            @Override
+            public void rightClick() {
+                // the floating-mode analogue of onLongPress: no cell, no
+                // mouse event (cmus mouse tracking is off) — android-selected
+                // emits a Selected event for the current selection, which
+                // drives the same remove dialog through onSelected
+                if (crashScreen || session == null || !session.isRunning()) {
+                    return;
+                }
+                pendingRemoveUntil = SystemClock.uptimeMillis() + 800;
+                sendCommand("android-selected");
+            }
         });
         // positioned from the saved per-orientation fraction (or the fixed
         // default) on every wrapper resize, so it re-derives on rotation
@@ -604,9 +622,38 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 == Configuration.ORIENTATION_LANDSCAPE ? "land" : "port";
     }
 
+    /**
+     * Direct touch off + joystick on = floating mode: the dot fills the
+     * terminal wrapper and is summoned under the finger. Otherwise it's the
+     * fixed corner dot placed from the saved fraction. The layout params are
+     * swapped to match; placeJoyDot no-ops while floating.
+     */
+    private void applyJoyMode() {
+        boolean floating = !directTouch && joyShown;
+        joyFloating = floating;
+        joyDot.setFloating(floating);
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) joyDot.getLayoutParams();
+        if (floating) {
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+            lp.leftMargin = 0;
+            lp.topMargin = 0;
+            joyDot.setLayoutParams(lp);
+        } else {
+            lp.width = dp(120);
+            lp.height = dp(120);
+            joyDot.setLayoutParams(lp);
+            placeJoyDot();
+        }
+    }
+
     /** Derive the joystick center from the saved fraction (or the fixed
-     * default corner spot) for the wrapper's current size. */
+     * default corner spot) for the wrapper's current size. No-op while
+     * floating (the dot fills the wrapper — no fixed spot to place). */
     private void placeJoyDot() {
+        if (joyFloating) {
+            return;
+        }
         int w = terminalWrapper.getWidth();
         int h = terminalWrapper.getHeight();
         if (w == 0 || h == 0) {
@@ -734,6 +781,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         topBarShown = prefs.getBoolean(TermService.PREF_SHOW_TOP_BAR, true);
         controlBarShown = prefs.getBoolean(TermService.PREF_SHOW_CONTROL_BAR, true);
         joyShown = prefs.getBoolean(TermService.PREF_SHOW_JOYSTICK, true);
+        directTouch = prefs.getBoolean(TermService.PREF_DIRECT_TOUCH, true);
         if (!topBarShown && filterBoxOpen) {
             closeFilterBox(false); // the box lives in the bar; filter kept
         }
@@ -742,6 +790,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         }
         topBar.setVisibility(topBarShown ? View.VISIBLE : View.GONE);
         controlBar.setVisibility(controlBarShown ? View.VISIBLE : View.GONE);
+        applyJoyMode();
         joyDot.setVisibility(joyShown && !crashScreen ? View.VISIBLE : View.GONE);
         floatBar.setVisibility(!topBarShown && !crashScreen
                 ? View.VISIBLE : View.GONE);
