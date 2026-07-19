@@ -37,7 +37,10 @@ full plan and rationale; this file describes what currently exists.
   builds fail with a hint when patches exist but aren't applied.
 - patches/cmus: 0001 adds the app IPC socket (android.c/android.h + hook
   hunks in ui_curses.c/command_mode.c — including a view event out of
-  set_view(); everything guarded by CONFIG_ANDROID so the patched tree
+  set_view() — + a player_pos_exact() wrapper in player.c/h reading the
+  fractional position under player_lock, since player_info.pos is whole
+  seconds and the app's seek bar animates between events; everything
+  guarded by CONFIG_ANDROID so the patched tree
   still builds with the upstream Makefile), 0002 removes remote-stream
   support (input.c remote machinery behind `#ifndef CONFIG_ANDROID`,
   cmus_detect_ft's http branch out) so http.c drops from the link. The
@@ -145,7 +148,8 @@ full plan and rationale; this file describes what currently exists.
   main thread with cached-state replay for late attachers, `send()`
   for raw command lines (rejects newline/overlong), self-reconnecting
   (100ms → 1s; every connect gets a full snapshot, so no state
-  crosses connections).
+  crosses connections). Positions are fractional seconds (double);
+  position events still tick at whole-second changes (≤1/s).
 - `CmusTheme` — chrome-relevant color_* options resolved to ARGB (record
   built from an Options event; equality = change detection). Value
   grammar is options.c get_color ("default" | 16 names | bare 16-255);
@@ -187,24 +191,32 @@ full plan and rationale; this file describes what currently exists.
 - `MainActivity` — vertical LinearLayout: view-selector tab bar over a
   FrameLayout-wrapped `TerminalView` (focusableInTouchMode — required
   for IME/keys; set in code, easy to miss; sizes from raw bounds, so
-  insets pad the wrappers). Insets split for edge-to-edge coloring
+  insets pad the wrappers) over a `ControlBar`. Insets split for
+  edge-to-edge coloring
   (targetSdk 36: setStatusBarColor is a no-op): the tab bar consumes
   top+sides so its background (win_title_bg) paints the status-bar
-  strip; the wrapper consumes sides+bottom+ime so its background
-  (win_bg) paints the nav strip + margins; icon appearance via
-  setSystemBarsAppearance by bg luminance. Everything re-tints on
-  Options events through a CmusTheme (until the first one: the black
-  Theme.Cmus). Tab bar: text-only view_names in monospace at the
-  terminal font size (tracks pinch-zoom), in a scrollbar-less
-  HorizontalScrollView — fillViewport + row gravity center the tabs
-  when they fit, overflow lays out left and scrolls (a CENTER layout
-  gravity would strand overflow off the unreachable left). Active tab
-  = win_title_fg, inactive 55% alpha; tap sends `view <name>`, the
-  highlight moves only on the echoed View event (cmus is the source of
-  truth — TUI 1-7 keys and resume land the same way). The IPC
-  listener re-registers per CmusIpc instance (attachIpc after every
-  getSession; respawn = fresh instance, replay covers late attach).
-  Tap toggles the IME, pinch scales the font (5–36dp),
+  strip; the wrapper consumes sides only; the control bar consumes
+  sides+bottom+ime so its background (statusline_bg) paints the nav
+  strip; icon appearance via setSystemBarsAppearance by the adjacent
+  bar's bg luminance. A root layout listener additionally absorbs the
+  terminal's row-quantization remainder
+  (`(wrapperH − firstRowOffset) % lineSpacing`, the TerminalRenderer
+  formulas mirrored in ControlBar statics) as padding split between
+  the two bars on their terminal-adjoining edges, so chrome sits
+  flush with the TUI's top/bottom rows at any font size. Everything
+  re-tints on Options events through a CmusTheme (until the first
+  one: the black Theme.Cmus). Tab bar: text-only view_names in
+  monospace at the terminal font size (tracks pinch-zoom), in a
+  scrollbar-less HorizontalScrollView — fillViewport + row gravity
+  center the tabs when they fit, overflow lays out left and scrolls
+  (a CENTER layout gravity would strand overflow off the unreachable
+  left). Active tab = win_title_fg, inactive 55% alpha; tap sends
+  `view <name>`, the highlight moves only on the echoed View event
+  (cmus is the source of truth — TUI 1-7 keys and resume land the
+  same way). The IPC listener re-registers per CmusIpc instance
+  (attachIpc after every getSession; respawn = fresh instance, replay
+  covers late attach); Status/Position/Volume/Options forward to the
+  control bar. Tap toggles the IME, pinch scales the font (5–36dp),
   back backgrounds the app (playback continues under the FGS);
   rotation recreates the activity and re-attaches the live session.
   Reports onStart/onStop to the service (idle-quit + size saving);
@@ -212,6 +224,23 @@ full plan and rationale; this file describes what currently exists.
   visible: exit 0 → finish, nonzero → frozen terminal + the emulator's
   "[Process completed]" banner + toast, tap or Enter closes; while
   backgrounded: stays in recents for the respawn.
+- `ControlBar` — compact bottom control bar (play/pause · repeat ·
+  shuffle · seek · volume · add-to-queue · keyboard toggle), Material
+  Symbols icons, statusline colors, sized 3 terminal rows (icons 2)
+  from the same Paint metrics TerminalRenderer uses, tracking
+  pinch-zoom. Pure mirror of echoed cmus state: repeat/tristate
+  shuffle (albums = badge icon)/softvol from Options (TUI toggles
+  arrive via the run_parsed_command options hook), play state from
+  Status with MediaControl's command mapping (player-pause-playback /
+  player-pause / player-play), volume from Volume events. The seek
+  thumb extrapolates between the ~1/s fractional position events with
+  a per-frame ticker while PLAYING (runs only attached+visible);
+  drag-release sends `seek n` and rebases locally to skip the echo
+  round trip. Volume button exists only while softvol=true and opens
+  a PopupWindow with a vertical slider (`vol n` per integer step).
+  `CmusSlider` is the shared flat one-color slider (track/fill/block
+  thumb, horizontal or vertical, float progress, redraws only on
+  ≥0.5px thumb movement, ignores external updates mid-drag).
 - Theme: `Theme.Cmus` (Material NoActionBar, black, short-edges cutout)
   as the pre-first-Options fallback; live chrome colors come from
   CmusTheme above.
@@ -225,6 +254,5 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Chrome B (12: bottom control bar — play/pause/repeat/shuffle/seek,
-volume slider gated on softvol, add-to-queue, keyboard toggle), then
-input/overlays/settings (13+).
+Input A (13: extension key row with sticky modifiers when the IME is
+visible), then input B/overlays/settings (14+).

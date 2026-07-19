@@ -3,6 +3,64 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-18 — Stage 12: chrome B (done)
+
+- Per [plans/12-chrome-b.md](plans/12-chrome-b.md) with four live tweaks
+  from Patrick: (1) chrome absorbs the terminal's row-quantization
+  remainder — a root layout listener computes
+  `(wrapperH − firstRowOffset) % lineSpacing` (mirroring TerminalView's
+  `rows = (h − mFontLineSpacingAndAscent) / mFontLineSpacing`) and wears
+  it as padding split between the two bars on their terminal-adjoining
+  edges, so the tab bar sits flush with cmus's own title row and the
+  control bar with the cmdline row at any font size (the
+  adding-current-extras-back trick makes the computation a fixed point
+  across relayouts). (2) Icons are Material Symbols (outlined; fill1
+  play/pause; the 0,-960,960,960 viewBox rides in a translateY=960
+  group), fetched from google/material-design-icons. (3) The seek thumb
+  advances smoothly: a per-frame postOnAnimation ticker extrapolates
+  from the last Status/Position event while PLAYING; CmusSlider takes
+  float progress and only redraws on ≥0.5px thumb movement, so idle
+  frames cost a float compare; drag-release rebases locally so the echo
+  round trip doesn't snap back. (4) **Protocol change**: positions are
+  now fractional seconds (`%.3f`) in status + position events — without
+  it every rebase (pause especially) jumped the extrapolated thumb back
+  to the whole second. cmus side: `player_pos_exact()` wrapper in
+  player.c (locked `consumer_pos / buffer_second_size()` read;
+  CONFIG_ANDROID-guarded, the spec's minimal-wrapper pattern) since
+  player_info.pos is int; event *cadence* still keys off the
+  whole-second position_changed flag (≤1/s). 0001 amended via fixup +
+  `rebase --autosquash base`, regen clean, patch.sh check green.
+- ControlBar (horizontal LinearLayout beside a CmusSlider custom view):
+  play/pause · repeat · shuffle · seek (weight 1) · volume · add-q ·
+  keyboard, statusline colors, sized 3 terminal rows (icons 2) tracking
+  pinch-zoom via the same Paint metrics as the renderer. Pure mirror of
+  echoed cmus state (stage-11 rule): Options carries repeat/tristate
+  shuffle ("&" statusline flag = albums → badge icon)/softvol — TUI
+  `r`/`s` keys reach the run_parsed_command options hook, so buttons
+  follow both directions. Play mapping = MediaControl's (PLAYING →
+  player-pause-playback, PAUSED → player-pause, STOPPED → player-play).
+  Volume button GONE unless softvol=true; tap opens a focusable
+  PopupWindow above it with a vertical CmusSlider (drag sends `vol n`
+  per integer change; left channel shown). The bar now takes the
+  bottom+ime insets, its statuslineBg paints the nav strip, and nav
+  icon appearance follows statuslineBg instead of winBg.
+- Verified on device (Pixel 8, wifi adb + debug receiver; Patrick
+  hands-on throughout for feel): play/pause round-trips from paused
+  and playing with the icon following the Status echo; repeat+shuffle
+  taps → statusline `C RS`, second shuffle tap → `C R&` + badge icon;
+  seek drag → position event at the dragged second; smooth advance +
+  drag feel + volume popup confirmed by Patrick by hand; fractional
+  pause verified in the event log (extrapolation ~4.85 vs echoed
+  4.833 — no jump); softvol gating + the rest of the matrix covered by
+  Patrick's hands-on. Reinstalls mid-test force-stop cmus (documented
+  loss window) — unsaved repeat/shuffle toggles revert, expected.
+- Testing notes: Patrick was actively using the device during the run —
+  injected taps can land in whatever's focused (one hit Cromite; check
+  mCurrentFocus first) and device state can change between screenshots.
+  tone.aac seek errors red in the cmdline are the known upstream
+  raw-ADTS behavior (stage 5), not a bar bug. adb can't drag precisely
+  enough to judge slider feel; that stays a hands-on item.
+
 ## 2026-07-18 — Stage 11: chrome A (done)
 
 - Per [plans/11-chrome-a.md](plans/11-chrome-a.md) with two live tweaks
@@ -431,12 +489,13 @@ pick up where things left off.
 
 ## Next
 
-Stage 12: chrome B (bottom control bar: play/pause, repeat, shuffle,
-seek bar, volume button + vertical slider gated on softvol,
-add-to-queue, keyboard toggle) — needs its detailed plan written and
-approved first. CmusTheme already resolves statusline/cmdline colors
-for it; play state/position/volume all come from the cached CmusIpc
-events.
+Stage 13: input A (extension key row when the IME is visible:
+horizontally scrolling shift/ctrl/alt · space · del/esc/tab · space ·
+arrows · space · home/end/pgup/pgdn, termux-style sticky modifiers) —
+needs its detailed plan written and approved first. The control bar's
+keyboard button and MainActivity's IME toggling/insets are the
+integration points; TerminalViewClient's readControlKey/readAltKey/
+readShiftKey stubs in MainActivity are where sticky modifiers land.
 
 Note for later (Patrick; stage 18 data import, or wherever imports
 land first): inhibit the idle-quit timer while media is being
