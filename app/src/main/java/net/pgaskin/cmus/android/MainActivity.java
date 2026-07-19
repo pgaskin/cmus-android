@@ -43,6 +43,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private static final int INACTIVE_TAB_ALPHA = 0x8C000000;
     /** Protocol code for the right button (same in SGR and X10 encodings). */
     private static final int MOUSE_RIGHT_BUTTON = 2;
+    private static final String PREF_FONT = "font";
 
     private TerminalView terminalView;
     private FrameLayout terminalWrapper;
@@ -100,9 +101,14 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        fontSize = dp(13);
         minFontSize = dp(5);
         maxFontSize = dp(36);
+        // the service respawns a headless pty at the last attached grid, so
+        // reopening at a reset font would immediately resize it (layout
+        // shift + a cmus redraw); keep the pinch-zoomed size instead
+        fontSize = Math.max(minFontSize, Math.min(
+                getSharedPreferences(TermService.PREFS, MODE_PRIVATE).getInt(PREF_FONT, dp(13)),
+                maxFontSize));
 
         terminalView = new TerminalView(this, null);
         terminalView.setTerminalViewClient(this);
@@ -454,6 +460,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             keyRow.setFontSize(fontSize);
             titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ControlBar.firstRowOffset(fontSize)));
+            getSharedPreferences(TermService.PREFS, MODE_PRIVATE).edit()
+                    .putInt(PREF_FONT, fontSize).apply();
             return 1.0f;
         }
         return scale;
