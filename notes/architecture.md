@@ -203,7 +203,10 @@ full plan and rationale; this file describes what currently exists.
   (`(wrapperH − firstRowOffset) % lineSpacing`, the TerminalRenderer
   formulas mirrored in ControlBar statics) as padding split between
   the two bars on their terminal-adjoining edges, so chrome sits
-  flush with the TUI's top/bottom rows at any font size. Everything
+  flush with the TUI's top/bottom rows at any font size; a thin
+  titleStrip View overlaid on the terminal's top firstRowOffset px
+  (win_title_bg, touches fall through) covers the band the renderer
+  never paints (row backgrounds start at mFontLineSpacingAndAscent). Everything
   re-tints on Options events through a CmusTheme (until the first
   one: the black Theme.Cmus). Tab bar: text-only view_names in
   monospace at the terminal font size (tracks pinch-zoom), in a

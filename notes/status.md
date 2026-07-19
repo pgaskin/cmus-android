@@ -32,7 +32,12 @@ pick up where things left off.
   `rebase --autosquash base`, regen clean, patch.sh check green.
   (5) The bar's background is **cmdline_bg**, not the plan's
   statusline_bg — it adjoins the cmdline row, and statusline_bg reads
-  as a band there; icons/sliders stay statusline_fg.
+  as a band there; icons/sliders stay statusline_fg. Follow-up to (1):
+  TerminalRenderer only paints row backgrounds from
+  mFontLineSpacingAndAscent down, so the terminal's top offset px
+  stayed default-bg — a black hairline between tab bar and title row;
+  a non-clickable titleStrip View (win_title_bg, firstRowOffset tall)
+  overlaid on the terminal's top edge closes it.
 - ControlBar (horizontal LinearLayout beside a CmusSlider custom view):
   play/pause · repeat · shuffle · seek (weight 1) · volume · add-q ·
   keyboard, statusline colors, sized 3 terminal rows (icons 2) tracking

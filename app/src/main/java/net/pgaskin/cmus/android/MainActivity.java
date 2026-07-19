@@ -13,6 +13,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -38,6 +39,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     private TerminalView terminalView;
     private FrameLayout terminalWrapper;
+    private View titleStrip;
     private HorizontalScrollView tabBar;
     private ControlBar controlBar;
     private final TextView[] viewTabs = new TextView[VIEW_NAMES.length];
@@ -133,6 +135,14 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // the nav strip + side margins; only icon appearance is a real API
         terminalWrapper = new FrameLayout(this);
         terminalWrapper.addView(terminalView);
+        // TerminalRenderer paints row backgrounds from firstRowOffset down,
+        // so the terminal's top few px stay default-bg even when the title
+        // row is colored; extend the win-title band over that strip so the
+        // tab bar and cmus's title row meet with no seam (touches fall
+        // through a non-clickable View)
+        titleStrip = new View(this);
+        terminalWrapper.addView(titleStrip, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ControlBar.firstRowOffset(fontSize)));
 
         controlBar = new ControlBar(this, new ControlBar.Callback() {
             @Override
@@ -311,6 +321,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
 
     private void applyTheme() {
         tabBar.setBackgroundColor(theme.winTitleBg());
+        titleStrip.setBackgroundColor(theme.winTitleBg());
         terminalWrapper.setBackgroundColor(theme.winBg());
         // cmdline_bg so the bar blends with the TUI's bottom row (default =
         // terminal bg in every bundled theme)
@@ -377,6 +388,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             }
             controlBar.setFontSize(fontSize);
+            titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ControlBar.firstRowOffset(fontSize)));
             return 1.0f;
         }
         return scale;
