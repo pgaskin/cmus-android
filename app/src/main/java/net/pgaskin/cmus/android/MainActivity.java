@@ -50,6 +50,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private HorizontalScrollView tabBar;
     private ControlBar controlBar;
     private KeyRow keyRow;
+    private JoyDot joyDot;
     private final TextView[] viewTabs = new TextView[VIEW_NAMES.length];
     private android.graphics.Insets chromeInsets = android.graphics.Insets.NONE;
     // each bar's share of the terminal's row-quantization remainder, worn as
@@ -157,6 +158,15 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         terminalWrapper.addView(titleStrip, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ControlBar.firstRowOffset(fontSize)));
 
+        // enter/arrows/tab without reaching for the IME: the joystick dot
+        // floats over the terminal's bottom-right, riding above the IME
+        // automatically as the wrapper shrinks
+        joyDot = new JoyDot(this, this::injectKey);
+        FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(
+                dp(76), dp(76), Gravity.BOTTOM | Gravity.END);
+        dotLp.setMargins(0, 0, dp(16), dp(16));
+        terminalWrapper.addView(joyDot, dotLp);
+
         controlBar = new ControlBar(this, new ControlBar.Callback() {
             @Override
             public void sendCommand(String command) {
@@ -170,11 +180,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         });
         controlBar.setFontSize(fontSize);
 
-        // the same injection termux's extra-keys row uses: onKeyDown emits
-        // the key's escape sequence and merges readShift/Ctrl/AltKey into
-        // the meta state, so sticky modifiers apply here too
-        keyRow = new KeyRow(this, keyCode -> terminalView.onKeyDown(keyCode,
-                new KeyEvent(0, 0, KeyEvent.ACTION_UP, keyCode, 0, 0)));
+        keyRow = new KeyRow(this, this::injectKey);
         keyRow.setFontSize(fontSize);
         keyRow.setVisibility(View.GONE); // until the IME shows
 
@@ -332,6 +338,17 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         }
     }
 
+    /**
+     * The same injection termux's extra-keys row uses (key row + joystick
+     * dot): onKeyDown emits the key's escape sequence and merges
+     * readShift/Ctrl/AltKey into the meta state, so the key row's sticky
+     * modifiers apply to both.
+     */
+    private void injectKey(int keyCode) {
+        terminalView.onKeyDown(keyCode,
+                new KeyEvent(0, 0, KeyEvent.ACTION_UP, keyCode, 0, 0));
+    }
+
     private final CmusIpc.Listener ipcListener = event -> {
         switch (event) {
             case CmusIpc.Options o -> {
@@ -369,6 +386,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         // terminal bg in every bundled theme)
         controlBar.applyTheme(theme.cmdlineBg(), theme.statuslineFg());
         keyRow.applyTheme(theme.cmdlineBg(), theme.statuslineFg());
+        joyDot.applyTheme(theme.winFg());
         applyTabColors();
         int appearance = 0;
         if (CmusTheme.isLight(theme.winTitleBg())) {
@@ -416,6 +434,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         } else {
             crashScreen = true;
             dismissRemoveDialog(); // there's nothing left to remove from
+            joyDot.setVisibility(View.GONE); // it must not eat the tap-out
             Toast.makeText(this, "cmus exited (" + exitStatus + ") — tap to close",
                     Toast.LENGTH_LONG).show();
         }
