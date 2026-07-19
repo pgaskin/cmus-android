@@ -1,4 +1,4 @@
-From 5941463b283cd0110d688fe342c7b7cf0b1c9723 Mon Sep 17 00:00:00 2001
+From c252ec5a7d09ef86a8b3216eee8ff4527cee16ae Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..9fa1f6a
+index 0000000..dd2ca1a
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,657 @@
+@@ -0,0 +1,706 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -95,6 +95,14 @@ index 0000000..9fa1f6a
 + *       the playlist-view list pane variant: a right-click there selects
 + *       (and shows) that playlist, and this carries its name so the app
 + *       can offer android-pl-delete — win-remove would prompt.
++ *   {"type":"jobs","running":true|false}
++ *       whether any worker job (add/update scans — imports the app must
++ *       not idle-quit mid-flight, and whose completion it toasts) is
++ *       running; on connect and on change, plus immediately as the
++ *       answer to the android-jobs line below. The diff is reliable
++ *       promptness-wise because job activity itself wakes the main loop
++ *       (job_fd is in the select set), so transitions always reach the
++ *       next flush.
 + *   {"type":"colorscheme","name":"..."}
 + *       a `colorscheme` command successfully sourced the named theme
 + *       file (either search dir; a failed lookup emits nothing).
@@ -129,6 +137,10 @@ index 0000000..9fa1f6a
 + *       just-spawned pty that early), and one landing between the
 + *       needs_to_resize check and the select entry sleeps until the next
 + *       wakeup — this line both sets the flag and *is* the wakeup.
++ *   android-jobs
++ *       answered immediately with a jobs event — a fresh authoritative
++ *       check at decision time for the app's idle-quit guard (which
++ *       must never quit mid-import and re-polls while a job runs).
 + */
 +
 +#include "android.h"
@@ -150,6 +162,7 @@ index 0000000..9fa1f6a
 +#include "ui_curses.h"
 +#include "utils.h"
 +#include "window.h"
++#include "worker.h"
 +#include "xmalloc.h"
 +
 +#include <ctype.h>
@@ -171,6 +184,9 @@ index 0000000..9fa1f6a
 +static int android_dirty_options;
 +static int android_dirty_view;
 +
++/* last jobs-running state sent; -1 = never sent */
++static int android_jobs_running = -1;
++
 +/* last volume sent; -2 = never sent */
 +static int android_vol_l = -2;
 +static int android_vol_r = -2;
@@ -183,6 +199,8 @@ index 0000000..9fa1f6a
 +/* inbound partial-line buffer, persists across android_process calls */
 +static char android_rbuf[4096];
 +static int android_rbuf_pos;
++
++static void android_jobs_event(void);
 +
 +static void android_close_client(void)
 +{
@@ -363,6 +381,10 @@ index 0000000..9fa1f6a
 +	}
 +	if (strcmp(line, "android-winch") == 0) {
 +		update_size();
++		return;
++	}
++	if (strcmp(line, "android-jobs") == 0) {
++		android_jobs_event();
 +		return;
 +	}
 +
@@ -550,6 +572,24 @@ index 0000000..9fa1f6a
 +}
 +
 +/*
++ * The android-jobs poll's answer, immediate like the selected event.
++ * Updates the flush diff's cache so the same state isn't re-sent.
++ */
++static void android_jobs_event(void)
++{
++	GBUF(buf);
++
++	if (android_client_fd == -1)
++		return;
++
++	android_jobs_running = worker_has_job() ? 1 : 0;
++	gbuf_addf(&buf, "{\"type\":\"jobs\",\"running\":%s}\n",
++			android_jobs_running ? "true" : "false");
++	android_write(&buf);
++	gbuf_free(&buf);
++}
++
++/*
 + * A colorscheme command sourced a theme file (command_mode.c hooks the
 + * success path only). The name is the app's theme-selector highlight;
 + * the color options themselves follow in the flushed options event.
@@ -616,6 +656,7 @@ index 0000000..9fa1f6a
 +	GBUF(buf);
 +	int vol_l, vol_r;
 +	int status_dirty;
++	int jobs_running;
 +
 +	if (android_client_fd == -1)
 +		return;
@@ -664,6 +705,14 @@ index 0000000..9fa1f6a
 +		gbuf_add_str(&buf, "}\n");
 +		free(android_live_filter);
 +		android_live_filter = lib_live_filter ? xstrdup(lib_live_filter) : NULL;
++	}
++	/* diffed like volume; promptness is job_fd's doing (see the
++	 * protocol comment) */
++	jobs_running = worker_has_job() ? 1 : 0;
++	if (android_dirty_all || jobs_running != android_jobs_running) {
++		gbuf_addf(&buf, "{\"type\":\"jobs\",\"running\":%s}\n",
++				jobs_running ? "true" : "false");
++		android_jobs_running = jobs_running;
 +	}
 +	if (android_dirty_all || android_dirty_options)
 +		android_options_event(&buf);
