@@ -1,4 +1,4 @@
-From f2b4c690b335bd40667da357f78febfe659e3aa1 Mon Sep 17 00:00:00 2001
+From bb6a8d54c353ebc25e51a746865a23f39bb6cf2c Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/2] add an Android app IPC socket
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..a81dc52
+index 0000000..35905d1
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,620 @@
+@@ -0,0 +1,631 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -115,6 +115,13 @@ index 0000000..a81dc52
 + *   android-pl-delete <name>
 + *       delete the named playlist (the selected event's playlist
 + *       variant); rest of line = name, verbatim.
++ *   android-winch
++ *       re-check the tty size and redraw. The app sends it after every
++ *       pty resize (and on connect): the kernel's SIGWINCH is lost if it
++ *       lands before the handler is installed (the app can resize the
++ *       just-spawned pty that early), and one landing between the
++ *       needs_to_resize check and the select entry sleeps until the next
++ *       wakeup — this line both sets the flag and *is* the wakeup.
 + */
 +
 +#include "android.h"
@@ -345,6 +352,10 @@ index 0000000..a81dc52
 +	}
 +	if (strncmp(line, "android-pl-delete ", 18) == 0) {
 +		pl_delete_by_name((char *)(line + 18));
++		return;
++	}
++	if (strcmp(line, "android-winch") == 0) {
++		update_size();
 +		return;
 +	}
 +
