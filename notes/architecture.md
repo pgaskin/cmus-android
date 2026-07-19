@@ -274,10 +274,14 @@ full plan and rationale; this file describes what currently exists.
   onPlay = `player-pause` toggle when paused (player-play *restarts*
   a loaded track) / `player-play` from stopped, onPause/focus-loss/
   becoming-noisy = `player-pause-playback`, next/prev/seek/stop
-  likewise. Art: MediaMetadataRetriever embedded → folder
-  {cover,folder,front,album}.{jpg,jpeg,png} (per-dir cache, ogg has
-  no framework art support and wv none at all) on an executor,
-  ≤640px, stale-track guard. Focus: request on PLAYING (attributes
+  likewise. Art chain (on an executor, ≤640px, stale-track guard):
+  MediaMetadataRetriever embedded → `OggCover` (ogg/opus
+  METADATA_BLOCK_PICTURE, stage 20 — the framework ignores it and cmus
+  filters it out of its comment allowlist, so neither the retriever nor
+  the IPC tags carry it; OggCover reassembles the Ogg comment packet
+  across pages + parses the FLAC picture block) → folder
+  {cover,folder,front,album}.{jpg,jpeg,png} (per-dir cache; wv has no
+  framework art support at all). Focus: request on PLAYING (attributes
   match op/aaudio: USAGE_MEDIA/CONTENT_TYPE_MUSIC), abandon on
   STOPPED, hold across PAUSED, transient-loss resume flag; denied or
   taken → never counter the TUI user.

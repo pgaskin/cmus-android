@@ -3,6 +3,60 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Stage 20: ogg/opus embedded art (done, device-verified)
+
+- Per [plans/20-ogg-opus-art.md](plans/20-ogg-opus-art.md). App-only, no
+  cmus change — Patrick's call after a planning hypothesis was tested and
+  disproved on-device (below).
+- **Disproved "the picture is already over IPC"**: my first read said the
+  ip plugins pass all vorbis comments through and android.c serializes
+  them, so `METADATA_BLOCK_PICTURE` would already be in `Status.tags()`.
+  Wrong — **comment.c filters every key through an `interesting[]`
+  allowlist** (`fix_key` → NULL for unlisted keys → `comments_add` frees
+  the value), and the picture keys aren't on it. So it's dropped at parse
+  time: never in `ti->comments`, hence never cached (cache.c `write_ti`)
+  and never in the IPC `tags`. **Device-proven** (Pixel 8, root adb): a
+  hand-built opus with an embedded 974 B FLAC-picture block (base64 1300
+  chars) added to the library + `android-save`d → a **236-byte** cache
+  whose only comment strings are output_gain/title/artist/album. That
+  ruled out both the read-from-tags route and the cmus-patch route
+  (Patrick picked the self-contained app parser over a cmus patch / a tag
+  library).
+- **`OggCover`** (new class, art-executor thread, no deps beyond
+  `android.util.Base64`): sniff `OggS` → **reassemble the comment-header
+  packet (packet index 1) across Ogg pages** (255-byte lacing
+  continuation, locked to the first BOS serial to skip any other
+  logical stream, 8 MB packet / 16 MB scan caps) → strip `\x03vorbis` /
+  `OpusTags` prefix → walk the LE vorbis-comment block →
+  `METADATA_BLOCK_PICTURE` (case-insensitive) → base64-decode → parse the
+  FLAC picture block (8 big-endian fields), **front-cover (type 3)
+  preferred, else first decodable**. Everything bounds-checked; any
+  malformed/truncated field → null, never an exception into the executor.
+  The load-bearing bit is the cross-page reassembly — embedded art makes
+  that packet span pages. Inserted in `MediaControl.decodeArt` between the
+  framework-null path and the folder-art fallback (reuses the existing
+  `decodeScaled` byte[] decode).
+- **Device-verified** (Pixel 8, root adb, `dumpsys media_session`
+  metadata size deltas — opus is where the framework returns null, so any
+  art there can *only* come from OggCover): single-page 300×300 PNG cover
+  → art set (size 4→5); **multi-page ~15-page 700×700 JPEG cover → art
+  set** (reassembly works); no-embedded opus → no art (size 2); no-
+  embedded + folder `cover.jpg` → folder art (size 3, fallback intact).
+  `decodeScaled` returning non-null confirms the extracted bytes decode
+  as a valid image (byte-correct extraction, not garbage). Zero OggCover
+  error logs. patch.sh check green (no cmus changes); clean assembleDebug.
+- **Test assets left on device** for re-testing (Patrick's request):
+  `…/files/.cmus/home/{arttest.opus (single-page PNG), bigart.opus
+  (multi-page JPEG), noart.opus, fdir/song.opus+cover.jpg}`. Host-side
+  copies + cover images + the METADATA_BLOCK_PICTURE base64 in the
+  session scratchpad. ffmpeg's opus muxer rejects a PNG attached_pic
+  stream, so the tag was hand-built (which also validated the exact FLAC
+  block layout; ffprobe re-derives the attached pic from it) and injected
+  via `-metadata` / an ffmetadata file for the big one (argv limit).
+- Open questions (defaults shipped): front-cover preference (yes); legacy
+  `COVERART`/`COVERARTMIME` raw-image field (skipped — rare); framework
+  attempt stays first, OggCover only on its null.
+
 ## 2026-07-19 — Stage 19: continuous state save (implemented; committed pre-verification at Patrick's direction)
 
 - Per [plans/19-continuous-save.md](plans/19-continuous-save.md) — the
