@@ -36,6 +36,7 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -1166,28 +1167,34 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         if (theme == null || crashScreen) {
             return;
         }
+        // a real Material dropdown anchored to the settings icon (the
+        // sub-selectors it opens — Theme/Font — stay the centered cmus-themed
+        // lists). Titles double as the switch keys.
+        PopupMenu menu = new PopupMenu(this, topBarShown ? settingsBtn : floatSettingsBtn);
+        menu.getMenu().add("Theme");
+        menu.getMenu().add("Font");
+        menu.getMenu().add("Import");
+        menu.getMenu().add("Update cache");
         // the control bar owns the keyboard toggle; when it's hidden the
-        // popover is the way in (stage 18)
-        List<String> items = new ArrayList<>(List.of("Theme", "Font", "Import", "Update cache"));
+        // menu is the way in (stage 18)
         if (!getSharedPreferences(TermService.PREFS, MODE_PRIVATE)
                 .getBoolean(TermService.PREF_SHOW_CONTROL_BAR, true)) {
-            items.add("Keyboard");
+            menu.getMenu().add("Keyboard");
         }
-        items.add("Settings");
-        showListPopup(topBarShown ? settingsBtn : floatSettingsBtn,
-                items.toArray(new String[0]),
-                () -> -1, true,
-                which -> {
-                    switch (items.get(which)) {
-                        case "Theme" -> showThemeSelector();
-                        case "Font" -> showFontSelector();
-                        case "Import" -> refreshTracks();
-                        case "Update cache" -> updateCache();
-                        case "Keyboard" -> toggleSoftKeyboard();
-                        case "Settings" -> startActivityForResult(
-                                new Intent(this, SettingsActivity.class), REQUEST_SETTINGS);
-                    }
-                });
+        menu.getMenu().add("Settings");
+        menu.setOnMenuItemClickListener(item -> {
+            switch (item.getTitle().toString()) {
+                case "Theme" -> showThemeSelector();
+                case "Font" -> showFontSelector();
+                case "Import" -> refreshTracks();
+                case "Update cache" -> updateCache();
+                case "Keyboard" -> toggleSoftKeyboard();
+                case "Settings" -> startActivityForResult(
+                        new Intent(this, SettingsActivity.class), REQUEST_SETTINGS);
+            }
+            return true;
+        });
+        menu.show();
     }
 
     @Override
