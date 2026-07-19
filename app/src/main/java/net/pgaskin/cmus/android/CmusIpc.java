@@ -35,7 +35,7 @@ public final class CmusIpc implements AutoCloseable {
     private static final String TAG = "cmus";
 
     public sealed interface Event permits Hello, Status, Position, Volume, View, Filter,
-            Options, Selected, Colorscheme, Jobs, Saved {
+            Options, Selected, Colorscheme, Jobs, Dirty, Saved {
     }
 
     /** First line after connect. */
@@ -129,12 +129,27 @@ public final class CmusIpc implements AutoCloseable {
     }
 
     /**
-     * The `android-save` line's ack: cmus wrote its whole exit-path save
-     * set (resume, autosave, queue, library, playlists, histories, cache)
-     * without exiting; the state files are fresh on disk. Transient — an
-     * ack, not state.
+     * Unsaved state-file changes since the last android-save of each kind
+     * (library, cache, playlist, queue, history — resume/settings have no
+     * cmus-side writers to announce and exist only as save selectors).
+     * Edge-triggered per save cycle: at most one announcement per kind
+     * between saves, so {@link StateSaver}'s debounce is arm-on-first-
+     * change with bounded staleness. Kinds dirty at connect re-announce
+     * in the snapshot, so a reconnect loses nothing; transient otherwise
+     * — not cached or replayed (the snapshot re-announcement is the
+     * replay).
      */
-    public record Saved() implements Event {
+    public record Dirty(List<String> what) implements Event {
+    }
+
+    /**
+     * An `android-save` line's ack: cmus wrote the requested state-file
+     * kinds (what echoes them; bare android-save = the whole exit-path
+     * save set) without exiting; those files are fresh on disk. Acks
+     * arrive in request order on the one socket, so FIFO matching is
+     * exact. Transient — an ack, not state.
+     */
+    public record Saved(List<String> what) implements Event {
     }
 
     public enum PlayState { STOPPED, PLAYING, PAUSED }
@@ -414,6 +429,8 @@ public final class CmusIpc implements AutoCloseable {
             }
             case Colorscheme ignored -> {
             }
+            case Dirty ignored -> {
+            }
             case Saved ignored -> {
             }
         }
@@ -442,6 +459,7 @@ public final class CmusIpc implements AutoCloseable {
         Map<String, String> options = Map.of();
         List<String> files = List.of();
         List<String> playlists = List.of();
+        List<String> what = List.of();
         String playlist = null;
         try (JsonReader r = new JsonReader(new StringReader(line))) {
             r.beginObject();
@@ -463,6 +481,7 @@ public final class CmusIpc implements AutoCloseable {
                     case "options" -> options = readOptions(r);
                     case "files" -> files = readStrings(r);
                     case "playlists" -> playlists = readStrings(r);
+                    case "what" -> what = readStrings(r);
                     case "playlist" -> playlist = r.nextString();
                     default -> r.skipValue();
                 }
@@ -480,7 +499,8 @@ public final class CmusIpc implements AutoCloseable {
             case "selected" -> new Selected(viewName, files, playlists, playlist);
             case "colorscheme" -> new Colorscheme(name);
             case "jobs" -> new Jobs(running);
-            case "saved" -> new Saved();
+            case "dirty" -> new Dirty(what);
+            case "saved" -> new Saved(what);
             case null -> throw new IOException("event without a type");
             default -> null;
         };

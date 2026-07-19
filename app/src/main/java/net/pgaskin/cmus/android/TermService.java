@@ -106,6 +106,7 @@ public class TermService extends Service implements TerminalSessionClient {
     private TerminalSession session;
     private CmusIpc ipc;
     private MediaControl mediaControl;
+    private StateSaver stateSaver;
     private SessionCallback callback;
     private String plEnvVars;
     // how many activities are visible (MainActivity + SettingsActivity each
@@ -126,7 +127,6 @@ public class TermService extends Service implements TerminalSessionClient {
     // stage-18 data resets: kill→mutate→respawn (see resetData)
     private Runnable pendingResetOp;
     private Runnable pendingResetDone;
-    private Runnable pendingSavedDone;
     private boolean ipcLogging;
 
     @Override
@@ -224,6 +224,9 @@ public class TermService extends Service implements TerminalSessionClient {
             ipc.addListener(ipcListener);
             mediaControl = new MediaControl(this, ipc);
             ipc.addListener(mediaControl);
+            // continuous state saves (stage 19); per-CmusIpc like the rest
+            stateSaver = new StateSaver(ipc);
+            ipc.addListener(stateSaver);
         }
         return session;
     }
@@ -362,10 +365,8 @@ public class TermService extends Service implements TerminalSessionClient {
                             + " color_win_cur=" + o.values().get("color_win_cur")
                             + " color_titleline_bg=" + o.values().get("color_titleline_bg"));
                 }
-                case CmusIpc.Saved ignored -> {
-                    logIpc("ipc saved");
-                    completeSaved();
-                }
+                case CmusIpc.Dirty d -> logIpc("ipc dirty " + d.what());
+                case CmusIpc.Saved s -> logIpc("ipc saved " + s.what());
             }
         }
     };
@@ -631,32 +632,19 @@ public class TermService extends Service implements TerminalSessionClient {
     // stage-18 data section primitives (SettingsActivity drives these)
 
     /**
-     * Sends android-save and runs done (main thread, exactly once) on the
-     * Saved ack or after timeoutMs — a wedged cmus must never block an
-     * export or a pre-reset save, so the timeout path proceeds with
-     * whatever is on disk. No session/IPC = nothing to save, done runs
-     * immediately.
+     * Full save through {@link StateSaver}'s FIFO ack queue: done runs
+     * (main thread, exactly once) on this request's own Saved ack — a
+     * concurrent periodic save's ack can't stand in for it — or after
+     * timeoutMs, so a wedged cmus never blocks an export or a pre-reset
+     * save (the timeout path proceeds with whatever is on disk). No
+     * session/IPC = nothing to save, done runs immediately.
      */
     public void saveState(long timeoutMs, Runnable done) {
-        completeSaved(); // a stale pending save shouldn't couple with ours
-        if (ipc == null) {
+        if (stateSaver == null) {
             done.run();
             return;
         }
-        pendingSavedDone = done;
-        ipc.send("android-save");
-        mainHandler.postDelayed(savedTimeout, timeoutMs);
-    }
-
-    private final Runnable savedTimeout = this::completeSaved;
-
-    private void completeSaved() {
-        mainHandler.removeCallbacks(savedTimeout);
-        Runnable done = pendingSavedDone;
-        pendingSavedDone = null;
-        if (done != null) {
-            done.run();
-        }
+        stateSaver.saveNow(timeoutMs, done);
     }
 
     /**
@@ -723,6 +711,9 @@ public class TermService extends Service implements TerminalSessionClient {
         if (mediaControl != null) {
             mediaControl.close();
         }
+        if (stateSaver != null) {
+            stateSaver.close();
+        }
         if (ipc != null) {
             ipc.close();
         }
@@ -763,6 +754,10 @@ public class TermService extends Service implements TerminalSessionClient {
         if (mediaControl != null) {
             mediaControl.close(); // session released before the FGS stops
             mediaControl = null;
+        }
+        if (stateSaver != null) {
+            stateSaver.close(); // timers die with the session's IPC
+            stateSaver = null;
         }
         if (ipc != null) {
             ipc.close(); // before the socket path goes stale; stops reconnects
