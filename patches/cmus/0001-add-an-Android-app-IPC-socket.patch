@@ -1,4 +1,4 @@
-From 98f787ca1cf438605c332764804bed8f0e32cfd9 Mon Sep 17 00:00:00 2001
+From 70ebe4b08139a34e06ad319559f2fa293b459023 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 1/4] add an Android app IPC socket
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..dd1e674
+index 0000000..8a180fb
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,876 @@
+@@ -0,0 +1,886 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -149,6 +149,12 @@ index 0000000..dd1e674
 + *       the two-pane views (win-next), or the adjacent view once at that
 + *       side's edge / in a single-pane view (left-view/right-view -n — a
 + *       spatial gesture shouldn't wrap around).
++ *   android-selected
++ *       emit a selected event for the *current* selection, the same one a
++ *       list right-click produces but without a mouse event — the app's
++ *       floating-joystick / mouse=false path, where a real button report
++ *       can't be sent. Emits nothing in the views where win-remove would
++ *       prompt (same gating as the click), so it's safe to send anywhere.
 + *   android-pl-add <name>
 + *       add the current view's selection (the selected event's file set)
 + *       to the named playlist; rest of line = name, verbatim.
@@ -451,6 +457,10 @@ index 0000000..dd1e674
 +	}
 +	if (strcmp(line, "android-nav-right") == 0) {
 +		android_nav(1);
++		return;
++	}
++	if (strcmp(line, "android-selected") == 0) {
++		android_selected_event();
 +		return;
 +	}
 +	if (strncmp(line, "android-pl-add ", 15) == 0) {

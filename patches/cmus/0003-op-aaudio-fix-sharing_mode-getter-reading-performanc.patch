@@ -1,4 +1,4 @@
-From f1b08b1d2064243671519c1809540bdf88c3ffc4 Mon Sep 17 00:00:00 2001
+From 90f82517d42f1d0375f239a86af125a64897aaf5 Mon Sep 17 00:00:00 2001
 From: Patrick Gaskin <patrick@pgaskin.net>
 Date: Sun, 19 Jul 2026 13:41:48 -0400
 Subject: [PATCH 3/4] op/aaudio: fix sharing_mode getter reading
