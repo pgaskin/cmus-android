@@ -1,0 +1,118 @@
+From 7274da2de8b973780afa58c4422e97420f4a07c8 Mon Sep 17 00:00:00 2001
+From: Patrick Gaskin <patrick@pgaskin.net>
+Date: Sun, 19 Jul 2026 14:53:47 -0400
+Subject: [PATCH 4/4] save playlists atomically via a temporary file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+do_cmus_save wrote the target in place with O_TRUNC, so a crash or
+SIGKILL mid-write (or a full disk) could leave lib.pl, queue.pl, or a
+playlist truncated. Write to <filename>.tmp and rename(2) it over the
+target instead, matching what the resume, autosave, history, and cache
+writers already do. Saving to "-" (a remote client's stdout) is
+unchanged.
+
+Since the temporaries now live in the playlist directory, pl_load_all
+skips *.tmp files (a leftover from an interrupted save must not load
+as a phantom playlist) and new playlist names ending in .tmp are
+rejected — saving playlist X writes X.tmp, which would clobber the
+file of a playlist literally named X.tmp.
+
+diff --git a/cmus.c b/cmus.c
+index 14213c1..c3eec51 100644
+--- a/cmus.c
++++ b/cmus.c
+@@ -31,6 +31,7 @@
+ #include "options.h"
+ #include "command_mode.h"
+ #include "xmalloc.h"
++#include "xstrjoin.h"
+ #include "debug.h"
+ #include "load_dir.h"
+ #include "ui_curses.h"
+@@ -46,6 +47,7 @@
+ #include <unistd.h>
+ #include <dirent.h>
+ #include <dlfcn.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <ctype.h>
+ #include <strings.h>
+@@ -258,6 +260,7 @@ static int save_playlist_cb(void *data, struct track_info *ti)
+ static int do_cmus_save(for_each_ti_cb for_each_ti, const char *filename,
+ 		save_tracks_cb save_tracks, void *opaque)
+ {
++	char *tmp = NULL;
+ 	int fd, rc;
+ 
+ 	if (strcmp(filename, "-") == 0) {
+@@ -266,12 +269,27 @@ static int do_cmus_save(for_each_ti_cb for_each_ti, const char *filename,
+ 			return 0;
+ 		}
+ 		fd = dup(get_client_fd());
+-	} else
+-		fd = open(filename, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+-	if (fd == -1)
++	} else {
++		/* write to a temporary file and rename over the target so
++		 * an interrupted save can never leave a truncated playlist
++		 * (the resume/autosave/history/cache writers already do
++		 * this) */
++		tmp = xstrjoin(filename, ".tmp");
++		fd = open(tmp, O_CREAT | O_WRONLY | O_TRUNC, 0666);
++	}
++	if (fd == -1) {
++		free(tmp);
+ 		return -1;
++	}
+ 	rc = for_each_ti(save_tracks, &fd, opaque);
+ 	close(fd);
++	if (tmp) {
++		if (rc != -1 && rename(tmp, filename) == -1)
++			rc = -1;
++		if (rc == -1)
++			unlink(tmp);
++		free(tmp);
++	}
+ 	return rc;
+ }
+ 
+diff --git a/pl.c b/pl.c
+index 50af6de..4967ee9 100644
+--- a/pl.c
++++ b/pl.c
+@@ -27,6 +27,7 @@
+ #include "job.h"
+ #include "misc.h"
+ #include "ui_curses.h"
++#include "utils.h"
+ #include "xstrjoin.h"
+ #include "worker.h"
+ #include "uchar.h"
+@@ -293,6 +294,10 @@ static void pl_load_all(void)
+ 					cmus_playlist_dir);
+ 			continue;
+ 		}
++		/* a leftover from an interrupted atomic save (cmus_save
++		 * writes <name>.tmp and renames), not a playlist */
++		if (ends_with(file, ".tmp"))
++			continue;
+ 		pl_load_one(file);
+ 	}
+ 	dir_close(&dir);
+@@ -566,6 +571,14 @@ static int pl_check_new_pl_name(const char *name)
+ 		return 0;
+ 	}
+ 
++	/* reserved for cmus_save's atomic-write temporaries: such a file
++	 * would be skipped at load, and saving playlist X would clobber
++	 * the file of a playlist named X.tmp */
++	if (ends_with(name, ".tmp")) {
++		error_msg("playlist names cannot end in .tmp");
++		return 0;
++	}
++
+ 	if (pl_name_exists(name)) {
+ 		error_msg("another playlist named %s already exists", name);
+ 		return 0;
