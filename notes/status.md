@@ -3,6 +3,37 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Settings screen fixes (two minor, device-verified)
+
+Unrelated follow-ups after stage 21; authored as Claude.
+
+- **Settings top clipped under the action bar**: targetSdk 36 enforces
+  edge-to-edge, so the platform stopped padding the content window for
+  the system bars — `android:id/content` (the ScrollView) filled the
+  whole window `[0,0][w,h]` and the action bar painted over the first
+  rows (uiautomator-confirmed; worse on the shorter-status-bar / lower-
+  density device, barely visible on the other — which is why it looked
+  device-specific). Fix: an OnApplyWindowInsetsListener on the ScrollView
+  applies the dispatched systemBars|displayCutout insets as padding. The
+  dispatched top inset **already folds in the action bar height** (a
+  first attempt adding `actionBarSize` on top double-padded by ~one
+  status bar — dropped it). Verified on both devices: first row clears
+  the bar, last clears the nav pill.
+- **Settings icon → real PopupMenu**: the gear's fan-out list was a
+  hand-rolled anchored PopupWindow (shared showListPopup); it's now
+  `android.widget.PopupMenu`, a stock Material dropdown. The sub-selectors
+  it opens (Theme, Font) stay the centered cmus-themed showListPopup
+  lists — only the top-level menu changed. Titles double as the switch
+  keys.
+- **Submodule gitlink slip caught here**: the stage-21 `git add
+  third_party/cmus` had committed the gitlink at the *patched* HEAD, but
+  the vncpatch pattern pins it at the pristine base (`d335e90`; patches
+  live in `patches/cmus/`). `patch.sh check` reads the index gitlink as
+  `base` and errors when it equals HEAD → the build's preBuild check
+  failed. Rebased the four stage-21 commits so none move the pointer (the
+  cmus commit touches only patch files); check green again. Stage-21
+  hashes changed (unpushed).
+
 ## 2026-07-19 — Stage 21: direct touch toggle + floating joystick (done, device-verified)
 
 - Per [plans/21-touch-joystick.md](plans/21-touch-joystick.md). One cmus
