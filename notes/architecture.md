@@ -46,9 +46,18 @@ full plan and rationale; this file describes what currently exists.
   variant for the playlist view's list pane — only where the offered
   action is prompt-free, since yes_no_query blocks the main loop on the
   pty]; a pl_android_for_each_name wrapper in pl.c/h [struct playlist
-  is private]; and android-nav-left/right + android-pl-add/delete
+  is private]; a `filter` event mirroring the library live filter,
+  diffed against a cached copy in android_flush instead of hooked —
+  lib_live_filter has writers that bypass every command (the resume
+  file restores it at startup, lib_set_filter silently clears it on
+  filters-view activation), so the volume event's diff-in-flush
+  pattern covers them all with no hunks outside android.c; and
+  android-nav-left/right + android-pl-add/delete + android-winch
   app-intent input lines resolved inside android.c [pane-aware
-  joystick navigation; verbatim-name playlist add/delete]; everything
+  joystick navigation; verbatim-name playlist add/delete; a tty-size
+  re-check the app sends after every pty resize — a SIGWINCH can beat
+  cmus's handler install or its select entry, so update_size() sets
+  the flag and the line itself is the wakeup]; everything
   guarded by CONFIG_ANDROID so the patched tree
   still builds with the upstream Makefile), 0002 removes remote-stream
   support (input.c remote machinery behind `#ifndef CONFIG_ANDROID`,
@@ -134,11 +143,20 @@ full plan and rationale; this file describes what currently exists.
   Session death tears down ipc/mediaControl/FGS and drops the
   session ref so getSession can respawn; the backgrounded activity
   stays in recents and respawns on refocus. onTaskRemoved: playing →
-  survive; idle → immediate lossless quit.
+  survive; idle → immediate lossless quit. Sleep timer: an
+  elapsedRealtime deadline + postDelayed fire sending
+  `player-pause-playback` (pause-only, resume-friendly, a no-op unless
+  playing; uptimeMillis timing is safe because active audio holds a
+  partial wakelock, and a dozed device wasn't playing — the idle-quit
+  stance); after the expiry pause a backgrounded app falls into the
+  normal idle-quit. Session death clears the deadline
+  (removeCallbacksAndMessages silently drops the fire).
   Owns the `CmusIpc` client (created with the session, closed on
   session exit/destroy): forces `set mouse=true` + `set resume=true`
-  + `set pl_env_vars=…` on every (re)connect and logs every event at
-  DEBUG. Policy (Patrick): overriding cmus settings that core wrapper
+  + `set pl_env_vars=…` plus an `android-winch` size re-check on every
+  (re)connect (an attach can resize the pty before cmus installs its
+  WINCH handler; the connect is after init by definition) and logs
+  every event at DEBUG. Policy (Patrick): overriding cmus settings that core wrapper
   functionality depends on is desired — force them over the socket on
   (re)connect (never touch user config files; autosave persisting the
   forced value is fine). resume makes every quit lossless (track,
@@ -152,7 +170,7 @@ full plan and rationale; this file describes what currently exists.
   exit → stopSelf + finish the activity.
 - `CmusIpc` — client for the android.c socket (the protocol comment
   there is the contract): sealed `Event` records
-  (Hello/Status/Position/Volume/View/Options + transient Selected —
+  (Hello/Status/Position/Volume/View/Filter/Options + transient Selected —
   right-click resolutions, not cached/replayed) parsed with JsonReader
   (JSONObject drops duplicate tag keys), listener callbacks on the
   main thread with cached-state replay for late attachers, `send()`
@@ -198,14 +216,45 @@ full plan and rationale; this file describes what currently exists.
   terminfo + cmus-data assets (stamped by versionCode + APK install
   time), rebuilds `cmus-lib/{ip,op}/NAME.so` symlinks into
   nativeLibraryDir, creates `cmus-home/`.
-- `MainActivity` — vertical LinearLayout: view-selector tab bar over a
+- `MainActivity` — vertical LinearLayout: top bar over a
   FrameLayout-wrapped `TerminalView` (focusableInTouchMode — required
   for IME/keys; set in code, easy to miss; sizes from raw bounds, so
   insets pad the wrappers; a `JoyDot` overlays its bottom-right) over
   a `ControlBar` over a `KeyRow` (GONE
-  unless the IME is visible — the insets listener toggles it on
-  isVisible(Type.ime()), hands the bottom inset to whichever chrome is
-  bottom-most visible, and clears sticky modifier state on hide).
+  unless the IME is visible *and* the terminal owns it — its keys
+  inject terminal sequences, so it hides while the filter box has
+  focus; sticky modifier state cleared on hide). The top bar is the
+  view-selector tab bar flanked by a quick-filter icon (left) and the
+  sleep-timer slot (right); the tab scroller is the bar's intrinsic
+  height (wrap_content — a weighted match_parent child would be forced
+  to the icon squares' height, clipping the tabs). IME transitions are
+  handled asymmetrically around the animation (one layout pass, one
+  pty resize, no flicker): a hide is optimistic (imeVisible cleared at
+  request time, IME inset tracked apart from bar insets, so the layout
+  expands under the departing keyboard — also what stops the key row
+  flashing in when the box loses focus), while a show lays out fully
+  at animation start but translates the bottom chrome down and rides
+  it up on the keyboard's animated edge (WindowInsetsAnimation
+  onProgress; the vacated band wears the root's cmdline bg). Every pty
+  grid change (onEmulatorSet) sends `android-winch` so cmus's redraw
+  is deterministic (dropped harmlessly pre-connect; the connect-time
+  nudge covers that).
+  Quick filter: the search icon morphs the bar — tabs + sleep slot
+  swap for a monospace EditText (tab-band height, no Material
+  min-height) + ✕ — driving `live-filter` per keystroke (verbatim
+  rest-of-line, blank = clear; trimmed). Opening from a non-library
+  view sends `view tree`. The box prefills from the cached Filter echo
+  and ignores echoes while open (authoritative mid-edit, the mid-drag
+  slider rule); the icon's tint is the always-on indicator (full fg =
+  filter applied — resume-restored filters light it at launch, a
+  filters-view clear dims it). ✕ clears and collapses; tapping the
+  icon again collapses keeping the filter; IME search action hands
+  focus back to the terminal; closed on onStop/crash (the filter
+  itself is cmus state). Sleep slot: bedtime icon when off,
+  minutes-left text when armed (ticked on the deadline's minute
+  boundary while visible, refreshed by Status events so the expiry
+  pause reverts it promptly); tap = preset list (15–90 min) +
+  Custom… + Turn off; the service owns the countdown.
   Long-press = right-click (BUTTON3 press+release at the pressed cell;
   always consumed, which is also what keeps the lib's text-selection
   mode permanently unreachable): cmus moves its selection natively and
@@ -312,5 +361,5 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Quick filter + sleep timer (15), then theme/font selector overlay,
-settings, data import/export (16+).
+Theme/font selector overlay + bundled fonts (16), then settings, data
+import/export (17+).

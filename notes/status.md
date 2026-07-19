@@ -3,6 +3,76 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Stage 15: quick filter + sleep timer (done)
+
+- Per [plans/15-filter-sleep.md](plans/15-filter-sleep.md) — the plan's
+  designs held (cmus `filter` event via the volume-style diff-in-flush,
+  zero hooks; box morph; service-owned sleep countdown) — plus a
+  verification round of Patrick live-testing every build that produced
+  four real fixes, one of them a cmus patch addition.
+- **Quick filter:** search icon (left of the tabs) morphs the bar into a
+  monospace EditText + ✕ driving `live-filter` per keystroke (verbatim
+  rest-of-line — parse_command has no quoting; blank = clear; plain text
+  = substring match, `~`-prefixed = expression per expr_is_short).
+  Opening from a non-library view sends `view tree`. The box prefills
+  from the cached echo and ignores echoes while open; the icon tint is
+  the always-on indicator. ✕ clears+collapses, icon-tap collapses
+  keeping the filter, IME search action refocuses the terminal, KeyRow
+  hides while the box has focus.
+- **Filter event (0001):** `{"type":"filter","filter":...}` diffed in
+  android_flush against a cached copy — hook-free by design, because
+  lib_live_filter has command-bypassing writers: the resume file
+  restores it at startup (verified: quit → relaunch snapshot carries
+  it) and lib_set_filter silently clears it on filters-view/`filter`
+  activation (verified via `filter duration<9999` → null echo with no
+  live-filter command involved).
+- **Sleep timer:** TermService owns an elapsedRealtime deadline +
+  postDelayed `player-pause-playback` (pause-only; uptimeMillis timing
+  safe — active audio holds a partial wakelock, a dozed device wasn't
+  playing; expiry + backgrounded feeds the normal idle-quit). Tab bar's
+  right slot: bedtime icon ↔ minutes-left text (minute-boundary tick +
+  Status-event refresh); tap = 15–90 min presets + Custom… + Turn off.
+  Session death zeroes the deadline (removeCallbacksAndMessages had
+  already dropped the fire silently).
+- **Patrick's live-testing fixes:** (1) top bar: the weighted
+  match_parent tab scroller was forced to the icon squares' height
+  (LinearLayout's weighted remeasure), clipping the tabs → wrap_content
+  makes the tabs the intrinsic height; the EditText drops Material's
+  48dp min-height so the morph doesn't change bar height. (2) IME
+  close flickered: the box losing focus flashed the KeyRow in for the
+  hide animation → hides are optimistic (imeVisible cleared at request,
+  IME inset split from bar insets so the stale inset can't land on the
+  control bar); layout expands under the departing keyboard in one
+  pass. (3) IME open left a gap where the keyboard would land (layout
+  jumps at animation start) → show lays out immediately but the bottom
+  chrome translates down and rides the keyboard's animated edge up
+  (WindowInsetsAnimation onProgress), vacated band painted by the
+  root's cmdlineBg. (4) **Missed-SIGWINCH band** (win_title-styled
+  blank cells below a stale 42-row grid after install-restart, and
+  sometimes on filter close): the kernel's WINCH is *lost* if the
+  attach resize beats cmus's sigaction (default disposition ignores
+  it) and *stranded* if it lands between the needs_to_resize check and
+  select entry (sleeps until the next wakeup — indefinitely when
+  idle). New `android-winch` intent line (0001) calls the
+  already-exported update_size(); the app sends it from onEmulatorSet
+  (every pty grid change) and on every IPC connect. Patrick: "that
+  worked" / "it all works".
+- Verified on device (Pixel 8, wifi adb + logcat + debug receiver;
+  Patrick hands-on throughout): snapshot carries `filter` (null and
+  set); per-keystroke echoes (b→be→bea→beat); ✕ → null echo + tabs +
+  terminal height restored (bounds via uiautomator dump); resume
+  round-trip; silent-clear echo; sleep 1m set→fire→pause logged with
+  countdown text rendered and slot reverting; morph keeps the exact
+  132–204 px band both states. patch.sh check green after both 0001
+  fixup+regen rounds; clean assembleDebug.
+- Testing notes: uiautomator dump + a hand-rolled PNG decoder (no PIL
+  on host) were the workhorses — the band's color matching win_title_bg
+  is what cracked the WINCH diagnosis; prefs showed the spawn grid
+  67×42 saved from an IME-open onStop, which is why only
+  install-restarts reproduced it. adb `input text` types into the
+  focused EditText directly. clangd's phantom android.c errors again —
+  build is the arbiter.
+
 ## 2026-07-18 — Stage 14: input B (done)
 
 - Per [plans/14-input-b.md](plans/14-input-b.md), but with a mid-stage
@@ -614,10 +684,10 @@ pick up where things left off.
 
 ## Next
 
-Stage 15: quick filter + sleep timer (tab-bar morphing live-filter
-search box focused on the library; sleep-timer duration selector with
-minutes-left countdown icon) — needs its detailed plan written and
-approved first.
+Stage 16: theme/font selector overlay + bundled fonts (long-press the
+settings icon per the overview — the icon itself doesn't exist yet;
+Material You generated colorscheme idea below belongs here) — needs its
+detailed plan written and approved first.
 
 Note for later (Patrick; stage 18 data import, or wherever imports
 land first): inhibit the idle-quit timer while media is being
