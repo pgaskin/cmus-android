@@ -51,14 +51,22 @@ full plan and rationale; this file describes what currently exists.
   lib_live_filter has writers that bypass every command (the resume
   file restores it at startup, lib_set_filter silently clears it on
   filters-view activation), so the volume event's diff-in-flush
-  pattern covers them all with no hunks outside android.c; and
+  pattern covers them all with no hunks outside android.c; a
+  `colorscheme` event from cmd_colorscheme's success path only
+  (transient like `selected` — cmus doesn't retain the name, the colors
+  ride the options echo; the app's theme-selector highlight); and
   android-nav-left/right + android-pl-add/delete + android-winch
   app-intent input lines resolved inside android.c [pane-aware
   joystick navigation; verbatim-name playlist add/delete; a tty-size
   re-check the app sends after every pty resize — a SIGWINCH can beat
   cmus's handler install or its select entry, so update_size() sets
-  the flag and the line itself is the wakeup]; everything
-  guarded by CONFIG_ANDROID so the patched tree
+  the flag and the line itself is the wakeup]. player_pos_exact
+  *trylocks* the player mutexes, falling back to the whole-second
+  snapshot position: it runs in the main loop every flush, and at a
+  track boundary the consumer thread holds consumer_mutex across its
+  blocking get_next callback that only the main loop can answer — a
+  blocking lock there deadlocked the whole player (stage-16 fix).
+  Everything guarded by CONFIG_ANDROID so the patched tree
   still builds with the upstream Makefile), 0002 removes remote-stream
   support (input.c remote machinery behind `#ifndef CONFIG_ANDROID`,
   cmus_detect_ft's http branch out) so http.c drops from the link. The
@@ -156,7 +164,17 @@ full plan and rationale; this file describes what currently exists.
   + `set pl_env_vars=…` plus an `android-winch` size re-check on every
   (re)connect (an attach can resize the pty before cmus installs its
   WINCH handler; the connect is after init by definition) and logs
-  every event at DEBUG. Policy (Patrick): overriding cmus settings that core wrapper
+  every event at DEBUG. Owns the Material You scheme (it owns the
+  emulator and outlives the activity): pushes the MaterialYouTheme
+  entries into `mColors.mCurrentColors` on spawn and on
+  onConfigurationChanged while active (light/dark + wallpaper changes,
+  headless included — palette-push only, no cmus traffic), re-forces
+  the constant `set` burst on every connect while active (stale
+  autosave after a force-stop), resets palette + pref on any
+  Colorscheme echo (a sourced theme replaces the generated one), and
+  raises SessionCallback.onPaletteChanged so the activity repaints the
+  terminal and re-resolves chrome when ARGB moves under unchanged
+  indexes. Policy (Patrick): overriding cmus settings that core wrapper
   functionality depends on is desired — force them over the socket on
   (re)connect (never touch user config files; autosave persisting the
   forced value is fine). resume makes every quit lossless (track,
@@ -170,8 +188,9 @@ full plan and rationale; this file describes what currently exists.
   exit → stopSelf + finish the activity.
 - `CmusIpc` — client for the android.c socket (the protocol comment
   there is the contract): sealed `Event` records
-  (Hello/Status/Position/Volume/View/Filter/Options + transient Selected —
-  right-click resolutions, not cached/replayed) parsed with JsonReader
+  (Hello/Status/Position/Volume/View/Filter/Options + transient Selected
+  and Colorscheme — right-click resolutions and sourced-theme names,
+  not cached/replayed) parsed with JsonReader
   (JSONObject drops duplicate tag keys), listener callbacks on the
   main thread with cached-state replay for late attachers, `send()`
   for raw command lines (rejects newline/overlong), self-reconnecting
@@ -179,13 +198,28 @@ full plan and rationale; this file describes what currently exists.
   crosses connections). Positions are fractional seconds (double);
   position events still tick at whole-second changes (≤1/s).
 - `CmusTheme` — chrome-relevant color_* options resolved to ARGB (record
-  built from an Options event; equality = change detection). Value
-  grammar is options.c get_color ("default" | 16 names | bare 16-255);
-  palette is termux's static `TerminalColors.COLOR_SCHEME` — exactly
-  what TerminalView renders, since only OSC 4/10/11 (never sent by
-  cmus) mutate the live copy — with "default" → the terminal
-  default-fg/bg indices per role. Resolves win/win_title now and
-  statusline/cmdline/separator ahead of the stage-12 bottom bar.
+  built from an Options event + the live palette; equality = change
+  detection, including palette pushes moving ARGB under unchanged
+  indexes). Value grammar is options.c get_color ("default" | 16 names |
+  bare 16-255); resolution goes through the live emulator palette
+  (`mColors.mCurrentColors`) — cmus never sends OSC 4/10/11, but since
+  stage 16 the *app* rewrites entries in place of one (Material You), so
+  the static `TerminalColors.COLOR_SCHEME` is only the no-emulator
+  fallback — with "default" → the terminal default-fg/bg indices per
+  role.
+- `MaterialYouTheme` — the generated Material You colorscheme: palette
+  entries 16–42 get exact dynamic-color ARGB (no xterm-cube
+  quantization) and the 27 color_* roles point at them via a *constant*
+  `set` burst (`commands()`), so a light/dark or wallpaper change is a
+  palette re-push with zero cmus traffic — the autosaved indexes don't
+  move. Role structure mirrors gruvbox-warm (hard-contrast bg, one band
+  tone for titles/selections with the statusline a half-mix darker and
+  the top bar darker still, one shared title accent, and a
+  *complemented* status accent — the five system ramps are all
+  harmonized near the seed hue, so a different hue is synthesized by
+  180° HSV rotation; list hierarchy playing &gt; selected &gt;
+  half-desaturated unselected). Direct color-setting is reserved for
+  generated schemes; file-based themes go through `colorscheme`.
 - `MediaControl` — framework MediaSession + MediaStyle notification +
   cover art + audio focus, a pure mirror of CmusIpc events (13+
   renders system controls from PlaybackState actions + metadata; the
@@ -255,6 +289,25 @@ full plan and rationale; this file describes what currently exists.
   boundary while visible, refreshed by Status events so the expiry
   pause reverts it promptly); tap = preset list (15–90 min) +
   Custom… + Turn off; the service owns the countdown.
+  Settings icon (faint, rightmost): tap = popover (Theme / Font /
+  Settings — the last toasts until stage 17), long-press = theme
+  selector directly. The selectors are centered scrollable list popups
+  over the TUI (win colors, separator frame, no scrim, ~60% height cap,
+  closed on onStop/crash), sharing one PopupWindow slot + a refresh
+  lambda that re-tints rows when the selection moves. Theme column:
+  Material You pinned first (service state), then the sorted union of
+  cmus-home/cmus-data theme files (whitespace names skipped —
+  `colorscheme` takes one arg); picks send `colorscheme <name>` and the
+  highlight follows the echoed Colorscheme event (name persisted in a
+  pref). Font column: System + the five bundled fonts (assets/fonts,
+  Iosevka the default; pref stores "" for an explicit System pick);
+  picks apply + persist immediately — setTypeface rebuilds the renderer
+  through the pinch-zoom resize path, and the active typeface threads
+  through every chrome text site and the ControlBar metrics statics
+  (the flushness mirror measures what the renderer measures). Tabs are
+  bold at ~1.15× the terminal font (the filter box too), the active tab
+  scrolls fully into view on the View echo, and the filters/settings
+  tabs are hidden unless active.
   Long-press = right-click (BUTTON3 press+release at the pressed cell;
   always consumed, which is also what keeps the lib's text-selection
   mode permanently unreachable): cmus moves its selection natively and
@@ -316,8 +369,9 @@ full plan and rationale; this file describes what currently exists.
   drag-release sends `seek n` and rebases locally to skip the echo
   round trip. Volume button exists only while softvol=true and opens
   a PopupWindow with a vertical slider (`vol n` per integer step).
-  The queue button is win-add-q, flipping to win-remove (remove icon)
-  while the echoed View is the queue.
+  The queue button is three-state on the echoed View: win-add-q
+  normally, win-remove (remove icon) in the queue, and + = win-add-l
+  (the browser's `a` binding) in the browser.
   `CmusSlider` is the shared flat one-color slider (track/fill/block
   thumb, horizontal or vertical, float progress, redraws only on
   ≥0.5px thumb movement, ignores external updates mid-drag).
@@ -361,5 +415,4 @@ full plan and rationale; this file describes what currently exists.
 
 ## Coming next (see overview stages)
 
-Theme/font selector overlay + bundled fonts (16), then settings, data
-import/export (17+).
+Settings screen (17), then data import/export (18), polish/verify (19).

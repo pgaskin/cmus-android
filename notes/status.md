@@ -3,6 +3,102 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — Stage 16: theme/font selector + bundled fonts (done)
+
+- Per [plans/16-theme-font.md](plans/16-theme-font.md) with two Patrick
+  redesigns mid-stage: (1) the settings icon's *tap* opens a popover
+  (Theme / Font / Settings — Settings toasts until stage 17) instead of
+  the planned single two-column overlay; the selectors are separate
+  centered single-column overlays (long-press still jumps straight to
+  the theme selector). (2) The Material You palette was restyled live
+  against **gruvbox-warm** as the structural reference (see below).
+- **colorscheme event (0001):** `{"type":"colorscheme","name":...}` from
+  cmd_colorscheme's success path only (failed lookup = error + no
+  event); transient like `selected` (cmus doesn't retain the name — the
+  colors ride the coalesced options echo). The overlay highlight moves
+  only on the echo (TUI `:colorscheme` lands identically); the name
+  persists in a pref for the next launch.
+- **Theme selector:** Material You pinned first, then the sorted union
+  of `cmus-home/*.theme` (wins per cmd_colorscheme's search order) and
+  `cmus-data/*.theme`; whitespace names skipped (`colorscheme` takes
+  exactly 1 arg). Picks send `colorscheme <name>`; the popup stays open
+  for browsing (win colors, 1dp separator frame, no scrim, ~60% height
+  cap, outside-tap/back dismiss, closed on onStop/crash).
+- **Material You** = palette redefinition + constant set burst: entries
+  16–42 get exact dynamic-color ARGB (`mCurrentColors` is public — it's
+  what OSC 4 mutates; `reset()` restores stock), the 27 roles point at
+  them via `set color_<role>=<16+i>`. Light/dark + wallpaper changes are
+  palette-push-only (service onConfigurationChanged, headless included —
+  zero cmus traffic, the autosaved indexes don't move); every connect
+  re-forces the burst while active (stale-autosave self-heal); any
+  colorscheme echo clears the pref + resets the palette. CmusTheme now
+  resolves through the live emulator palette (the app itself broke the
+  "cmus never sends OSC 4" assumption), with onPaletteChanged re-deriving
+  chrome when ARGB moves under unchanged indexes.
+- **Material tuning (Patrick, ~8 rounds live):** gruvbox-warm structure —
+  hard-contrast bg (neutral1_900 half-mixed toward black), one band tone
+  for the bottom title + active selections, statusline a half-step
+  darker, the top bar band darker still (band mixed toward bg); both
+  title fgs share accent1_400 (darker/saturated, apart from list text);
+  the status/cmdline band + control bar wear the **complement** of
+  accent3_200 — all five system ramps are harmonized warm by design
+  ("tonal spot"), so a genuinely different hue must be synthesized (180°
+  HSV rotation, tone kept; wallpaper-derived, verified `#bd817f` rose
+  titles vs `#86b8ef` blue status on device). List hierarchy: playing =
+  accent3_300 (saturated) > selected = accent1_100 > unselected =
+  accent1_200 half-mixed with neutral1_200 (same hue, dimmer, half
+  desaturated — Patrick rejected plain grey); inactive-pane highlight
+  bgs a clear step darker than the active pane's. Tabs are bold.
+- **Fonts:** five bundled regulars + System — Fira Mono, IBM Plex Mono,
+  Iosevka (10.8 MB — the big glyph set is most of the APK bump),
+  JetBrains Mono, Roboto Mono (Iosevka + Roboto Mono added by Patrick
+  mid-stage; **Iosevka is the default**, the pref stores "" for an
+  explicit System pick), licenses beside them in assets/fonts. Fake
+  bold/skew cover styles (renderer-verified). `TerminalView.setTypeface`
+  rides the pinch-zoom resize path; the
+  ControlBar.lineSpacing/firstRowOffset mirror statics take the active
+  typeface (the flushness fixed point is only exact measuring what the
+  renderer measures), threaded through every chrome text site;
+  pref-restored before attach so the saved headless grid matches.
+  Top-bar polish (Patrick): icons at the control bar's 3-row/2-row-glyph
+  spec, tabs bold at ~1.15× the terminal font (filter box too — it
+  shares the band), the active tab scrolls fully into view on the
+  echoed View event (narrow-screen overflow), and the rarely-used
+  filters/settings tabs are hidden unless active. The control bar's
+  queue slot became three-state: + = win-add-l in the browser (its `a`
+  binding), remove in the queue, add-to-queue elsewhere.
+- **Deadlock fix (0001), found by Patrick mid-test:** stage 12's
+  `player_pos_exact()` took player_lock in the main loop's per-flush
+  path — but at a track boundary the consumer thread holds
+  consumer_mutex across its blocking get_next callback
+  (cmus_get_next_track cond-waits), which only the main loop can answer.
+  Frozen TUI + 4 threads in futex_wait, pinned by `debuggerd -b`
+  backtraces (main: android_flush → player_pos_exact →
+  cmus_mutex_lock; consumer: cmus_get_next_track → cond_wait). Now
+  trylocks both mutexes, falling back to the snapshot's whole-second
+  position for the contended iteration. Latent since stage 12; this
+  stage's per-command event traffic widened the window.
+- Also: selector NPE on first use (immutable `List.indexOf(null)`
+  throws — the never-echoed colorscheme name), fixed with a null guard.
+- Verified on device (Pixel 8, wifi adb + logcat + debug receiver;
+  Patrick hands-on throughout, live-directing every build): theme picks
+  re-tint TUI + chrome + system bars on one echo with the highlight
+  following; Material indexes visible in the options echoes
+  (color_win_cur=28 etc.); palette values logged on push; fonts applied
+  live and restored across relaunch; light/dark + persistence + fonts +
+  selectors all Patrick-confirmed — "it works" / "everything works".
+  patch.sh check green after both 0001 fixup+regen rounds; clean
+  assembleDebug. 24 ffmpeg-generated tagged tracks (3 artists × 2
+  albums, flac/mp3/ogg) pushed to ~/music (chown + restorecon after
+  root push) and added for list-rendering judgment.
+- Testing notes: `debuggerd -b <pid>` gives userspace backtraces of a
+  wedged native process on the rooted device (kernel wchan/futex first
+  narrowed it); ImmutableCollections throws NPE on `indexOf(null)` —
+  guard any nullable lookup key; the dynamic ramps (accent2/3) never
+  leave the seed hue's neighborhood, so "different hue" needs
+  synthesis; reinstalls force-stop cmus as always (documented loss
+  window — the connect-time material re-force is what covers it).
+
 ## 2026-07-19 — Stage 15: quick filter + sleep timer (done)
 
 - Per [plans/15-filter-sleep.md](plans/15-filter-sleep.md) — the plan's
@@ -684,10 +780,14 @@ pick up where things left off.
 
 ## Next
 
-Stage 16: theme/font selector overlay + bundled fonts (long-press the
-settings icon per the overview — the icon itself doesn't exist yet;
-Material You generated colorscheme idea below belongs here) — needs its
-detailed plan written and approved first.
+Stage 17: settings screen (the popover's Settings entry currently
+toasts; control visibility toggles, curated cmus settings — aaudio op
+options, pause_on_output_change, softvol —, idle-quit minutes) — needs
+its detailed plan written and approved first.
+
+Note for stage 19 polish: Iosevka-Regular.ttf is 10.8 MB (most of the
+APK bump); a pyftsubset pass over the bundled fonts could reclaim most
+of it if size ever matters.
 
 Note for later (Patrick; stage 18 data import, or wherever imports
 land first): inhibit the idle-quit timer while media is being
@@ -725,13 +825,6 @@ the library survives the base path moving) for the Android paths:
 have TermService export env vars for the android data dir, the
 external storage path, the external data path, etc., and put them in
 `pl_env_vars`, so saved paths survive reinstalls / storage moves.
-
-Idea from Patrick for later (theme selector, ~stage 16): a generated
-Material You colorscheme — Java reads the system dynamic color palette
-(android.R.color system_accent/neutral tones) and produces a cmus
-.theme from it (written to cmus-data or applied via `set color_*` over
-IPC), offered alongside the bundled themes and updating when the
-system palette changes.
 
 Workflow note: each stage runs in a fresh session — read status.md,
 architecture.md, the overview plan, and the current stage plan first.
