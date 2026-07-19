@@ -6,14 +6,21 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.termux.terminal.TerminalSession;
@@ -23,9 +30,21 @@ import com.termux.view.TerminalViewClient;
 public class MainActivity extends Activity implements TerminalViewClient, TermService.SessionCallback {
     private static final String TAG = "cmus";
 
+    /** Tab order = the 1-7 keys; names are what the `view` command takes. */
+    private static final String[] VIEW_NAMES = {
+            "tree", "sorted", "playlist", "queue", "browser", "filters", "settings"};
+    /** Inactive tab text: win_title_fg at ~55% alpha, blending toward bg. */
+    private static final int INACTIVE_TAB_ALPHA = 0x8C000000;
+
     private TerminalView terminalView;
+    private FrameLayout terminalWrapper;
+    private HorizontalScrollView tabBar;
+    private final TextView[] viewTabs = new TextView[VIEW_NAMES.length];
     private TermService service;
     private TerminalSession session;
+    private CmusIpc ipc; // the instance ipcListener is registered on
+    private CmusTheme theme;
+    private String viewName;
     private boolean bound;
     private boolean visible;
     private boolean crashScreen;
@@ -43,6 +62,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             service.setActivityVisible(visible);
             session = service.getSession();
             terminalView.attachSession(session);
+            attachIpc();
             if (!session.isRunning()) {
                 finish();
             }
@@ -71,14 +91,54 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         terminalView.setDefaultFocusHighlightEnabled(false);
         terminalView.requestFocus();
 
+        // view-selector tab bar; text-only, colored off the cmus theme so it
+        // reads as an extension of the TUI's win-title row. The scroll view
+        // is the doesn't-fit fallback for narrow screens; when the tabs fit
+        // they're centered
+        LinearLayout tabRow = new LinearLayout(this);
+        tabRow.setOrientation(LinearLayout.HORIZONTAL);
+        tabRow.setGravity(Gravity.CENTER);
+        for (int i = 0; i < VIEW_NAMES.length; i++) {
+            String name = VIEW_NAMES[i];
+            TextView tab = new TextView(this);
+            tab.setText(name);
+            tab.setTypeface(Typeface.MONOSPACE);
+            // matches the terminal font size, including pinch-zoom (onScale)
+            tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+            tab.setPadding(dp(5), dp(8), dp(5), dp(8));
+            tab.setOnClickListener(v -> sendCommand("view " + name));
+            viewTabs[i] = tab;
+            tabRow.addView(tab);
+        }
+        // fillViewport stretches the row to the viewport so its own gravity
+        // centers the tabs when they fit; when they don't, the row wraps to
+        // content from the left edge and scrolls (a CENTER layout gravity
+        // here would instead hang overflow off the unreachable left side)
+        tabBar = new HorizontalScrollView(this);
+        tabBar.setHorizontalScrollBarEnabled(false);
+        tabBar.setFillViewport(true);
+        tabBar.addView(tabRow, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         // TerminalView sizes itself from raw view bounds (ignores its own
-        // padding), so insets pad a wrapper instead
-        FrameLayout root = new FrameLayout(this);
-        root.addView(terminalView);
+        // padding), so insets pad a wrapper instead. Edge-to-edge coloring
+        // (targetSdk 36: setStatusBarColor is a no-op) = the tab bar's
+        // background paints the status-bar strip and the wrapper's paints
+        // the nav strip + side margins; only icon appearance is a real API
+        terminalWrapper = new FrameLayout(this);
+        terminalWrapper.addView(terminalView);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.addView(tabBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(terminalWrapper, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             android.graphics.Insets in = insets.getInsets(WindowInsets.Type.systemBars()
                     | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
-            v.setPadding(in.left, in.top, in.right, in.bottom);
+            tabBar.setPadding(in.left, in.top, in.right, 0);
+            terminalWrapper.setPadding(in.left, 0, in.right, in.bottom);
             return WindowInsets.CONSUMED;
         });
         setContentView(root);
@@ -107,6 +167,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 startForegroundService(new Intent(this, TermService.class));
                 session = service.getSession();
                 terminalView.attachSession(session);
+                attachIpc(); // respawn = a fresh CmusIpc instance
             }
         }
     }
@@ -123,6 +184,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (ipc != null) {
+            ipc.removeListener(ipcListener);
+        }
         if (service != null) {
             service.setSessionCallback(null);
         }
@@ -134,6 +198,81 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     private int dp(int dp) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp,
                 getResources().getDisplayMetrics()));
+    }
+
+    // theme-driven chrome
+
+    /**
+     * (Re)registers ipcListener on the service's current CmusIpc, which is a
+     * fresh instance after every respawn. addListener replays the cached
+     * Options + View, so colors and the tab highlight are correct however
+     * late this runs; removing the listener from a dead instance is a no-op.
+     */
+    private void attachIpc() {
+        CmusIpc current = service.getIpc();
+        if (current == null || current == ipc) {
+            return;
+        }
+        if (ipc != null) {
+            ipc.removeListener(ipcListener);
+        }
+        ipc = current;
+        ipc.addListener(ipcListener);
+    }
+
+    /** Dropped with a log when cmus is gone (frozen crash screen). */
+    private void sendCommand(String command) {
+        if (ipc != null) {
+            ipc.send(command);
+        }
+    }
+
+    private final CmusIpc.Listener ipcListener = event -> {
+        switch (event) {
+            case CmusIpc.Options o -> {
+                CmusTheme t = CmusTheme.from(o);
+                if (!t.equals(theme)) {
+                    theme = t;
+                    applyTheme();
+                }
+            }
+            // cmus is the single source of truth for the active view: taps
+            // don't move the highlight until the event comes back, and
+            // TUI-side 1-7 presses/resume land here the same way
+            case CmusIpc.View v -> {
+                viewName = v.name();
+                applyTabColors();
+            }
+            default -> {
+            }
+        }
+    };
+
+    private void applyTheme() {
+        tabBar.setBackgroundColor(theme.winTitleBg());
+        terminalWrapper.setBackgroundColor(theme.winBg());
+        applyTabColors();
+        int appearance = 0;
+        if (CmusTheme.isLight(theme.winTitleBg())) {
+            appearance |= WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS;
+        }
+        if (CmusTheme.isLight(theme.winBg())) {
+            appearance |= WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+        }
+        getWindow().getInsetsController().setSystemBarsAppearance(appearance,
+                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+    }
+
+    private void applyTabColors() {
+        if (theme == null) {
+            return;
+        }
+        for (int i = 0; i < viewTabs.length; i++) {
+            boolean active = VIEW_NAMES[i].equals(viewName);
+            viewTabs[i].setTextColor(active ? theme.winTitleFg()
+                    : (theme.winTitleFg() & 0x00FFFFFF) | INACTIVE_TAB_ALPHA);
+        }
     }
 
     // TermService.SessionCallback
@@ -169,6 +308,9 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         if (scale < 0.9f || scale > 1.1f) {
             fontSize = Math.max(minFontSize, Math.min(Math.round(fontSize * scale), maxFontSize));
             terminalView.setTextSize(fontSize);
+            for (TextView tab : viewTabs) {
+                tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
+            }
             return 1.0f;
         }
         return scale;
