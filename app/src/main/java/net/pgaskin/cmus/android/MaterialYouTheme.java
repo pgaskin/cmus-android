@@ -72,73 +72,132 @@ final class MaterialYouTheme {
 
     /**
      * Exact ARGB per role from the system dynamic ramps, in ROLES order;
-     * uiMode picks the variant. M3's fixed error tones stand in for a red
-     * the ramps don't have.
+     * uiMode picks the variant. The role structure mirrors gruvbox-warm
+     * (Patrick's reference): a hard-contrast window/cmdline bg (darker than
+     * the ramp's end), one band tone shared by both title lines with one
+     * accent for both their fgs, the statusline a shade darker with a
+     * *different* accent that also colors win_cur (its progress band is the
+     * lighter band tone), selections on the band tones (inactive = the
+     * darker one), and a plain grey separator. M3's fixed error tones stand
+     * in for a red the ramps don't have.
      */
     static int[] colors(Context context) {
         boolean night = (context.getResources().getConfiguration().uiMode
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-        return night ? new int[]{
-                c(context, android.R.color.system_neutral1_900), // cmdline_bg
-                c(context, android.R.color.system_neutral1_100), // cmdline_fg
-                0xFFF2B8B5, // error
-                c(context, android.R.color.system_accent3_200), // info
-                c(context, android.R.color.system_accent3_500), // separator
-                c(context, android.R.color.system_neutral1_800), // statusline_bg
-                c(context, android.R.color.system_accent1_200), // statusline_fg
-                c(context, android.R.color.system_neutral1_700), // statusline_progress_bg
-                c(context, android.R.color.system_accent1_100), // statusline_progress_fg
-                c(context, android.R.color.system_neutral1_800), // titleline_bg
-                c(context, android.R.color.system_accent1_200), // titleline_fg
-                c(context, android.R.color.system_neutral1_900), // win_bg
-                c(context, android.R.color.system_accent1_300), // win_cur
-                c(context, android.R.color.system_accent2_700), // win_cur_sel_bg
-                c(context, android.R.color.system_accent1_100), // win_cur_sel_fg
-                c(context, android.R.color.system_accent2_200), // win_dir
-                c(context, android.R.color.system_neutral1_100), // win_fg
-                c(context, android.R.color.system_neutral1_800), // win_inactive_cur_sel_bg
-                c(context, android.R.color.system_accent1_200), // win_inactive_cur_sel_fg
-                c(context, android.R.color.system_neutral1_800), // win_inactive_sel_bg
-                c(context, android.R.color.system_accent2_200), // win_inactive_sel_fg
-                c(context, android.R.color.system_accent2_700), // win_sel_bg
-                c(context, android.R.color.system_neutral1_50), // win_sel_fg
-                c(context, android.R.color.system_neutral1_800), // win_title_bg
-                c(context, android.R.color.system_accent1_200), // win_title_fg
-                c(context, android.R.color.system_neutral1_900), // trackwin_album_bg
-                c(context, android.R.color.system_accent2_200), // trackwin_album_fg
-        } : new int[]{
-                c(context, android.R.color.system_neutral1_50), // cmdline_bg
-                c(context, android.R.color.system_neutral1_900), // cmdline_fg
+        if (night) {
+            int bg = mix(c(context, android.R.color.system_neutral1_900), 0xFF000000);
+            int band = c(context, android.R.color.system_neutral1_800); // bottom title, active sel
+            int bandDark = mix(band, c(context, android.R.color.system_neutral1_900));
+            // the top band reads as a scrim over the status bar: darker
+            // than the bottom bands, pulled toward the window bg (Patrick)
+            int topBand = mix(band, bg);
+            // darker and more saturated than the pastel ramp end: the title
+            // fgs must read apart from the near-white list text (Patrick)
+            int title = c(context, android.R.color.system_accent1_400); // both title fgs
+            // the ramps' accent2/3 stay in accent1's warm neighborhood by
+            // design, so a "different hue" (Patrick) can't come from them:
+            // complement the ramp tone instead — gruvbox-warm's orange
+            // titles vs teal statusline, wallpaper-derived. Scoped to the
+            // status/cmdline band (and the control bar riding it); the
+            // list's playing-track colors stay in the ramp family
+            int status = complement(c(context, android.R.color.system_accent3_200));
+            int cur = c(context, android.R.color.system_accent3_300); // playing track in the lists — a saturated step
+            // dimmer than the sel/cur fgs but on the same warm ramp, not
+            // grey: the unselected list rows sit below the highlights in
+            // brightness only (Patrick)
+            int fg = mix(c(context, android.R.color.system_accent1_200),
+                    c(context, android.R.color.system_neutral1_200)); // half-desaturated
+            return new int[]{
+                    bg, // cmdline_bg
+                    status, // cmdline_fg — the bottom line reads in the
+                            // status accent (Patrick), like the bar over it
+                    0xFFF2B8B5, // error
+                    c(context, android.R.color.system_accent2_200), // info
+                    c(context, android.R.color.system_neutral2_400), // separator
+                    bandDark, // statusline_bg
+                    status, // statusline_fg
+                    band, // statusline_progress_bg
+                    status, // statusline_progress_fg
+                    band, // titleline_bg
+                    title, // titleline_fg
+                    bg, // win_bg
+                    cur, // win_cur
+                    band, // win_cur_sel_bg
+                    c(context, android.R.color.system_accent3_100), // win_cur_sel_fg
+                    c(context, android.R.color.system_accent2_200), // win_dir
+                    fg, // win_fg
+                    topBand, // win_inactive_cur_sel_bg — a clear step
+                             // below the active pane's highlight (Patrick)
+                    c(context, android.R.color.system_accent3_100), // win_inactive_cur_sel_fg
+                    topBand, // win_inactive_sel_bg
+                    c(context, android.R.color.system_accent1_100), // win_inactive_sel_fg
+                    band, // win_sel_bg
+                    c(context, android.R.color.system_accent1_100), // win_sel_fg — below the
+                            // playing track's brightness (Patrick)
+                    topBand, // win_title_bg
+                    title, // win_title_fg
+                    bg, // trackwin_album_bg
+                    title, // trackwin_album_fg
+            };
+        }
+        int bg = mix(c(context, android.R.color.system_neutral1_50), 0xFFFFFFFF);
+        int band = c(context, android.R.color.system_neutral1_100);
+        int bandDark = mix(band, c(context, android.R.color.system_neutral1_200));
+        int topBand = mix(band, bg); // the light mirror: lighter, toward bg
+        int title = c(context, android.R.color.system_accent1_700); // reads apart from the near-black list text
+        int status = complement(c(context, android.R.color.system_accent3_700));
+        int cur = c(context, android.R.color.system_accent3_600);
+        int fg = mix(c(context, android.R.color.system_accent1_600),
+                c(context, android.R.color.system_neutral1_600)); // dimmer + half-desaturated, same ramp
+        return new int[]{
+                bg, // cmdline_bg
+                status, // cmdline_fg — the status accent, like the bar over it
                 0xFFB3261E, // error
-                c(context, android.R.color.system_accent3_700), // info
-                c(context, android.R.color.system_accent3_400), // separator
-                c(context, android.R.color.system_neutral1_100), // statusline_bg
-                c(context, android.R.color.system_accent1_700), // statusline_fg
-                c(context, android.R.color.system_neutral1_300), // statusline_progress_bg
-                c(context, android.R.color.system_accent1_800), // statusline_progress_fg
-                c(context, android.R.color.system_neutral1_100), // titleline_bg
-                c(context, android.R.color.system_accent1_700), // titleline_fg
-                c(context, android.R.color.system_neutral1_50), // win_bg
-                c(context, android.R.color.system_accent1_600), // win_cur
-                c(context, android.R.color.system_accent2_200), // win_cur_sel_bg
-                c(context, android.R.color.system_accent1_800), // win_cur_sel_fg
+                c(context, android.R.color.system_accent2_700), // info
+                c(context, android.R.color.system_neutral2_500), // separator
+                bandDark, // statusline_bg
+                status, // statusline_fg
+                band, // statusline_progress_bg
+                status, // statusline_progress_fg
+                band, // titleline_bg
+                title, // titleline_fg
+                bg, // win_bg
+                cur, // win_cur
+                band, // win_cur_sel_bg
+                c(context, android.R.color.system_accent3_800), // win_cur_sel_fg
                 c(context, android.R.color.system_accent2_700), // win_dir
-                c(context, android.R.color.system_neutral1_900), // win_fg
-                c(context, android.R.color.system_neutral1_200), // win_inactive_cur_sel_bg
-                c(context, android.R.color.system_accent1_700), // win_inactive_cur_sel_fg
-                c(context, android.R.color.system_neutral1_200), // win_inactive_sel_bg
-                c(context, android.R.color.system_accent2_700), // win_inactive_sel_fg
-                c(context, android.R.color.system_accent2_200), // win_sel_bg
-                c(context, android.R.color.system_neutral1_900), // win_sel_fg
-                c(context, android.R.color.system_neutral1_100), // win_title_bg
-                c(context, android.R.color.system_accent1_700), // win_title_fg
-                c(context, android.R.color.system_neutral1_50), // trackwin_album_bg
-                c(context, android.R.color.system_accent2_700), // trackwin_album_fg
+                fg, // win_fg
+                topBand, // win_inactive_cur_sel_bg
+                c(context, android.R.color.system_accent3_800), // win_inactive_cur_sel_fg
+                topBand, // win_inactive_sel_bg
+                c(context, android.R.color.system_accent1_700), // win_inactive_sel_fg
+                band, // win_sel_bg
+                c(context, android.R.color.system_accent1_700), // win_sel_fg
+                topBand, // win_title_bg
+                title, // win_title_fg
+                bg, // trackwin_album_bg
+                title, // trackwin_album_fg
         };
     }
 
     private static int c(Context context, int res) {
         return context.getColor(res);
+    }
+
+    /** Hue rotated 180°, tone kept — a same-brightness genuinely-other hue. */
+    private static int complement(int argb) {
+        float[] hsv = new float[3];
+        android.graphics.Color.colorToHSV(argb, hsv);
+        hsv[0] = (hsv[0] + 180f) % 360f;
+        return android.graphics.Color.HSVToColor(hsv);
+    }
+
+    /** 50/50 per-channel blend — half-steps the 100-tone ramps can't express. */
+    private static int mix(int a, int b) {
+        return 0xFF000000
+                | (((a >> 16 & 0xFF) + (b >> 16 & 0xFF)) / 2) << 16
+                | (((a >> 8 & 0xFF) + (b >> 8 & 0xFF)) / 2) << 8
+                | ((a & 0xFF) + (b & 0xFF)) / 2;
     }
 
     private MaterialYouTheme() {

@@ -66,14 +66,17 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
     /** Selected terminal font: an asset path from FONT_ASSETS, absent = system. */
     private static final String PREF_TYPEFACE = "typeface";
 
-    /** The bundled monospace fonts (assets/fonts, OFL texts beside them). */
+    /** The bundled monospace fonts (assets/fonts, license texts beside them). */
     private static final String[] FONT_NAMES = {
-            "System", "JetBrains Mono", "Fira Mono", "IBM Plex Mono"};
+            "System", "Fira Mono", "IBM Plex Mono", "Iosevka", "JetBrains Mono",
+            "Roboto Mono"};
     private static final String[] FONT_ASSETS = {
             null,
-            "fonts/JetBrainsMono-Regular.ttf",
             "fonts/FiraMono-Regular.ttf",
-            "fonts/IBMPlexMono-Regular.ttf"};
+            "fonts/IBMPlexMono-Regular.ttf",
+            "fonts/Iosevka-Regular.ttf",
+            "fonts/JetBrainsMono-Regular.ttf",
+            "fonts/RobotoMono-Regular.ttf"};
 
     private TerminalView terminalView;
     private FrameLayout terminalWrapper;
@@ -207,7 +210,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             String name = VIEW_NAMES[i];
             TextView tab = new TextView(this);
             tab.setText(name);
-            tab.setTypeface(activeTypeface);
+            tab.setTypeface(activeTypeface, Typeface.BOLD); // stands out from the TUI text (Patrick)
             // matches the terminal font size, including pinch-zoom (onScale)
             tab.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             tab.setPadding(dp(5), dp(8), dp(5), dp(8));
@@ -294,6 +297,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             showThemeSelector();
             return true;
         });
+        updateTopBarButtons();
 
         topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -739,10 +743,7 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
             }
             filterBox.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
             sleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
-            filterBtn.setLayoutParams(topBarButtonParams());
-            filterClose.setLayoutParams(topBarButtonParams());
-            sleepBtn.setLayoutParams(topBarButtonParams());
-            settingsBtn.setLayoutParams(topBarButtonParams());
+            updateTopBarButtons();
             controlBar.setFontSize(fontSize, activeTypeface);
             keyRow.setFontSize(fontSize);
             titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
@@ -893,7 +894,8 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                     if (service != null && service.materialYouActive()) {
                         return 0;
                     }
-                    int i = names.indexOf(colorschemeName);
+                    // no indexOf(null): immutable lists throw NPE on it
+                    int i = colorschemeName == null ? -1 : names.indexOf(colorschemeName);
                     return i < 0 ? -1 : i + 1;
                 }, false,
                 which -> {
@@ -939,11 +941,12 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
                 .putString(PREF_TYPEFACE, asset).apply();
         terminalView.setTypeface(activeTypeface);
         for (TextView tab : viewTabs) {
-            tab.setTypeface(activeTypeface);
+            tab.setTypeface(activeTypeface, Typeface.BOLD);
         }
         filterBox.setTypeface(activeTypeface);
         sleepText.setTypeface(activeTypeface);
         keyRow.setTypeface(activeTypeface);
+        updateTopBarButtons(); // the row metrics moved with the typeface
         controlBar.setFontSize(fontSize, activeTypeface);
         titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1075,24 +1078,31 @@ public class MainActivity extends Activity implements TerminalViewClient, TermSe
         }
     }
 
-    /** Icon button flanking the tab bar, sized to the tab text band. */
+    /** Icon button flanking the tab bar; sized by updateTopBarButtons. */
     private ImageButton topBarButton(int icon, Runnable action) {
         ImageButton b = new ImageButton(this);
         b.setImageResource(icon);
         b.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        b.setPadding(dp(4), dp(4), dp(4), dp(4));
         TypedValue tv = new TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true);
         b.setBackgroundResource(tv.resourceId);
         b.setOnClickListener(v -> action.run());
-        b.setLayoutParams(topBarButtonParams());
         return b;
     }
 
-    /** Square ≈ the tab text band (font size + the tabs' padding). */
-    private LinearLayout.LayoutParams topBarButtonParams() {
-        int side = fontSize + dp(16);
-        return new LinearLayout.LayoutParams(side, side);
+    /**
+     * The top-bar icons match the control bar's sizing (Patrick: same icon
+     * size top and bottom): 3-terminal-row square, 2-row glyph. The bar
+     * grows to them; the tab text keeps the terminal font size and centers
+     * in the taller band.
+     */
+    private void updateTopBarButtons() {
+        int line = ControlBar.lineSpacing(fontSize, activeTypeface);
+        int pad = line / 2; // (3 lines - 2-line icon) / 2, the ControlBar math
+        for (ImageButton b : new ImageButton[]{filterBtn, filterClose, sleepBtn, settingsBtn}) {
+            b.setPadding(pad, pad, pad, pad);
+            b.setLayoutParams(new LinearLayout.LayoutParams(3 * line, 3 * line));
+        }
     }
 
     // sleep timer: the service owns the countdown (it must tick with the

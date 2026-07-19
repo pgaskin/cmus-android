@@ -335,6 +335,9 @@ public class TermService extends Service implements TerminalSessionClient {
                 int[] argb = MaterialYouTheme.colors(this);
                 System.arraycopy(argb, 0, colors.mCurrentColors,
                         MaterialYouTheme.BASE_INDEX, argb.length);
+                Log.d(TAG, String.format("material: title=#%06x status=#%06x band=#%06x top=#%06x bg=#%06x",
+                        argb[10] & 0xFFFFFF, argb[6] & 0xFFFFFF, argb[9] & 0xFFFFFF,
+                        argb[23] & 0xFFFFFF, argb[11] & 0xFFFFFF));
             } else {
                 colors.reset();
             }
