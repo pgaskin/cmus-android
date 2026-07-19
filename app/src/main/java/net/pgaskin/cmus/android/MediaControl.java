@@ -407,6 +407,16 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
             // formats the framework extractor can't open at all (e.g. wv)
             Log.d(TAG, "media: no embedded art for " + path + ": " + e);
         }
+        // The framework extractor ignores ogg/opus METADATA_BLOCK_PICTURE, so
+        // parse it ourselves before falling back to folder art.
+        byte[] ogg = OggCover.extract(path);
+        if (ogg != null) {
+            Bitmap bitmap = decodeScaled(
+                    opts -> BitmapFactory.decodeByteArray(ogg, 0, ogg.length, opts));
+            if (bitmap != null) {
+                return bitmap;
+            }
+        }
         File dir = new File(path).getParentFile();
         if (dir == null) {
             return null;
