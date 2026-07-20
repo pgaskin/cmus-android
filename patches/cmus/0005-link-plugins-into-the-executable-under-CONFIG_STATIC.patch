@@ -1,4 +1,4 @@
-From 2f12ea53381313e4e0e532aac198a78eb7190eb2 Mon Sep 17 00:00:00 2001
+From 18ffa3a0e92a4ea7707e874d507056d0cbea3aea Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:34:55 -0400
 Subject: [PATCH 05/12] link plugins into the executable under
@@ -231,7 +231,7 @@ index 0000000..d02da96
 +#endif
 diff --git a/static_plugins.h b/static_plugins.h
 new file mode 100644
-index 0000000..ef20d14
+index 0000000..cf4e4f5
 --- /dev/null
 +++ b/static_plugins.h
 @@ -0,0 +1,63 @@
@@ -264,7 +264,7 @@ index 0000000..ef20d14
 +
 +/*
 + * When plugins are linked into the cmus executable instead of loaded from
-+ * <libdir>/{ip,op}/*.so, each plugin's fixed ABI symbols (ip_ops, ip_priority,
++ * <libdir>/{ip,op}/<name>.so, each plugin's fixed ABI symbols (ip_ops, ip_priority,
 + * ...) are renamed to <name>_ip_ops etc. at compile time, and these tables
 + * take the place of the dlopen()/dlsym() scan. See static_plugins.c.
 + */

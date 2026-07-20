@@ -20,3 +20,5 @@ target_include_directories(iconv
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/gen/lib"
 )
+
+target_compile_options(iconv PRIVATE -Wno-parentheses-equality)

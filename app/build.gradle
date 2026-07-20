@@ -3,9 +3,9 @@ plugins {
 }
 
 android {
-    namespace 'net.pgaskin.cmus.android'
+    namespace = 'net.pgaskin.cmus.android'
     compileSdk 36
-    ndkVersion '28.2.13676358'
+    ndkVersion = '28.2.13676358'
 
     defaultConfig {
         applicationId 'net.pgaskin.cmus.android'
@@ -38,7 +38,7 @@ android {
     externalNativeBuild {
         cmake {
             path '../native/CMakeLists.txt'
-            version '3.30.5'
+            version = '3.30.5'
         }
     }
 

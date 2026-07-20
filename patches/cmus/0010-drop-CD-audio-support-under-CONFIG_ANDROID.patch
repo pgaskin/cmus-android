@@ -1,4 +1,4 @@
-From f06be9978bc6ed3db8e0b925f12ccbb5dde303f0 Mon Sep 17 00:00:00 2001
+From 46c7c8a2d957314c9ebf88ba8708e5dc65856aaa Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:41:36 -0400
 Subject: [PATCH 10/12] drop CD-audio support under CONFIG_ANDROID
@@ -50,7 +50,7 @@ index 16757d2..d46e22f 100644
  			rc = ip->ops ? ip->ops->open(&ip->data) : 1;
  		} else
 diff --git a/job.c b/job.c
-index aeb7ee1..9d15225 100644
+index aeb7ee1..d044035 100644
 --- a/job.c
 +++ b/job.c
 @@ -210,6 +210,7 @@ static void add_url(const char *url)
@@ -69,18 +69,16 @@ index aeb7ee1..9d15225 100644
  
  struct dir_list_entry {
  	struct list_head node;
-@@ -426,9 +428,11 @@ static void do_add_job(void *data)
- 	case FILE_TYPE_URL:
+@@ -427,7 +429,9 @@ static void do_add_job(void *data)
  		add_url(jd->name);
  		break;
-+#ifndef CONFIG_ANDROID
  	case FILE_TYPE_CDDA:
++#ifndef CONFIG_ANDROID
  		add_cdda(jd->name);
- 		break;
 +#endif
+ 		break;
  	case FILE_TYPE_PL:
  		add_pl(jd->name);
- 		break;
 diff --git a/options.c b/options.c
 index 6131a44..6affd21 100644
 --- a/options.c

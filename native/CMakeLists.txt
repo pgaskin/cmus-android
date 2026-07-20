@@ -14,6 +14,11 @@ string(APPEND CMAKE_CXX_FLAGS_DEBUG " -O2 -DNDEBUG")
 # append (which would probe the system).
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# some of the third-party libs declare an old cmake version, but it's mostly
+# harmless, so just silence it (we can patch it properly if it becomes necessary
+# later)
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+
 set(THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/../third_party")
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -65,6 +70,7 @@ add_subdirectory("${THIRD_PARTY}/faad2" faad2 EXCLUDE_FROM_ALL)
 set(BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${THIRD_PARTY}/mp4v2" mp4v2 EXCLUDE_FROM_ALL)
+target_compile_options(mp4v2 PRIVATE -Wno-macro-redefined)
 
 # libmad (aarch64 -> FPM_64BIT; the ARM asm/ASO path is 32-bit-only; the
 # unconditional `mad` SHARED target is never built thanks to
