@@ -10,6 +10,26 @@ Although the code is almost entirely written and maintained by Claude, I made mo
 
 I already did most of the actual porting work earlier to make it work well on Termux, including the AAudio output plugin, portability and build fixes, playlist env var stuff, and so on. This project is mostly the UI and system integration.
 
+### Screenshots
+
+<table><thead><tr><td>
+
+![](./metadata/en-US/images/phoneScreenshots/1.png)
+
+</td><td>
+
+![](./metadata/en-US/images/phoneScreenshots/3.png)
+
+</td><td>
+
+![](./metadata/en-US/images/phoneScreenshots/2.png)
+
+</td><td>
+
+![](./metadata/en-US/images/phoneScreenshots/4.png)
+
+</td></tr></thead></table>
+
 ### Features
 
 - Supports Android 14+.
@@ -35,9 +55,6 @@ I already did most of the actual porting work earlier to make it work well on Te
   - Sub-second seeking accuracy.
   - Continuously saves state.
 - Optimized for power efficiency.
-
-<!-- TODO: screenshots -->
-<!-- TODO: fastlane metadata -->
 
 ### Building
 
