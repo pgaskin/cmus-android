@@ -24,9 +24,12 @@ set(THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/../third_party")
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 
-# nothing is ever installed; also silences generate-time errors from
-# opusfile/flac install(EXPORT) sets referencing the in-tree ogg target
-set(CMAKE_SKIP_INSTALL_RULES ON)
+# we only import projects for their static libs, so neuter install/export so
+# cmake doesn't warn about them
+macro(install)
+endmacro()
+macro(export)
+endmacro()
 
 # libogg
 set(INSTALL_DOCS OFF CACHE BOOL "" FORCE)
