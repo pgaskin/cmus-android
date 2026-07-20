@@ -3,4 +3,7 @@
     <color name="ic_launcher_background">#1c1c1c</color>
     <!-- muted blue-grey settings accent, "not the stupid purple" (Patrick) -->
     <color name="settings_accent">#546E7A</color>
+    <!-- base fallback for the night-only dark action bar (values-night
+         overrides it); light mode keeps the accent-colored bar -->
+    <color name="settings_action_bar">#546E7A</color>
 </resources>
