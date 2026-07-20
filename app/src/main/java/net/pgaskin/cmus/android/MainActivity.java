@@ -104,7 +104,6 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
     private ImageButton filterBtn;
     private EditText filterBox;
     private ImageButton filterClose;
-    private ImageButton sleepBtn;
     private TextView sleepText;
     private ImageButton settingsBtn;
     /** With the top bar hidden, settings and the sleep timer stay
@@ -112,7 +111,6 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
      * (stage 18). */
     private LinearLayout floatBar;
     private ImageButton floatSettingsBtn;
-    private ImageButton floatSleepBtn;
     private TextView floatSleepText;
     private final Runnable sleepTick = this::updateSleepSlot;
     private ControlBar controlBar;
@@ -329,9 +327,10 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         filterClose = topBarButton(R.drawable.ic_close, () -> closeFilterBox(true));
         filterClose.setVisibility(View.GONE);
 
-        // sleep-timer slot: the bedtime icon while off, minutes-left text
-        // while armed (the service owns the countdown; this only renders it)
-        sleepBtn = topBarButton(R.drawable.ic_sleep, this::showSleepDialog);
+        // sleep-timer slot: minutes-left text while armed, hidden while off
+        // (armed from the settings menu now, not an icon; the service owns the
+        // countdown, this only renders it). Tapping the countdown reopens the
+        // dialog.
         sleepText = new TextView(this);
         sleepText.setTypeface(activeTypeface);
         sleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
@@ -361,7 +360,6 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         topBar.addView(filterBox, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        topBar.addView(sleepBtn);
         topBar.addView(sleepText);
         topBar.addView(settingsBtn);
         topBar.addView(filterClose);
@@ -445,7 +443,6 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         // mode; the row sits below the status-bar inset because the wrapper
         // wears that inset as top padding whenever the bar is gone
         floatSettingsBtn = topBarButton(R.drawable.ic_settings, this::showSettingsPopover);
-        floatSleepBtn = topBarButton(R.drawable.ic_sleep, this::showSleepDialog);
         floatSleepText = new TextView(this);
         floatSleepText.setTypeface(activeTypeface);
         floatSleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
@@ -455,7 +452,6 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         floatBar = new LinearLayout(this);
         floatBar.setOrientation(LinearLayout.HORIZONTAL);
         floatBar.setGravity(Gravity.CENTER_VERTICAL);
-        floatBar.addView(floatSleepBtn);
         floatBar.addView(floatSleepText);
         floatBar.addView(floatSettingsBtn);
         floatBar.setVisibility(View.GONE);
@@ -898,7 +894,6 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         // faint over the terminal like the joystick (translucent fg tint)
         int floatTint = (theme.winFg() & 0x00FFFFFF) | 0x66000000;
         floatSettingsBtn.setImageTintList(ColorStateList.valueOf(floatTint));
-        floatSleepBtn.setImageTintList(ColorStateList.valueOf(floatTint));
         floatSleepText.setTextColor((theme.winFg() & 0x00FFFFFF) | 0xAA000000);
         applyTabColors();
         int appearance = 0;
@@ -962,7 +957,6 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         // active-tab convention: full fg = a filter is applied)
         filterBtn.setImageTintList(ColorStateList.valueOf(liveFilter != null ? fg : dim));
         filterClose.setImageTintList(ColorStateList.valueOf(fg));
-        sleepBtn.setImageTintList(ColorStateList.valueOf(dim));
         sleepText.setTextColor(fg); // armed = active, the tab convention
         settingsBtn.setImageTintList(ColorStateList.valueOf(dim)); // always faint
     }
@@ -1099,7 +1093,6 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         }
         filterBoxOpen = true;
         tabBar.setVisibility(View.GONE);
-        sleepBtn.setVisibility(View.GONE);
         sleepText.setVisibility(View.GONE);
         settingsBtn.setVisibility(View.GONE);
         filterBox.setVisibility(View.VISIBLE);
@@ -1129,7 +1122,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         filterClose.setVisibility(View.GONE);
         tabBar.setVisibility(View.VISIBLE);
         settingsBtn.setVisibility(View.VISIBLE);
-        updateSleepSlot(); // restores whichever of icon/countdown applies
+        updateSleepSlot(); // restores the countdown if the timer is armed
         hideImeAndFocusTerminal();
     }
 
@@ -1175,6 +1168,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         menu.getMenu().add("Font");
         menu.getMenu().add("Import");
         menu.getMenu().add("Update cache");
+        menu.getMenu().add("Sleep timer");
         // the control bar owns the keyboard toggle; when it's hidden the
         // menu is the way in (stage 18)
         if (!getSharedPreferences(CmusService.PREFS, MODE_PRIVATE)
@@ -1188,6 +1182,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
                 case "Font" -> showFontSelector();
                 case "Import" -> refreshTracks();
                 case "Update cache" -> updateCache();
+                case "Sleep timer" -> showSleepDialog();
                 case "Keyboard" -> toggleSoftKeyboard();
                 case "Settings" -> startActivityForResult(
                         new Intent(this, SettingsActivity.class), REQUEST_SETTINGS);
@@ -1478,13 +1473,11 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         int line = ControlBar.lineSpacing(fontSize, activeTypeface);
         int pad = line / 2; // (3 lines - 2-line icon) / 2, the ControlBar math
         if (floatBar != null) { // built after the first call
-            for (ImageButton b : new ImageButton[]{floatSleepBtn, floatSettingsBtn}) {
-                b.setPadding(pad, pad, pad, pad);
-                b.setLayoutParams(new LinearLayout.LayoutParams(3 * line, 3 * line));
-            }
+            floatSettingsBtn.setPadding(pad, pad, pad, pad);
+            floatSettingsBtn.setLayoutParams(new LinearLayout.LayoutParams(3 * line, 3 * line));
             floatSleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
         }
-        for (ImageButton b : new ImageButton[]{filterBtn, filterClose, sleepBtn, settingsBtn}) {
+        for (ImageButton b : new ImageButton[]{filterBtn, filterClose, settingsBtn}) {
             b.setPadding(pad, pad, pad, pad);
             b.setLayoutParams(new LinearLayout.LayoutParams(3 * line, 3 * line));
         }
@@ -1507,18 +1500,15 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
             return; // the slot is hidden; closeFilterBox re-renders it
         }
         if (remaining == 0) {
-            sleepBtn.setVisibility(View.VISIBLE);
+            // off: no icon anymore, the slot is just empty (arm from the menu)
             sleepText.setVisibility(View.GONE);
-            floatSleepBtn.setVisibility(View.VISIBLE);
             floatSleepText.setVisibility(View.GONE);
             return;
         }
         String left = (remaining + 59_999) / 60_000 + "m";
         sleepText.setText(left);
-        sleepBtn.setVisibility(View.GONE);
         sleepText.setVisibility(View.VISIBLE);
         floatSleepText.setText(left);
-        floatSleepBtn.setVisibility(View.GONE);
         floatSleepText.setVisibility(View.VISIBLE);
         if (visible) {
             sleepText.postDelayed(sleepTick, remaining % 60_000 + 100);

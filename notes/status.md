@@ -3,6 +3,21 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — UI polish: control-bar toasts + sleep timer to the settings menu (device-confirmed by Patrick)
+
+- **Control-bar toasts** (`ControlBar`): the add/remove, shuffle, and repeat
+  taps now show a toast of what they did — "Adding to queue" / "Removing from
+  queue" / "Adding to library" (per the echoed view), and shuffle/repeat
+  predict the toggle's next state from the current echoed one ("Shuffling
+  tracks/albums", "Shuffle off"; "Repeat on/off"). One reused `Toast` field,
+  cancelled before each show so rapid taps swap instantly instead of queueing.
+- **Sleep timer** (`MainActivity`): dropped the bedtime icon (both top-bar
+  `sleepBtn` and float `floatSleepBtn`); the timer is armed from a new "Sleep
+  timer" item in the settings popover (→ `showSleepDialog`, same preset/custom/
+  off dialog). The countdown text (`sleepText`/`floatSleepText`) still shows
+  while armed and reopens the dialog on tap; `updateSleepSlot` now just hides
+  the slot when off. `ic_sleep` is left unused.
+
 ## 2026-07-19 — More cmus cleanup: drop run/shell/status-program + CD-audio (built + device-tested)
 
 Three CONFIG_ANDROID cmus patches + build changes; `native: more cleanup`.

@@ -12,6 +12,7 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
+import android.widget.Toast;
 
 import java.util.Map;
 
@@ -44,6 +45,7 @@ public final class ControlBar extends LinearLayout {
     private final PopupWindow volumePopup;
     private final ImageButton[] buttons;
 
+    private Toast toast;
     private CmusIpc.PlayState state = CmusIpc.PlayState.STOPPED;
     private boolean repeatOn;
     private String shuffleMode = "off";
@@ -84,8 +86,21 @@ public final class ControlBar extends LinearLayout {
             case PAUSED -> "player-pause";
             case STOPPED -> "player-play";
         }));
-        repeat = button(R.drawable.ic_repeat, () -> callback.sendCommand("toggle repeat"));
-        shuffle = button(R.drawable.ic_shuffle, () -> callback.sendCommand("toggle shuffle"));
+        // toasts predict the toggle's result from the current (echoed) state,
+        // so they read as "what this tap does"
+        repeat = button(R.drawable.ic_repeat, () -> {
+            callback.sendCommand("toggle repeat");
+            toast(repeatOn ? "Repeat off" : "Repeat on");
+        });
+        // toggle shuffle cycles off -> tracks -> albums -> off
+        shuffle = button(R.drawable.ic_shuffle, () -> {
+            callback.sendCommand("toggle shuffle");
+            toast(switch (shuffleMode) {
+                case "tracks" -> "Shuffling albums";
+                case "albums" -> "Shuffle off";
+                default -> "Shuffling tracks";
+            });
+        });
 
         seek = new CmusSlider(context, false);
         seek.setListener(new CmusSlider.Listener() {
@@ -111,12 +126,16 @@ public final class ControlBar extends LinearLayout {
         // the echoed view so win-remove can never touch the library; in
         // the browser it flips to + = add-to-library (Patrick), the
         // browser's `a` binding
-        queue = button(R.drawable.ic_queue_add, () -> callback.sendCommand(
-                switch (viewName) {
-                    case "queue" -> "win-remove";
-                    case "browser" -> "win-add-l";
-                    default -> "win-add-q";
-                }));
+        queue = button(R.drawable.ic_queue_add, () -> {
+            final String cmd, msg;
+            switch (viewName) {
+                case "queue" -> { cmd = "win-remove"; msg = "Removing from queue"; }
+                case "browser" -> { cmd = "win-add-l"; msg = "Adding to library"; }
+                default -> { cmd = "win-add-q"; msg = "Adding to queue"; }
+            }
+            callback.sendCommand(cmd);
+            toast(msg);
+        });
         ImageButton keyboard = button(R.drawable.ic_keyboard, callback::toggleKeyboard);
         buttons = new ImageButton[]{playPause, repeat, shuffle, volume, queue, keyboard};
 
@@ -272,6 +291,16 @@ public final class ControlBar extends LinearLayout {
         shuffle.setImageTintList(ColorStateList.valueOf("off".equals(shuffleMode) ? dim : fg));
         shuffle.setImageResource("albums".equals(shuffleMode)
                 ? R.drawable.ic_shuffle_albums : R.drawable.ic_shuffle);
+    }
+
+    // cancel the previous toast so a new one shows instantly instead of
+    // queueing behind it
+    private void toast(String message) {
+        if (toast != null) {
+            toast.cancel();
+        }
+        toast = Toast.makeText(getContext(), message, Toast.LENGTH_SHORT);
+        toast.show();
     }
 
     private ImageButton button(int icon, Runnable action) {

@@ -448,15 +448,16 @@ full plan and rationale; this file describes what currently exists.
   filters-view clear dims it). ✕ clears and collapses; tapping the
   icon again collapses keeping the filter; IME search action hands
   focus back to the terminal; closed on onStop/crash (the filter
-  itself is cmus state). Sleep slot: bedtime icon when off,
-  minutes-left text when armed (ticked on the deadline's minute
-  boundary while visible, refreshed by Status events so the expiry
-  pause reverts it promptly); tap = preset list (15–90 min) +
-  Custom… + Turn off; the service owns the countdown.
+  itself is cmus state). Sleep slot: empty when off, minutes-left text
+  when armed (ticked on the deadline's minute boundary while visible,
+  refreshed by Status events so the expiry pause reverts it promptly);
+  the timer is armed from the settings menu now (no icon), and tapping
+  the countdown reopens the dialog = preset list (15–90 min) + Custom…
+  + Turn off; the service owns the countdown.
   Settings icon (faint, rightmost): tap = popover (Theme / Font /
-  Import / Update cache / Settings, + Keyboard while the bottom bar is
-  hidden — its IME toggle went with it), long-press = theme selector
-  directly. Update cache sends plain `update-cache` (no -f: changed
+  Import / Update cache / Sleep timer / Settings, + Keyboard while the
+  bottom bar is hidden — its IME toggle went with it), long-press =
+  theme selector directly. Update cache sends plain `update-cache` (no -f: changed
   files and skip_track_info entries refresh, the whole library isn't
   re-read); any worker job's true→false edge toasts "Library update
   finished".
@@ -464,8 +465,8 @@ full plan and rationale; this file describes what currently exists.
   re-applied on every onStart (returning from settings) — hidden bars
   hand their insets to the terminal wrapper, the row-quantization
   remainder goes to whichever bars remain, and a faint fg-tinted
-  overlay row (the sleep slot, icon or minutes text, plus the settings
-  button anchoring the same popover) floats over the terminal's
+  overlay row (the sleep slot's minutes text when armed, plus the
+  settings button anchoring the same popover) floats over the terminal's
   top-right whenever the top bar is hidden (hidden with the joystick
   on the crash screen). Zoom (the font pref) is shared by
   pinch and the settings slider through one applyFontSize. Import
@@ -554,7 +555,11 @@ full plan and rationale; this file describes what currently exists.
   a PopupWindow with a vertical slider (`vol n` per integer step).
   The queue button is three-state on the echoed View: win-add-q
   normally, win-remove (remove icon) in the queue, and + = win-add-l
-  (the browser's `a` binding) in the browser.
+  (the browser's `a` binding) in the browser. The queue/shuffle/repeat
+  taps also show a toast of what they did ("Adding to queue" /
+  "Removing from queue" / "Adding to library"; the shuffle/repeat ones
+  predict the toggle's next state from the echoed one) — a single
+  reused Toast, cancelled before re-show so rapid taps read instantly.
   `CmusSlider` is the shared flat one-color slider (track/fill/block
   thumb, horizontal or vertical, float progress, redraws only on
   ≥0.5px thumb movement, ignores external updates mid-drag).
