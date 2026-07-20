@@ -1,6 +1,6 @@
 # cmus-android
 
-<!-- TODO: CI -->
+[![](https://github.com/pgaskin/cmus-android/actions/workflows/ci.yml/badge.svg)](https://github.com/pgaskin/cmus-android/actions/workflows/ci.yml)
 
 Port of [cmus](https://github.com/cmus/cmus) for Android with system integration and some extra UI features.
 
@@ -9,6 +9,8 @@ I mostly vibe-coded this since it's pretty much all glue code, the extra feature
 Although the code is almost entirely written and maintained by Claude, I made most of the higher-level architectural decisions and came up with the features to implement myself, and I read almost all of the thinking output. In addition, I already have a deep understanding of cmus (I'm one of the maintainers) and am able to point out the more subtle things.
 
 I already did most of the actual porting work earlier to make it work well on Termux, including the AAudio output plugin, portability and build fixes, playlist env var stuff, and so on. This project is mostly the UI and system integration.
+
+[**`Download`**](https://github.com/pgaskin/cmus-android/releases/latest)
 
 ### Screenshots
 
@@ -29,6 +31,12 @@ I already did most of the actual porting work earlier to make it work well on Te
 ![](./metadata/en-US/images/phoneScreenshots/4.png)
 
 </td></tr></thead></table>
+
+<small>
+
+*Like the wallpaper? See [github.com/pgaskin/windy](https://github.com/pgaskin/windy).*
+
+</small>
 
 ### Features
 
