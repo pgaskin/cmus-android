@@ -34,7 +34,7 @@ I already did most of the actual porting work earlier to make it work well on Te
 
 <small>
 
-*Like the wallpaper? See [github.com/pgaskin/windy](https://github.com/pgaskin/windy).*
+*Like the wallpaper? See [github.com/pgaskin/windy](https://github.com/pgaskin/windy) (this one isn't vibe-coded).*
 
 </small>
 
@@ -66,9 +66,12 @@ I already did most of the actual porting work earlier to make it work well on Te
 
 ### Building
 
-The Android SDK, NDK, and CMake are required. Building on Windows may work, but isn't tested.
+The Android SDK, NDK, CMake, and Git are required. Building on Windows may work, but isn't tested.
 
 ```bash
+# android sdk dependencies
+sdkmanager 'cmake;3.30.5' 'ndk;28.2.13676358' 'build-tools;36.0.0'
+
 # sync submodules
 git submodule update --init
 
