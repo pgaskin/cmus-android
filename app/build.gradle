@@ -29,6 +29,12 @@ android {
         }
     }
 
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+        }
+    }
+
     externalNativeBuild {
         cmake {
             path '../native/CMakeLists.txt'
