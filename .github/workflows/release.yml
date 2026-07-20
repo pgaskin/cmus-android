@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    environment:
+      name: release
+      deployment: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - run: test "${{github.ref_name}}" == "v$(grep -E '^\s*versionName\s+'"'.+'" app/build.gradle | head -n1 | cut -d "'" -f2)" || { echo 'incorrect versionName in app/build.gradle'; exit 1; }
+      - run: test "${{github.ref_name}}" == "v$(grep -E '^\s*versionCode\s+[0-9]+' app/build.gradle | head -n1 | grep -Eo '[0-9]+')" || { echo 'incorrect versionCode in app/build.gradle'; exit 1; }
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '25'
+          cache: gradle
+      - run: ./gradlew app:assembleRelease
+
+      - name: Write keystore
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/keystore.jks
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      - name: Sign APK
+        run: $ANDROID_HOME/build-tools/36.0.0/apksigner sign --ks "$KEYSTORE_PATH" --ks-pass env:KEYSTORE_PASSWORD --in app/build/outputs/apk/release/app-release-unsigned.apk --out app-release.apk
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      - name: Verify APK signature
+        run: $ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs app-release.apk
+
+      - name: Create release
+        id: create-release
+        uses: actions/github-script@v8
+        with:
+          retries: 3
+          script: |
+            const {data: {id: id}} = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: context.ref.replace(/^refs\/tags\//, ''),
+              target_commitish: context.sha,
+              name: context.ref.replace(/^refs\/tags\//, ''),
+              draft: true,
+            })
+            core.setOutput('id', id)
+      - name: Upload release asset
+        uses: actions/github-script@v9
+        with:
+          retries: 3
+          script: |
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ toJSON(steps.create-release.outputs.id) }},
+              data: require('fs').readFileSync('app-release.apk'),
+              name: 'cmus.apk',
+            })
