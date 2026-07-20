@@ -136,6 +136,7 @@ public class SettingsActivity extends Activity {
         buildCmusSection();
         buildDataSection();
         buildDebugSection();
+        buildAboutSection();
 
         bound = bindService(new Intent(this, CmusService.class), connection,
                 Context.BIND_AUTO_CREATE);
@@ -544,6 +545,22 @@ public class SettingsActivity extends Activity {
                             + "cmus. Applies on the next app restart.",
                     CmusService.PREF_DEBUG_LOG, false, null);
         }
+    }
+
+    private void buildAboutSection() {
+        header("About");
+
+        addRow(row("Third-party licenses",
+                subtitle("License texts for the bundled open-source components"),
+                null, () -> startActivity(new Intent(this, LicensesActivity.class))));
+
+        String version;
+        try {
+            version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (PackageManager.NameNotFoundException e) {
+            version = "?";
+        }
+        addRow(row("Version", subtitle(version), null, null));
     }
 
     // data-section flows

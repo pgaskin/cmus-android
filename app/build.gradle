@@ -46,6 +46,9 @@ android {
             // plain File: AGP 9 rejects Providers here; the task dependency
             // rides on preBuild -> cmusDataAssets below
             assets.srcDir layout.buildDirectory.dir('generated/cmus-assets').get().asFile
+            // generated third-party licenses page (LicensesActivity WebView);
+            // its own srcDir so its output can't overlap cmus-assets
+            assets.srcDir layout.buildDirectory.dir('generated/app-licenses').get().asFile
 
             // termux terminal-emulator + terminal-view compiled straight from
             // the pristine submodule (no jitpack AAR): Java into our namespace,
@@ -86,6 +89,96 @@ def cmusDataAssets = tasks.register('cmusDataAssets', Copy) {
     into layout.buildDirectory.dir('generated/cmus-assets/cmus-data')
 }
 
+// Third-party licenses aggregated into one WebView asset (licenses.html),
+// generated at build time from each third_party submodule's top-level
+// license file(s) so it can't drift. One collapsible <details> per library.
+def thirdPartyDir = new File(rootDir, 'third_party')
+def gitmodulesFile = new File(rootDir, '.gitmodules')
+def findLicenseFiles = { File dir ->
+    File[] fs = dir.listFiles()
+    fs == null ? [] : fs.findAll {
+        it.isFile() && (it.name ==~ /(?i)(LICENSE|COPYING|COPYRIGHT|NOTICE).*/)
+    }.sort { it.name }
+}
+def licensesHtml = tasks.register('licensesHtml') {
+    File[] subdirs = thirdPartyDir.listFiles()
+    def submodules = (subdirs == null ? [] : subdirs.findAll { it.isDirectory() }).sort { it.name }
+    def licenseFiles = submodules.collectMany { findLicenseFiles(it) }
+    def outFile = layout.buildDirectory.file('generated/app-licenses/licenses.html')
+
+    inputs.file gitmodulesFile
+    inputs.files licenseFiles
+    outputs.file outFile
+
+    doLast {
+        // name -> upstream url from .gitmodules
+        def urls = [:]
+        def curName = null
+        gitmodulesFile.eachLine { String line ->
+            def mp = (line =~ /^\s*path\s*=\s*(\S+)/)
+            if (mp.find()) { curName = new File(rootDir, mp.group(1)).name; return }
+            def mu = (line =~ /^\s*url\s*=\s*(\S+)/)
+            if (mu.find() && curName != null) urls[curName] = mu.group(1)
+        }
+
+        def esc = { String s -> s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') }
+
+        def body = new StringBuilder()
+        submodules.each { File dir ->
+            def files = findLicenseFiles(dir)
+            if (files.isEmpty()) return
+            def name = dir.name
+            body << "<details>\n<summary>${esc(name)}</summary>\n"
+            def url = urls[name]
+            if (url) body << "<p class=\"src\"><a href=\"${esc(url)}\">${esc(url)}</a></p>\n"
+            files.each { File f ->
+                if (files.size() > 1) body << "<div class=\"fname\">${esc(f.name)}</div>\n"
+                body << "<pre>${esc(f.getText('UTF-8'))}</pre>\n"
+            }
+            body << "</details>\n"
+        }
+
+        def css = '''
+:root { color-scheme: light dark; }
+body { font-family: sans-serif; margin: 0; padding: 28px 16px 40px; line-height: 1.5;
+       background: #ffffff; color: #202124; }
+h1 { font-size: 1.3rem; margin: 0 0 4px; }
+.intro { opacity: .7; margin: 0 0 16px; }
+details { margin: 10px 0; }
+summary { padding: 16px; font-size: 1.05rem; font-weight: 600; cursor: pointer;
+          border-radius: 8px; background: rgba(128,128,128,.14); min-height: 24px; }
+.src { font-size: .82rem; margin: 10px 2px 0; overflow-wrap: anywhere; }
+.fname { font-family: monospace; font-size: .8rem; opacity: .7; margin: 12px 2px 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .72rem; margin: 8px 0 0;
+      padding: 12px; border: 1px solid rgba(128,128,128,.35); border-radius: 8px;
+      background: rgba(128,128,128,.08); }
+a { color: inherit; }
+@media (prefers-color-scheme: dark) {
+  body { background: #121212; color: #e3e3e3; }
+}
+'''
+
+        def html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Third-party licenses</title>
+<style>${css}</style>
+</head>
+<body>
+<h1>Third-party licenses</h1>
+<p class="intro">cmus-android bundles the following open-source components. Tap a name to view its license.</p>
+${body}</body>
+</html>
+"""
+        def f = outFile.get().asFile
+        f.parentFile.mkdirs()
+        f.write(html, 'UTF-8')
+    }
+}
+
 tasks.named('preBuild') {
-    dependsOn patchCheck, cmusDataAssets
+    dependsOn patchCheck, cmusDataAssets, licensesHtml
 }
