@@ -1,7 +1,7 @@
 From b0dbe583bd535a7e5afaefad158224f32ec7c218 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:51:10 -0400
-Subject: [PATCH 07/11] route debug output to logcat under CONFIG_ANDROID
+Subject: [PATCH 07/12] route debug output to logcat under CONFIG_ANDROID
 
 Under CONFIG_ANDROID, d_print goes to logcat (tag "cmus") at debug level,
 gated by a flag read once in debug_init() from CMUS_ANDROID_DEBUG_LOG so

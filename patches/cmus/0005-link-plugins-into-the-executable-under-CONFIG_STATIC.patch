@@ -1,7 +1,7 @@
 From 784e1cf4bc159e69ec83c193df9723bba27d64d1 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:34:55 -0400
-Subject: [PATCH 05/11] link plugins into the executable under
+Subject: [PATCH 05/12] link plugins into the executable under
  CONFIG_STATIC_PLUGINS
 
 Instead of dlopen()ing <libdir>/{ip,op}/*.so, compile every plugin into

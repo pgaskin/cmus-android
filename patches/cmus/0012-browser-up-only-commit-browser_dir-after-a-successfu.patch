@@ -1,0 +1,77 @@
+From 7ed18b411eb5ade11d7edec266540b41e848b6db Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Sun, 19 Jul 2026 22:03:15 -0400
+Subject: [PATCH 12/12] browser-up: only commit browser_dir after a successful
+ load
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+browser_up()'s ENOENT branch set browser_dir to the parent path before
+any directory had actually loaded and then recursed; if the climb then
+hit a non-ENOENT error (EACCES) it bailed with browser_dir left pointing
+at a directory that never opened, while the window still showed the old
+listing — a corrupt base path. Going up out of the Android pinned
+browser root (/storage/emulated/0 -> /storage/emulated) hits exactly
+this EACCES.
+
+Rewrite the walk as a loop that commits browser_dir only through
+browser_load()'s success path: a missing ancestor (ENOENT) is still
+skipped, but any other failure leaves the browser on its current,
+still-listed directory.
+
+diff --git a/browser.c b/browser.c
+index 807eb7c..ffef12a 100644
+--- a/browser.c
++++ b/browser.c
+@@ -340,19 +340,41 @@ void browser_up(void)
+ 	len = strlen(ptr);
+ 	pos = xstrdup(ptr);
+ 
+-	errno = 0;
+-	if (browser_load(new)) {
+-		if (errno == ENOENT) {
++	/*
++	 * Climb until a directory actually loads. A missing ancestor
++	 * (ENOENT) is skipped, but browser_dir is committed only by a
++	 * successful browser_load() — so a permission failure (EACCES) part
++	 * way up leaves the browser on its current, still-listed directory
++	 * rather than stranding browser_dir on a directory that never
++	 * opened. (Going up out of the Android pinned browser root hits
++	 * EACCES; the old code set browser_dir = new before any load
++	 * succeeded and recursed, corrupting the base path.)
++	 */
++	while (1) {
++		errno = 0;
++		if (browser_load(new) == 0)
++			break;
++		if (errno != ENOENT || strcmp(new, "/") == 0) {
++			error_msg("could not open directory '%s': %s\n",
++					new, strerror(errno));
++			free(new);
+ 			free(pos);
+-			free(browser_dir);
+-			browser_dir = new;
+-			browser_up();
+ 			return;
+ 		}
+-		error_msg("could not open directory '%s': %s\n", new, strerror(errno));
+-		free(new);
++		/* new is gone: retry its parent, and if we land there
++		 * highlight the segment we climbed from */
++		ptr = strrchr(new, '/');
+ 		free(pos);
+-		return;
++		pos = xstrdup(ptr + 1);
++		len = strlen(pos);
++		if (ptr == new) {
++			free(new);
++			new = xstrdup("/");
++		} else {
++			char *parent = xstrndup(new, ptr - new);
++			free(new);
++			new = parent;
++		}
+ 	}
+ 	free(new);
+ 

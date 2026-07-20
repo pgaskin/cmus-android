@@ -1,7 +1,7 @@
 From 25cd95a3742b16b2025f70c43d556aff2b183b67 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
-Subject: [PATCH 02/11] drop remote stream support under CONFIG_ANDROID
+Subject: [PATCH 02/12] drop remote stream support under CONFIG_ANDROID
 
 Guard input.c's remote machinery (do_http_get through open_remote plus
 the timeouts/playlist-mime statics) behind #ifndef CONFIG_ANDROID with a
