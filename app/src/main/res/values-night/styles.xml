@@ -5,5 +5,12 @@
         <item name="android:colorAccent">@color/settings_accent</item>
         <item name="android:colorPrimary">@color/settings_accent</item>
         <item name="android:colorEdgeEffect">@color/settings_accent</item>
+        <!-- keep the accent for switches/headers, but darken the action bar
+             itself (colorPrimary would otherwise paint it the light accent) -->
+        <item name="android:actionBarStyle">@style/Widget.Cmus.Settings.ActionBar</item>
+    </style>
+
+    <style name="Widget.Cmus.Settings.ActionBar" parent="android:Widget.Material.ActionBar.Solid">
+        <item name="android:background">@color/settings_action_bar</item>
     </style>
 </resources>

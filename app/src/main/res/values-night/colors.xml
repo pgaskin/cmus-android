@@ -2,4 +2,7 @@
 <resources>
     <!-- lighter step of the same blue-grey for dark surfaces -->
     <color name="settings_accent">#90A4AE</color>
+    <!-- dark blue-grey (Blue Grey 900) for the action bar, so it doesn't
+         glare against the dark surfaces the way the accent-colored bar did -->
+    <color name="settings_action_bar">#263238</color>
 </resources>
