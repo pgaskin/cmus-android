@@ -105,7 +105,7 @@ full plan and rationale; this file describes what currently exists.
   static_plugins.c gathers them into static_{ip,op}_plugins[] tables that
   ip_load_plugins/op_load_plugins walk in place of the CMUS_LIB_DIR scan
   (the upstream Makefile leaves the macro unset and keeps the dlopen
-  path). The last three are app-hardening, all gated on CONFIG_ANDROID so
+  path). The rest are app-hardening/cleanup, all gated on CONFIG_ANDROID so
   the upstream Makefile is unaffected: 0006 drops the built-in cmus-remote
   socket server (every server_* reference in ui_curses.c behind #ifndef
   CONFIG_ANDROID — the select set, server_init/exit, the --listen flag and
@@ -113,13 +113,20 @@ full plan and rationale; this file describes what currently exists.
   the app has its own IPC socket; 0007 routes debug output to logcat (tag
   `cmus`): d_print at debug level, gated by a flag debug_init() reads once
   from CMUS_ANDROID_DEBUG_LOG so early logs get through, and _debug_bug at
-  error level always; 0008 neuters spawn() to fail with EPERM instead of
-  fork()+execvp() (no external processes — status display programs, the
-  run/shell commands; the three callers already handle -1); 0009 pins the
-  file browser's default dir: browser_init() reads CMUS_ANDROID_BROWSER_DIR
-  and resume_load() skips restoring the saved browser-dir so the app-chosen
-  dir wins every launch (the app sets the music folder, or the storage root
-  when all-files access is granted). The
+  error level always; 0008 pins the file browser's default dir: browser_init()
+  reads CMUS_ANDROID_BROWSER_DIR and resume_load() skips restoring the saved
+  browser-dir so the app-chosen dir wins every launch (the app sets the music
+  folder, or the storage root when all-files access is granted); 0009 drops
+  the only spawn() callers — the run/shell commands + their table rows and the
+  status_display_program option/invocations — so cmus runs no external
+  processes (spawn.c is left pristine for the upstream Makefile but the app
+  build no longer compiles it); 0010 drops CD-audio (no cdio plugin is built,
+  so cdda:// can never play): the FILE_TYPE_CDDA detect branch, the
+  cdda_device option, job.c's add_cdda + dispatch, and input.c's cdda open
+  path, which removes the last discid.c references so it too leaves the build;
+  0011 makes option_set accept-and-ignore the specific removed option names
+  (device, status_display_program) so an autosave/rc from an older build
+  doesn't error on their stale `set` lines (other unknowns still error). The
   protocol comment atop android.c is the contract the Java client codes
   against. Amending an existing patch = fixup commit in the submodule +
   `git rebase --autosquash base`, then ./patch.sh regen.
@@ -157,10 +164,11 @@ full plan and rationale; this file describes what currently exists.
   ncursesw is the configured NORMAL_OBJS module set (wide-char,
   ext-colors, no trace/ticlib/driver); iconv is lib/iconv.c +
   localcharset.c with a handwritten bionic config.h.
-- `native/cmus/`: cmus core (the Makefile's cmus-y set, mpris off,
-  http.c + server.c out, + the patch's android.c; `CONFIG_ANDROID` set as
-  a plain compile definition on the core only; links `-llog` for the
-  logcat debug output of patch 0007) as an
+- `native/cmus/`: cmus core (the Makefile's cmus-y set, mpris off, and
+  http.c/server.c/spawn.c/discid.c out — server by 0006, the last two by
+  0009/0010 which strip their callers, + the patch's android.c;
+  `CONFIG_ANDROID` set as a plain compile definition on the core only; links
+  `-llog` for the logcat debug output of patch 0007) as an
   executable named `libcmus.so`, parked in CMAKE_LIBRARY_OUTPUT_DIRECTORY,
   which AGP packages as-is; the 9 ip plugins (flac vorbis opus mad wavpack
   aac mp4 wav cue) + op/aaudio are compiled straight into that binary

@@ -95,7 +95,6 @@ add_executable(cmus
     ${src}/cue.c
     ${src}/cue_utils.c
     ${src}/debug.c
-    ${src}/discid.c
     ${src}/editable.c
     ${src}/expr.c
     ${src}/file.c
@@ -128,7 +127,6 @@ add_executable(cmus
     ${src}/read_wrapper.c
     ${src}/search.c
     ${src}/search_mode.c
-    ${src}/spawn.c
     ${src}/static_plugins.c
     ${src}/tabexp.c
     ${src}/tabexp_file.c

@@ -1,7 +1,7 @@
 From 25f32a7a97623f0e6da5aca24c73063ee75ba673 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:51:10 -0400
-Subject: [PATCH 6/9] drop the cmus-remote socket server under CONFIG_ANDROID
+Subject: [PATCH 06/11] drop the cmus-remote socket server under CONFIG_ANDROID
 
 The app talks to cmus over its own IPC socket (patch 0001); the built-in
 cmus-remote UNIX/TCP server is unused and just opens an attack surface, so

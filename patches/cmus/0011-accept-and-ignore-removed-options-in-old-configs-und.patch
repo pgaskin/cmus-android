@@ -1,0 +1,49 @@
+From 55a3f59d03d09214e76517355ca9fd1c5bb2afc7 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Sun, 19 Jul 2026 20:49:16 -0400
+Subject: [PATCH 11/11] accept-and-ignore removed options in old configs under
+ CONFIG_ANDROID
+
+An autosave or rc written by an older build may still 'set device=...' or
+'set status_display_program=...' for options later builds removed; that
+errored with 'no such option' and blocked startup on a press-enter prompt.
+option_set now silently accepts those specific removed names (other unknown
+options still error).
+
+diff --git a/options.c b/options.c
+index 6affd21..c50c82c 100644
+--- a/options.c
++++ b/options.c
+@@ -1796,12 +1796,30 @@ struct cmus_opt *option_find_silent(const char *name)
+ 	return NULL;
+ }
+ 
++#ifdef CONFIG_ANDROID
++/* options this build removed: accept-and-ignore so an autosave or rc written by
++ * an older build doesn't error on the stale `set` line (other unknown names
++ * still error as usual) */
++static int is_removed_option(const char *name)
++{
++	return strcmp(name, "device") == 0		/* CD-audio device */
++		|| strcmp(name, "status_display_program") == 0;
++}
++#endif
++
+ void option_set(const char *name, const char *value)
+ {
+-	struct cmus_opt *opt = option_find(name);
++	struct cmus_opt *opt = option_find_silent(name);
+ 
+-	if (opt)
++	if (opt) {
+ 		opt->set(opt->data, value);
++		return;
++	}
++#ifdef CONFIG_ANDROID
++	if (is_removed_option(name))
++		return;
++#endif
++	error_msg("no such option %s", name);
+ }
+ 
+ void options_add(void)

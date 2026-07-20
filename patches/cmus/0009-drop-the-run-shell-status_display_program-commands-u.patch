@@ -1,0 +1,154 @@
+From 87e83929443ed277c12668d41f9825e26fd92483 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Sun, 19 Jul 2026 20:36:45 -0400
+Subject: [PATCH 09/11] drop the run/shell/status_display_program commands
+ under CONFIG_ANDROID
+
+These are the only spawn() callers. The app runs no external processes, so
+gate them out (the run/shell commands + their table rows, and the
+status_display_program option + its invocations); spawn.c is left pristine
+for the upstream Makefile but the app build no longer compiles it.
+
+diff --git a/command_mode.c b/command_mode.c
+index b11aa62..b73dd42 100644
+--- a/command_mode.c
++++ b/command_mode.c
+@@ -987,6 +987,8 @@ static int add_ti(void *data, struct track_info *ti)
+ 	return 0;
+ }
+ 
++/* external-process commands are disabled in the app (spawn() has no build) */
++#ifndef CONFIG_ANDROID
+ static void cmd_run(char *arg)
+ {
+ 	char **av, **argv;
+@@ -1099,6 +1101,7 @@ static void cmd_shell(char *arg)
+ 	if (spawn((char **) argv, NULL, 0))
+ 		error_msg("executing '%s': %s", arg, strerror(errno));
+ }
++#endif
+ 
+ static int get_one_ti(void *data, struct track_info *ti)
+ {
+@@ -2666,7 +2669,9 @@ struct command commands[] = {
+ 	{ "quit",                  cmd_quit,             0, 1,  NULL,                 0, 0          },
+ 	{ "refresh",               cmd_refresh,          0, 0,  NULL,                 0, 0          },
+ 	{ "reshuffle",             cmd_reshuffle,        0, 0,  NULL,                 0, 0          },
++#ifndef CONFIG_ANDROID
+ 	{ "run",                   cmd_run,              1, -1, expand_program_paths, 0, CMD_UNSAFE },
++#endif
+ 	{ "save",                  cmd_save,             0, 1,  expand_load_save,     0, CMD_UNSAFE },
+ 	{ "search-b-start",        cmd_search_b_start,   0, 0,  NULL,                 0, 0          },
+ 	{ "search-next",           cmd_search_next,      0, 0,  NULL,                 0, 0          },
+@@ -2674,7 +2679,9 @@ struct command commands[] = {
+ 	{ "search-start",          cmd_search_start,     0, 0,  NULL,                 0, 0          },
+ 	{ "seek",                  cmd_seek,             1, 1,  NULL,                 0, 0          },
+ 	{ "set",                   cmd_set,              1, 1,  expand_options,       0, 0          },
++#ifndef CONFIG_ANDROID
+ 	{ "shell",                 cmd_shell,            1, -1, expand_program_paths, 0, CMD_UNSAFE },
++#endif
+ 	{ "showbind",              cmd_showbind,         1, 1,  expand_unbind_args,   0, 0          },
+ 	{ "shuffle",               cmd_reshuffle,        0, 0,  NULL,                 0, CMD_HIDDEN },
+ 	{ "source",                cmd_source,           1, 1,  expand_files,         0, CMD_UNSAFE },
+diff --git a/options.c b/options.c
+index 58ec79e..6131a44 100644
+--- a/options.c
++++ b/options.c
+@@ -59,7 +59,9 @@
+ 
+ char *cdda_device = NULL;
+ char *output_plugin = NULL;
++#ifndef CONFIG_ANDROID
+ char *status_display_program = NULL;
++#endif
+ char *server_password;
+ int auto_reshuffle = 1;
+ int confirm_run = 1;
+@@ -495,6 +497,7 @@ err:
+ 	error_msg("two integers in range 0..100 expected");
+ }
+ 
++#ifndef CONFIG_ANDROID
+ static void get_status_display_program(void *data, char *buf, size_t size)
+ {
+ 	if (status_display_program)
+@@ -508,6 +511,7 @@ static void set_status_display_program(void *data, const char *buf)
+ 	if (buf[0])
+ 		status_display_program = expand_filename(buf);
+ }
++#endif
+ 
+ static void get_tree_width_percent(void *data, char *buf, size_t size)
+ {
+@@ -1670,7 +1674,9 @@ static const struct {
+ 	DT(follow)
+ 	DT(softvol)
+ 	DN(softvol_state)
++#ifndef CONFIG_ANDROID
+ 	DN_FLAGS(status_display_program, OPT_PROGRAM_PATH)
++#endif
+ 	DT(wrap_search)
+ 	DT(skip_track_info)
+ 	DT(ignore_duplicates)
+diff --git a/ui_curses.c b/ui_curses.c
+index 74ba281..5314fd3 100644
+--- a/ui_curses.c
++++ b/ui_curses.c
+@@ -1794,6 +1794,8 @@ static void clear_error(void)
+ 
+ /* screen updates }}} */
+ 
++/* status_display_program is disabled in the app (no external processes) */
++#ifndef CONFIG_ANDROID
+ static int fill_status_program_track_info_args(char **argv, int i, struct track_info *ti)
+ {
+ 	/* returns first free argument index */
+@@ -1875,6 +1877,7 @@ static void spawn_status_program(void)
+ {
+ 	spawn_status_program_inner(player_status_names[player_info.status], player_info.ti);
+ }
++#endif
+ 
+ static volatile sig_atomic_t ctrl_c_pressed = 0;
+ 
+@@ -1967,7 +1970,9 @@ static void update(void)
+ 	int needs_title_update = 0;
+ 	int needs_status_update = 0;
+ 	int needs_command_update = 0;
++#ifndef CONFIG_ANDROID
+ 	int needs_spawn = 0;
++#endif
+ 
+ 	if (first_update) {
+ 		needs_title_update = 1;
+@@ -1988,8 +1993,10 @@ static void update(void)
+ 	if (player_info.file_changed || player_info.metadata_changed)
+ 		mpris_metadata_changed();
+ 
++#ifndef CONFIG_ANDROID
+ 	needs_spawn = player_info.status_changed || player_info.file_changed ||
+ 		player_info.metadata_changed;
++#endif
+ 
+ 	if (player_info.file_changed) {
+ 		needs_title_update = 1;
+@@ -2033,8 +2040,10 @@ static void update(void)
+ 		needs_status_update += pl_needs_redraw();
+ 	}
+ 
++#ifndef CONFIG_ANDROID
+ 	if (needs_spawn)
+ 		spawn_status_program();
++#endif
+ 
+ 	if (needs_view_update || needs_title_update || needs_status_update || needs_command_update) {
+ 		curs_set(0);
+@@ -2724,6 +2733,8 @@ int main(int argc, char *argv[])
+ 	init_all();
+ 	main_loop();
+ 	exit_all();
++#ifndef CONFIG_ANDROID
+ 	spawn_status_program_inner("exiting", NULL);
++#endif
+ 	return 0;
+ }

@@ -1,0 +1,133 @@
+From b25adf3146bb16a9c0d818522a98e911c0408e6f Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Sun, 19 Jul 2026 20:41:36 -0400
+Subject: [PATCH 10/11] drop CD-audio support under CONFIG_ANDROID
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+No cdio input plugin is built, so cdda:// can never play. Gate the cdda
+machinery — cmus_detect_ft's FILE_TYPE_CDDA branch, the cdda_device option,
+job.c's add_cdda + its dispatch case, and input.c's cdda open path — behind
+#ifndef CONFIG_ANDROID. This drops the last references to discid.c
+(complete_cdda_url/get_default_cdda_device/parse_cdda_url/gen_cdda_url), so
+the app build no longer compiles it.
+
+diff --git a/cmus.c b/cmus.c
+index c3eec51..84b2b9c 100644
+--- a/cmus.c
++++ b/cmus.c
+@@ -167,10 +167,12 @@ enum file_type cmus_detect_ft(const char *name, char **ret)
+ 		return FILE_TYPE_URL;
+ 	}
+ 
++#ifndef CONFIG_ANDROID
+ 	if (is_cdda_url(name)) {
+ 		*ret = complete_cdda_url(cdda_device, name);
+ 		return FILE_TYPE_CDDA;
+ 	}
++#endif
+ 
+ 	*ret = NULL;
+ 	absolute = path_absolute(name);
+diff --git a/input.c b/input.c
+index 16757d2..d46e22f 100644
+--- a/input.c
++++ b/input.c
+@@ -636,10 +636,13 @@ int ip_open(struct input_plugin *ip)
+ 		if (rc == 0)
+ 			rc = ip->ops->open(&ip->data);
+ 	} else {
++#ifndef CONFIG_ANDROID
+ 		if (is_cdda_url(ip->data.filename)) {
+ 			ip->ops = get_ops_by_mime_type("x-content/audio-cdda");
+ 			rc = ip->ops ? ip->ops->open(&ip->data) : 1;
+-		} else if (is_cue_url(ip->data.filename)) {
++		} else
++#endif
++		if (is_cue_url(ip->data.filename)) {
+ 			ip->ops = get_ops_by_mime_type("application/x-cue");
+ 			rc = ip->ops ? ip->ops->open(&ip->data) : 1;
+ 		} else
+diff --git a/job.c b/job.c
+index aeb7ee1..9d15225 100644
+--- a/job.c
++++ b/job.c
+@@ -210,6 +210,7 @@ static void add_url(const char *url)
+ 	add_file(url, 0);
+ }
+ 
++#ifndef CONFIG_ANDROID
+ static void add_cdda(const char *url)
+ {
+ 	char *disc_id = NULL;
+@@ -228,6 +229,7 @@ static void add_cdda(const char *url)
+ 		add_file(url, 0);
+ 	free(disc_id);
+ }
++#endif
+ 
+ struct dir_list_entry {
+ 	struct list_head node;
+@@ -426,9 +428,11 @@ static void do_add_job(void *data)
+ 	case FILE_TYPE_URL:
+ 		add_url(jd->name);
+ 		break;
++#ifndef CONFIG_ANDROID
+ 	case FILE_TYPE_CDDA:
+ 		add_cdda(jd->name);
+ 		break;
++#endif
+ 	case FILE_TYPE_PL:
+ 		add_pl(jd->name);
+ 		break;
+diff --git a/options.c b/options.c
+index 6131a44..6affd21 100644
+--- a/options.c
++++ b/options.c
+@@ -57,7 +57,9 @@
+ 
+ /* initialized option variables */
+ 
++#ifndef CONFIG_ANDROID
+ char *cdda_device = NULL;
++#endif
+ char *output_plugin = NULL;
+ #ifndef CONFIG_ANDROID
+ char *status_display_program = NULL;
+@@ -305,6 +307,7 @@ static int seen_pr1317_fmts = 0;
+ 
+ /* callbacks for normal options {{{ */
+ 
++#ifndef CONFIG_ANDROID
+ static void get_device(void *data, char *buf, size_t size)
+ {
+ 	strscpy(buf, cdda_device, size);
+@@ -315,6 +318,7 @@ static void set_device(void *data, const char *buf)
+ 	free(cdda_device);
+ 	cdda_device = expand_filename(buf);
+ }
++#endif
+ 
+ #define SECOND_SIZE (44100 * 16 / 8 * 2)
+ static void get_buffer_seconds(void *data, char *buf, size_t size)
+@@ -1636,7 +1640,9 @@ static const struct {
+ } simple_options[] = {
+ 	DT(aaa_mode)
+ 	DT(auto_reshuffle)
++#ifndef CONFIG_ANDROID
+ 	DN_FLAGS(device, OPT_PROGRAM_PATH)
++#endif
+ 	DN(buffer_seconds)
+ 	DN(scroll_offset)
+ 	DN(rewind_offset)
+@@ -1842,7 +1848,9 @@ void options_load(void)
+ 	int i;
+ 
+ 	/* initialize those that can't be statically initialized */
++#ifndef CONFIG_ANDROID
+ 	cdda_device = get_default_cdda_device();
++#endif
+ 	for (i = 0; str_defaults[i].name; i++)
+ 		option_set(str_defaults[i].name, str_defaults[i].value);
+ 

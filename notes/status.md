@@ -3,6 +3,33 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — More cmus cleanup: drop run/shell/status-program + CD-audio (built + device-tested)
+
+Three CONFIG_ANDROID cmus patches + build changes; `native: more cleanup`.
+
+- Reworked the series: the old 0008 (neuter spawn) was dropped via
+  `git rebase --onto` (the `reset --hard` route is blocked by the sandbox) and
+  replaced by real removals, so browser shifted 0009→0008.
+- **0009** drops the run/shell commands (+ table rows) and the
+  status_display_program option/invocations — the only spawn() callers. spawn.c
+  stays pristine for the upstream Makefile but is dropped from the app CMake
+  build (zero callers). Watch out: there were **two** extra status-program
+  call sites beyond the obvious one (`spawn_status_program_inner("exiting",…)`
+  at exit, and the `needs_spawn` decl/assign/use trio — gate all of it or you
+  get unused-variable/implicit-decl errors).
+- **0010** drops CD-audio (no cdio plugin is built): the FILE_TYPE_CDDA detect
+  branch, cdda_device option, job.c add_cdda + dispatch case, input.c cdda open
+  arm. That removes the last refs to discid.c (complete_cdda_url /
+  get_default_cdda_device / parse_cdda_url / gen_cdda_url) so it's dropped from
+  the build too.
+- **0011** (migration): removing persisted options broke startup — a stale
+  autosave still had `set device=/dev/cdrom` and `set status_display_program=`,
+  and option_set errored `no such option`, blocking on a press-enter prompt.
+  option_set now accept-and-ignores exactly those two removed names (other
+  unknowns still error). Verified with the stale lines still present: no error,
+  cmus reaches IPC hello, FLAC playback works.
+- CMake drops spawn.c + discid.c from the executable.
+
 ## 2026-07-19 — File browser defaults to the music dir + optional all-files access (built + device-tested)
 
 - **Patch 0009 (CONFIG_ANDROID)** pins the browser default every launch:
