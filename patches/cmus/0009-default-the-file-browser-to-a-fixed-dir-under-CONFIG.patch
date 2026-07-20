@@ -1,0 +1,49 @@
+From 5ab70ede81a8f12750fb93a04c3a0b5e978ab55b Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Sun, 19 Jul 2026 20:09:09 -0400
+Subject: [PATCH 9/9] default the file browser to a fixed dir under
+ CONFIG_ANDROID
+
+browser_init() takes its default dir from CMUS_ANDROID_BROWSER_DIR when set,
+and resume_load() skips restoring the saved browser-dir so the app-chosen
+dir wins on every launch (the app points it at the music folder, or the
+storage root when all-files access is granted).
+
+diff --git a/browser.c b/browser.c
+index 43f2d40..807eb7c 100644
+--- a/browser.c
++++ b/browser.c
+@@ -273,6 +273,14 @@ void browser_init(void)
+ 	char cwd[1024];
+ 	char *dir;
+ 
++#ifdef CONFIG_ANDROID
++	/* the app pins the default browser dir every launch (music folder, or the
++	 * storage root with all-files access); resume_load() won't override it */
++	const char *forced = getenv("CMUS_ANDROID_BROWSER_DIR");
++	if (forced && forced[0]) {
++		dir = xstrdup(forced);
++	} else
++#endif
+ 	if (getcwd(cwd, sizeof(cwd)) == NULL) {
+ 		dir = xstrdup("/");
+ 	} else {
+diff --git a/options.c b/options.c
+index 155e358..58ec79e 100644
+--- a/options.c
++++ b/options.c
+@@ -2043,7 +2043,13 @@ void resume_load(void)
+ 		free(resume.live_filter);
+ 	}
+ 	if (resume.browser_dir) {
+-		browser_chdir(resume.browser_dir);
++#ifdef CONFIG_ANDROID
++		/* the app pins the browser dir every launch (browser_init reads
++		 * CMUS_ANDROID_BROWSER_DIR); don't let the saved dir override it */
++		const char *forced = getenv("CMUS_ANDROID_BROWSER_DIR");
++		if (!(forced && forced[0]))
++#endif
++			browser_chdir(resume.browser_dir);
+ 		free(resume.browser_dir);
+ 	}
+ 	if (resume.marked_pl) {

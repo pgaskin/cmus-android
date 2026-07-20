@@ -3,6 +3,33 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-19 — File browser defaults to the music dir + optional all-files access (built + device-tested)
+
+- **Patch 0009 (CONFIG_ANDROID)** pins the browser default every launch:
+  `browser_init()` takes its dir from `CMUS_ANDROID_BROWSER_DIR` when set, and
+  `resume_load()` skips restoring the saved `browser-dir` so the app-chosen dir
+  always wins (not just first run). Both files pull `<stdlib.h>` via xmalloc.h,
+  so `getenv` needs no new include.
+- **App**: `CmusService` sets `CMUS_ANDROID_BROWSER_DIR` at spawn = the storage
+  root (`Environment.getExternalStorageDirectory()`) when all-files access is
+  granted, else the shared Music folder (`DIRECTORY_MUSIC`). Import
+  (`refreshTracks`) is unchanged — still just Music.
+- **All-files access**: added `MANAGE_EXTERNAL_STORAGE` to the manifest and an
+  "All files access" row in Settings → App (below Music-folder permission) that
+  opens the system per-app screen (`ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`)
+  and reflects `Environment.isExternalStorageManager()`. Framed as optional:
+  reaches non-audio folders and may work around storage quirks on some devices.
+- **Why cmus can read external storage without MediaStore**: `/storage/emulated/0`
+  is a FUSE mount served by MediaProvider that enforces permission per-app; the
+  zygote-forked cmus process, in its own mount namespace, is recognized as the
+  READ_MEDIA_AUDIO holder, so audio files and their dirs are readable by path.
+  (Confirmed on device: cmus's `mnt` ns ≠ shell's; `/proc/<pid>/root/storage`
+  shows the real tree. A `run-as` test gives a false EACCES — wrong namespace.)
+  A comment on this lives at the env-var site in CmusService.
+- Device-tested (arm64): with a saved `browser-dir` of `filesDir`, relaunch
+  forced it to `/storage/emulated/0/Music`; after `appops … MANAGE_EXTERNAL_STORAGE
+  allow`, relaunch forced it to `/storage/emulated/0`.
+
 ## 2026-07-19 — App hardening: drop cmus socket, logcat debug, neuter spawn (built + device-tested, authored as Claude)
 
 Three CONFIG_ANDROID-gated cmus patches (upstream Makefile unaffected):

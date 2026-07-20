@@ -13,6 +13,7 @@ import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.IBinder;
 import android.provider.Settings;
 import android.text.InputType;
@@ -235,6 +236,18 @@ public class SettingsActivity extends Activity {
         refreshers.add(() -> permSubtitle.setText(hasMusicPermission()
                 ? "Granted. Import can add tracks from the Music folder."
                 : "Not granted. Tap to allow reading the Music folder."));
+
+        // optional all-files access; opens the browser at the storage root
+        // instead of just Music (import is unaffected). Tap opens the system
+        // per-app screen; status refreshes on return
+        TextView allFilesSubtitle = new TextView(this);
+        addRow(row("All files access", allFilesSubtitle, null, () -> startActivity(
+                new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.fromParts("package", getPackageName(), null)))));
+        refreshers.add(() -> allFilesSubtitle.setText(Environment.isExternalStorageManager()
+                ? "Granted. The browser opens at the storage root and can reach any folder."
+                : "Optional. Tap to browse folders outside Music; may also work around "
+                        + "storage issues on some devices."));
 
         switchPrefRow("Show top bar", "The view tabs, filter, and sleep timer. When "
                         + "hidden, the sleep timer and settings are shown as floating buttons.",

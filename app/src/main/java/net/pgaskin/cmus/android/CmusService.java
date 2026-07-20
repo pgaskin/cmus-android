@@ -207,6 +207,18 @@ public class CmusService extends Service implements TerminalSessionClient {
             env.add("CMUS_ANDROID_FILES=" + filesDir);
             plEnv.add("CMUS_ANDROID_FILES");
             plEnvVars = String.join(",", plEnv);
+            // Default browser dir, pinned every launch (patches/cmus/0009):
+            // storage root with all-files access, else just the Music folder.
+            // cmus reaches these with its own opendir/readdir/open — no
+            // MediaStore — because /storage/emulated/0 is a FUSE mount served
+            // by MediaProvider that enforces permission per-app: our
+            // zygote-forked process, in its own mount namespace, is seen as
+            // the READ_MEDIA_AUDIO holder, so audio files (and the dirs
+            // holding them) are readable by path. (all-files access lifts the
+            // audio-only filter.) Import still targets only the Music folder.
+            env.add("CMUS_ANDROID_BROWSER_DIR=" + (Environment.isExternalStorageManager()
+                    ? Environment.getExternalStorageDirectory()
+                    : Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)));
             // debug.c reads this once at startup (patches/cmus/0007) so early
             // logs get through; a change needs a respawn, hence the settings note
             if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_DEBUG_LOG, false)) {

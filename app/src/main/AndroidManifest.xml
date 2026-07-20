@@ -7,6 +7,10 @@
     <!-- direct-path reads of the shared Music folder for the refresh
          action (audio-only is all cmus needs; no SAF) -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- optional, user-granted from settings: lets the file browser reach
+         non-audio dirs (READ_MEDIA_AUDIO only exposes audio through the FUSE
+         layer) and works around storage quirks on some devices -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <!-- backup was previously default-on and unscoped (all of filesDir);
          the rules scope it to prefs + the core cmus state. minSdk 34 > 31,

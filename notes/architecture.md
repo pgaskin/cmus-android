@@ -115,7 +115,11 @@ full plan and rationale; this file describes what currently exists.
   from CMUS_ANDROID_DEBUG_LOG so early logs get through, and _debug_bug at
   error level always; 0008 neuters spawn() to fail with EPERM instead of
   fork()+execvp() (no external processes — status display programs, the
-  run/shell commands; the three callers already handle -1). The
+  run/shell commands; the three callers already handle -1); 0009 pins the
+  file browser's default dir: browser_init() reads CMUS_ANDROID_BROWSER_DIR
+  and resume_load() skips restoring the saved browser-dir so the app-chosen
+  dir wins every launch (the app sets the music folder, or the storage root
+  when all-files access is granted). The
   protocol comment atop android.c is the contract the Java client codes
   against. Amending an existing patch = fixup commit in the submodule +
   `git rebase --autosquash base`, then ./patch.sh regen.
@@ -194,7 +198,13 @@ full plan and rationale; this file describes what currently exists.
   pick up socket files, + `CMUS_ANDROID_{EXT_FILES,EXT,FILES}`, the
   pl_env base vars — names permanent, most-specific first, + a conditional
   `CMUS_ANDROID_DEBUG_LOG=1` when the debuggable-only debug-logging toggle
-  is on, read once at startup by patch 0007 so a change needs a respawn),
+  is on, read once at startup by patch 0007 so a change needs a respawn, +
+  `CMUS_ANDROID_BROWSER_DIR` = the storage root when the optional all-files
+  access (MANAGE_EXTERNAL_STORAGE, granted from settings) is on else the
+  shared Music folder, pinned as the browser default every launch by 0009;
+  cmus reads these dirs directly — MediaProvider's FUSE mount honors the
+  app's READ_MEDIA_AUDIO per-process, so no MediaStore is needed — while
+  import still targets only Music),
   and is the
   session's one stable `TerminalSessionClient`, forwarding to the
   attached activity. The spawn is headless (TerminalSession only
