@@ -1,0 +1,1 @@
+Lightweight music player with touch-friendly controls and system integration.

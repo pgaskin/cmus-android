@@ -1,0 +1,26 @@
+cmus-android is a wrapper for the cmus music player with native touch controls and system integration.
+
+Features:
+* Supports Android 14+.
+* Additional touch-friendly UI components.
+  * Top bar with live-filter, views, and settings.
+  * Bottom bar with play/repeat/shuffle/seek/volume/queue/keyboard.
+  * Long-press tracks/playlists to add/remove.
+  * Joystick for scrolling and switching panes/views.
+  * Graphical settings view for most relevant settings.
+* System integration.
+  * System media controls and metadata.
+  * Stops the cmus process after being idle for a bit to save power, automatically restarting it when focused or media buttons are used.
+  * Material You color scheme.
+  * Music from external storage.
+  * UI colors match cmus theme.
+  * Audio ducking.
+  * Library paths are relative to data dirs so import/export works correctly.
+* Extra features.
+  * Album art support.
+  * Sleep timer.
+  * Font options.
+  * Data import/export.
+  * Sub-second seeking accuracy.
+  * Continuously saves state.
+- Optimized for power efficiency.
