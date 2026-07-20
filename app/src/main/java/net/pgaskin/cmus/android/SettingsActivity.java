@@ -550,6 +550,10 @@ public class SettingsActivity extends Activity {
     private void buildAboutSection() {
         header("About");
 
+        String repo = "https://github.com/pgaskin/cmus-android";
+        addRow(row("Source code", subtitle(repo), null,
+                () -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(repo)))));
+
         addRow(row("Third-party licenses",
                 subtitle("License texts for the bundled open-source components"),
                 null, () -> startActivity(new Intent(this, LicensesActivity.class))));
