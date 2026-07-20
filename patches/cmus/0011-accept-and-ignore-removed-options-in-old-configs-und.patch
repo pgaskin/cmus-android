@@ -1,4 +1,4 @@
-From 61dbd71708daa7aa86c40cbd25a19fe35c2f35d7 Mon Sep 17 00:00:00 2001
+From 0213d855ec45859e4eaba55317cc9d4d192b9694 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:49:16 -0400
 Subject: [PATCH 11/12] accept-and-ignore removed options in old configs under

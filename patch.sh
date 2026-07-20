@@ -110,7 +110,7 @@ for path in $paths; do
     # apply patches
     if [ -n "$havepatches" ] && [ "$head" = "$base" ]; then
         printf '\033[1;34m> %s\033[0m\n' "$name: applying patches"
-        git -C "$path" am "$PWD/patches/$name"/*.patch
+        git -c user.name=user -c user.email=email -C "$path" am "$PWD/patches/$name"/*.patch
         head=$(git -C "$path" rev-parse HEAD)
     fi
 

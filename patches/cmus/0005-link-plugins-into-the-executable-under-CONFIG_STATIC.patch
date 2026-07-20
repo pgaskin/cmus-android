@@ -1,4 +1,4 @@
-From 784e1cf4bc159e69ec83c193df9723bba27d64d1 Mon Sep 17 00:00:00 2001
+From 2f12ea53381313e4e0e532aac198a78eb7190eb2 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:34:55 -0400
 Subject: [PATCH 05/12] link plugins into the executable under

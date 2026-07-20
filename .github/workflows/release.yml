@@ -27,6 +27,8 @@ jobs:
           distribution: 'temurin'
           java-version: '25'
           cache: gradle
+      - run: yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses; ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager 'cmake;3.30.5' 'ndk;28.2.13676358' 'build-tools;36.0.0'
+      - run: ./patch.sh
       - run: ./gradlew app:assembleRelease
 
       - name: Write keystore

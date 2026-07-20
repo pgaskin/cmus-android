@@ -1,4 +1,4 @@
-From 0ef3f44d6b34b261c79cc32c0ce1fc1b6b6e1681 Mon Sep 17 00:00:00 2001
+From 4c25d01925f381e444462c6c406c8cb673f9535c Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 13:41:48 -0400
 Subject: [PATCH 03/12] op/aaudio: fix sharing_mode getter reading

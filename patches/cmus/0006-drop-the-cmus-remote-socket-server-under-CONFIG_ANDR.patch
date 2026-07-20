@@ -1,4 +1,4 @@
-From 8be3f8ee50934e893ca89b13b7608b043be031e8 Mon Sep 17 00:00:00 2001
+From 76d0e4a5da725f71fdf1e79ef5f81c6c9d0f7e35 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:51:10 -0400
 Subject: [PATCH 06/12] drop the cmus-remote socket server under CONFIG_ANDROID

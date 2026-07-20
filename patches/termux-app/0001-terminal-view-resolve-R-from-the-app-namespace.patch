@@ -1,4 +1,4 @@
-From 9d1a30ee4e5e1060864406ca56bc3ae598a1ec24 Mon Sep 17 00:00:00 2001
+From 362cc50eb328b5bf951d14c6a79a1233fbd7a9e0 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 18:51:25 -0400
 Subject: [PATCH 1/1] terminal-view: resolve R from the app namespace

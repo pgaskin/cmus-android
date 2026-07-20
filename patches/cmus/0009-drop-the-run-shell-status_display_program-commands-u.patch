@@ -1,4 +1,4 @@
-From 5cc2d0afeedf6d6fa5ccd35091205a41a137bd99 Mon Sep 17 00:00:00 2001
+From fd453d01166fc005c02049d028ffe78b5eb522b5 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:36:45 -0400
 Subject: [PATCH 09/12] drop the run/shell/status_display_program commands

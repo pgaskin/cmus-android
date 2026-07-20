@@ -1,4 +1,4 @@
-From 4289cb831898e0d7fa93a468b47d062be335f413 Mon Sep 17 00:00:00 2001
+From f06be9978bc6ed3db8e0b925f12ccbb5dde303f0 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:41:36 -0400
 Subject: [PATCH 10/12] drop CD-audio support under CONFIG_ANDROID
