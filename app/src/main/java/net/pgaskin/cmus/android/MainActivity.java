@@ -106,6 +106,10 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
     private ImageButton filterClose;
     private TextView sleepText;
     private ImageButton settingsBtn;
+    /** In the browser view these take the search icon's left slot: up a
+     * directory / jump to the pinned browser root. */
+    private ImageButton browserUpBtn;
+    private ImageButton browserHomeBtn;
     /** With the top bar hidden, settings and the sleep timer stay
      * reachable via this faint overlay row in the terminal's top-right
      * (stage 18). */
@@ -346,6 +350,19 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
             showThemeSelector();
             return true;
         });
+
+        // in the browser view these replace the search icon (live-filter is
+        // library-only anyway): up a directory + jump to the pinned browser
+        // root. browser-up/cd act on browser_dir, so no view guard is needed.
+        browserUpBtn = topBarButton(R.drawable.ic_arrow_upward,
+                () -> sendCommand("browser-up"));
+        browserHomeBtn = topBarButton(R.drawable.ic_home, () -> {
+            if (service != null) {
+                sendCommand("cd " + service.browserHomeDir().getPath());
+            }
+        });
+        browserUpBtn.setVisibility(View.GONE);
+        browserHomeBtn.setVisibility(View.GONE);
         updateTopBarButtons();
 
         topBar = new LinearLayout(this);
@@ -353,6 +370,8 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setBaselineAligned(false);
         topBar.addView(filterBtn);
+        topBar.addView(browserHomeBtn);
+        topBar.addView(browserUpBtn);
         // wrap-content height: the tabs are the bar's intrinsic height (a
         // match_parent weighted child would instead be forced to the
         // largest fixed child — the icon squares — clipping the tab text)
@@ -849,6 +868,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
             case CmusIpc.View v -> {
                 viewName = v.name();
                 applyTabColors();
+                updateBrowserNav();
                 scrollActiveTabIntoView();
                 controlBar.onView(v.name());
             }
@@ -959,6 +979,8 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         filterClose.setImageTintList(ColorStateList.valueOf(fg));
         sleepText.setTextColor(fg); // armed = active, the tab convention
         settingsBtn.setImageTintList(ColorStateList.valueOf(dim)); // always faint
+        browserUpBtn.setImageTintList(ColorStateList.valueOf(fg));
+        browserHomeBtn.setImageTintList(ColorStateList.valueOf(fg));
     }
 
     /** The live emulator palette CmusTheme resolves through; null pre-attach. */
@@ -1095,6 +1117,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         tabBar.setVisibility(View.GONE);
         sleepText.setVisibility(View.GONE);
         settingsBtn.setVisibility(View.GONE);
+        updateBrowserNav(); // filter box owns the bar: search icon, not up/home
         filterBox.setVisibility(View.VISIBLE);
         filterClose.setVisibility(View.VISIBLE);
         filterBoxSquelch = true;
@@ -1122,6 +1145,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         filterClose.setVisibility(View.GONE);
         tabBar.setVisibility(View.VISIBLE);
         settingsBtn.setVisibility(View.VISIBLE);
+        updateBrowserNav(); // swap back to up/home if closing onto the browser
         updateSleepSlot(); // restores the countdown if the timer is armed
         hideImeAndFocusTerminal();
     }
@@ -1477,10 +1501,23 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
             floatSettingsBtn.setLayoutParams(new LinearLayout.LayoutParams(3 * line, 3 * line));
             floatSleepText.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSize);
         }
-        for (ImageButton b : new ImageButton[]{filterBtn, filterClose, settingsBtn}) {
+        for (ImageButton b : new ImageButton[]{filterBtn, filterClose, settingsBtn,
+                browserUpBtn, browserHomeBtn}) {
             b.setPadding(pad, pad, pad, pad);
             b.setLayoutParams(new LinearLayout.LayoutParams(3 * line, 3 * line));
         }
+    }
+
+    /**
+     * In the browser view the search icon's left slot becomes the browser
+     * up/home buttons; everywhere else (and while the filter box owns the
+     * bar) the search icon shows.
+     */
+    private void updateBrowserNav() {
+        boolean browser = "browser".equals(viewName) && !filterBoxOpen;
+        filterBtn.setVisibility(browser ? View.GONE : View.VISIBLE);
+        browserUpBtn.setVisibility(browser ? View.VISIBLE : View.GONE);
+        browserHomeBtn.setVisibility(browser ? View.VISIBLE : View.GONE);
     }
 
     // sleep timer: the service owns the countdown (it must tick with the

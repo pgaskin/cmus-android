@@ -216,9 +216,7 @@ public class CmusService extends Service implements TerminalSessionClient {
             // the READ_MEDIA_AUDIO holder, so audio files (and the dirs
             // holding them) are readable by path. (all-files access lifts the
             // audio-only filter.) Import still targets only the Music folder.
-            env.add("CMUS_ANDROID_BROWSER_DIR=" + (Environment.isExternalStorageManager()
-                    ? Environment.getExternalStorageDirectory()
-                    : Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)));
+            env.add("CMUS_ANDROID_BROWSER_DIR=" + browserHomeDir());
             // debug.c reads this once at startup (patches/cmus/0007) so early
             // logs get through; a change needs a respawn, hence the settings note
             if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_DEBUG_LOG, false)) {
@@ -257,6 +255,18 @@ public class CmusService extends Service implements TerminalSessionClient {
     /** The IPC client; non-null once {@link #getSession} has spawned cmus. */
     public CmusIpc getIpc() {
         return ipc;
+    }
+
+    /**
+     * The pinned file-browser root (patches/cmus/0008): the storage root
+     * when all-files access is granted, else the shared Music folder. Both
+     * the spawn-time CMUS_ANDROID_BROWSER_DIR and the target of the top
+     * bar's browser Home button, so the button lands where launches start.
+     */
+    public File browserHomeDir() {
+        return Environment.isExternalStorageManager()
+                ? Environment.getExternalStorageDirectory()
+                : Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC);
     }
 
     /** For {@link CmusDebugReceiver}; null unless the service is running. */
