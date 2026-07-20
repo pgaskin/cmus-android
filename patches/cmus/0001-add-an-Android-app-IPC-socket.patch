@@ -1,4 +1,4 @@
-From 70ebe4b08139a34e06ad319559f2fa293b459023 Mon Sep 17 00:00:00 2001
+From 28477eda8ffbf48f1fd4c6bbe288eb1c3f8c38ad Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
 Subject: [PATCH 01/11] add an Android app IPC socket

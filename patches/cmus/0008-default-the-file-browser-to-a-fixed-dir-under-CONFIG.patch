@@ -1,4 +1,4 @@
-From d8eb289075850812cce36f08402489564480eeae Mon Sep 17 00:00:00 2001
+From 5b373f9f07ebdc570aa76743196546f972526d7d Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:09:09 -0400
 Subject: [PATCH 08/11] default the file browser to a fixed dir under
