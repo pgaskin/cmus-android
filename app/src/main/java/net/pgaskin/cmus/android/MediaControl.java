@@ -392,27 +392,17 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
 
     // cover art (art executor thread)
 
+    /** Cover for the track, in order: embedded → ogg picture block → folder art. */
     private Bitmap decodeArt(String path) {
-        try (MediaMetadataRetriever retriever = new MediaMetadataRetriever()) {
-            retriever.setDataSource(path);
-            byte[] picture = retriever.getEmbeddedPicture();
-            if (picture != null) {
-                Bitmap bitmap = decodeScaled(
-                        opts -> BitmapFactory.decodeByteArray(picture, 0, picture.length, opts));
-                if (bitmap != null) {
-                    return bitmap;
-                }
-            }
-        } catch (Exception e) {
-            // formats the framework extractor can't open at all (e.g. wv)
-            Log.d(TAG, "media: no embedded art for " + path + ": " + e);
+        Bitmap embedded = decodeEmbedded(path);
+        if (embedded != null) {
+            return embedded;
         }
         // The framework extractor ignores ogg/opus METADATA_BLOCK_PICTURE, so
         // parse it ourselves before falling back to folder art.
         byte[] ogg = OggCover.extract(path);
         if (ogg != null) {
-            Bitmap bitmap = decodeScaled(
-                    opts -> BitmapFactory.decodeByteArray(ogg, 0, ogg.length, opts));
+            Bitmap bitmap = decodeBytes(ogg);
             if (bitmap != null) {
                 return bitmap;
             }
@@ -421,6 +411,26 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
         if (dir == null) {
             return null;
         }
+        return decodeFolderArt(dir);
+    }
+
+    /** The file's own embedded cover via the framework extractor, or null. */
+    private Bitmap decodeEmbedded(String path) {
+        try (MediaMetadataRetriever retriever = new MediaMetadataRetriever()) {
+            retriever.setDataSource(path);
+            byte[] picture = retriever.getEmbeddedPicture();
+            if (picture != null) {
+                return decodeBytes(picture);
+            }
+        } catch (Exception e) {
+            // formats the framework extractor can't open at all (e.g. wv)
+            Log.d(TAG, "media: no embedded art for " + path + ": " + e);
+        }
+        return null;
+    }
+
+    /** Cached scan of the track's folder for a cover file (art thread only). */
+    private Bitmap decodeFolderArt(File dir) {
         if (!dir.getPath().equals(artDirPath)) {
             artDirPath = dir.getPath();
             artDirBitmap = null;
@@ -432,8 +442,7 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
             for (String name : FOLDER_ART_NAMES) {
                 File f = byLowerName.get(name);
                 if (f != null) {
-                    artDirBitmap = decodeScaled(
-                            opts -> BitmapFactory.decodeFile(f.getPath(), opts));
+                    artDirBitmap = decodeScaled(opts -> BitmapFactory.decodeFile(f.getPath(), opts));
                     if (artDirBitmap != null) {
                         break;
                     }
@@ -441,6 +450,10 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
             }
         }
         return artDirBitmap;
+    }
+
+    private static Bitmap decodeBytes(byte[] data) {
+        return decodeScaled(opts -> BitmapFactory.decodeByteArray(data, 0, data.length, opts));
     }
 
     private interface ArtDecoder {

@@ -335,31 +335,7 @@ public class CmusService extends Service implements TerminalSessionClient {
         public void onEvent(CmusIpc.Event event) {
             switch (event) {
                 case CmusIpc.Hello h -> logIpc("ipc hello version=" + h.version());
-                case CmusIpc.Status s -> {
-                    logIpc("ipc status " + s.state()
-                            + " pos=" + s.position() + "/" + s.duration()
-                            + " file=" + s.file() + " tags=" + s.tags());
-                    updateIdleQuit(); // ipc.status() already caches s
-                    boolean resumePause = pendingResumePause;
-                    pendingResumePause = false; // first Status consumes it
-                    if (pendingMediaPlay) {
-                        pendingMediaPlay = false;
-                        switch (s.state()) {
-                            // resume leaves the saved track paused at
-                            // position, so toggle; player-play would
-                            // restart it from the beginning
-                            case PAUSED -> ipc.send(CmusIpc.CMD_TOGGLE_PAUSE);
-                            case STOPPED -> ipc.send(CmusIpc.CMD_PLAY);
-                            case PLAYING -> {
-                            }
-                        }
-                    } else if (resumePause && s.state() == CmusIpc.PlayState.PLAYING) {
-                        // "always resume paused": quit-while-playing
-                        // restores playing; park it at position instead
-                        Log.i(TAG, "resume-paused: pausing restored playback");
-                        ipc.send(CmusIpc.CMD_PAUSE);
-                    }
-                }
+                case CmusIpc.Status s -> handleStatus(s);
                 case CmusIpc.Position p -> logIpc("ipc position " + p.position());
                 case CmusIpc.Selected s -> logIpc("ipc selected view=" + s.view()
                         + " files=" + s.files() + " playlists=" + s.playlists()
@@ -367,28 +343,7 @@ public class CmusService extends Service implements TerminalSessionClient {
                 case CmusIpc.Volume v -> logIpc("ipc volume " + v.left() + "/" + v.right());
                 case CmusIpc.View v -> logIpc("ipc view " + v.name());
                 case CmusIpc.Filter f -> logIpc("ipc filter " + f.filter());
-                case CmusIpc.Jobs j -> {
-                    logIpc("ipc jobs running=" + j.running());
-                    if (idleQuitPendingJobs) {
-                        // the poll answer (or a diffed transition — either
-                        // is authoritative) continues the idle-quit fire
-                        idleQuitPendingJobs = false;
-                        if (!idleQuitConditionsHold()) {
-                            idleQuitArmed = false;
-                            return;
-                        }
-                        if (j.running()) {
-                            Log.i(TAG, "idle-quit: import running, delaying");
-                            mainHandler.postDelayed(idleQuit, IDLE_QUIT_JOBS_POLL_MS);
-                        } else {
-                            // pipeline complete; the grace re-check can
-                            // re-arm fresh if the quit is dropped
-                            idleQuitArmed = false;
-                            Log.i(TAG, "idle-quit: quitting cmus");
-                            quitCmus();
-                        }
-                    }
-                }
+                case CmusIpc.Jobs j -> handleJobs(j);
                 case CmusIpc.Colorscheme c -> {
                     logIpc("ipc colorscheme " + c.name());
                     if (materialActive) {
@@ -416,6 +371,57 @@ public class CmusService extends Service implements TerminalSessionClient {
             }
         }
     };
+
+    /** Post-spawn playback nudges (media-key resurrection, resume-paused). */
+    private void handleStatus(CmusIpc.Status s) {
+        logIpc("ipc status " + s.state()
+                + " pos=" + s.position() + "/" + s.duration()
+                + " file=" + s.file() + " tags=" + s.tags());
+        updateIdleQuit(); // ipc.status() already caches s
+        boolean resumePause = pendingResumePause;
+        pendingResumePause = false; // first Status consumes it
+        if (pendingMediaPlay) {
+            pendingMediaPlay = false;
+            switch (s.state()) {
+                // resume leaves the saved track paused at position, so toggle;
+                // player-play would restart it from the beginning
+                case PAUSED -> ipc.send(CmusIpc.CMD_TOGGLE_PAUSE);
+                case STOPPED -> ipc.send(CmusIpc.CMD_PLAY);
+                case PLAYING -> {
+                }
+            }
+        } else if (resumePause && s.state() == CmusIpc.PlayState.PLAYING) {
+            // "always resume paused": quit-while-playing restores playing;
+            // park it at position instead
+            Log.i(TAG, "resume-paused: pausing restored playback");
+            ipc.send(CmusIpc.CMD_PAUSE);
+        }
+    }
+
+    /** A jobs answer continues (or defers) an in-flight idle-quit fire. */
+    private void handleJobs(CmusIpc.Jobs j) {
+        logIpc("ipc jobs running=" + j.running());
+        if (!idleQuitPendingJobs) {
+            return;
+        }
+        // the poll answer (or a diffed transition — either is authoritative)
+        // continues the idle-quit fire
+        idleQuitPendingJobs = false;
+        if (!idleQuitConditionsHold()) {
+            idleQuitArmed = false;
+            return;
+        }
+        if (j.running()) {
+            Log.i(TAG, "idle-quit: import running, delaying");
+            mainHandler.postDelayed(idleQuit, IDLE_QUIT_JOBS_POLL_MS);
+        } else {
+            // pipeline complete; the grace re-check can re-arm fresh if the
+            // quit is dropped
+            idleQuitArmed = false;
+            Log.i(TAG, "idle-quit: quitting cmus");
+            quitCmus();
+        }
+    }
 
     public void setSessionCallback(SessionCallback callback) {
         this.callback = callback;

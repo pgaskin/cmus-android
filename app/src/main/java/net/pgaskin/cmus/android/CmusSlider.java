@@ -105,29 +105,35 @@ public final class CmusSlider extends View {
         float thumb = dp(3);
         float in = inset();
         float end = length() - in;
-        float mid = (vertical ? getWidth() : getHeight()) / 2f;
-        float thumbLen = (vertical ? getWidth() : getHeight()) / 2f;
+        // centerline across the axis; also the thumb's cross-axis length
+        // (half the slider's breadth), so the block sits in the middle half
+        float cross = (vertical ? getWidth() : getHeight()) / 2f;
         float pos = positionForProgress();
         drawnPos = pos;
 
+        // dim full-length track
         paint.setColor(Ui.withAlpha(color, active ? 0x55 : 0x30));
-        if (vertical) {
-            canvas.drawRect(mid - track / 2, in, mid + track / 2, end, paint);
-        } else {
-            canvas.drawRect(in, mid - track / 2, end, mid + track / 2, paint);
-        }
+        rect(canvas, in, end, cross - track / 2, cross + track / 2);
         if (!active) {
             return;
         }
+        // bright fill from the track's zero end up to the thumb (vertical runs
+        // bottom-to-top, so its filled span is pos..end), then the thumb block
         paint.setColor(color);
+        rect(canvas, vertical ? pos : in, vertical ? end : pos,
+                cross - track / 2, cross + track / 2);
+        rect(canvas, pos - thumb / 2, pos + thumb / 2, cross - cross / 2, cross + cross / 2);
+    }
+
+    /**
+     * Fill a rect in axis space: [a0,a1] runs along the slider, [c0,c1]
+     * across it — mapped to x/y by orientation so each shape is written once.
+     */
+    private void rect(Canvas canvas, float a0, float a1, float c0, float c1) {
         if (vertical) {
-            canvas.drawRect(mid - track / 2, pos, mid + track / 2, end, paint);
-            canvas.drawRect(mid - thumbLen / 2, pos - thumb / 2,
-                    mid + thumbLen / 2, pos + thumb / 2, paint);
+            canvas.drawRect(c0, a0, c1, a1, paint);
         } else {
-            canvas.drawRect(in, mid - track / 2, pos, mid + track / 2, paint);
-            canvas.drawRect(pos - thumb / 2, mid - thumbLen / 2,
-                    pos + thumb / 2, mid + thumbLen / 2, paint);
+            canvas.drawRect(a0, c0, a1, c1, paint);
         }
     }
 

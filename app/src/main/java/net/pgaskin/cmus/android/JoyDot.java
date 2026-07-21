@@ -193,63 +193,7 @@ public final class JoyDot extends View {
                 postDelayed(dragArm, floating ? longPressTimeout : DRAG_HOLD_MS);
                 invalidate();
             }
-            case MotionEvent.ACTION_MOVE -> {
-                if (!tracking) {
-                    break;
-                }
-                if (dragging) {
-                    callback.drag(e.getRawX() - lastRawX, e.getRawY() - lastRawY);
-                    lastRawX = e.getRawX();
-                    lastRawY = e.getRawY();
-                    break;
-                }
-                if (rightClicked) {
-                    break; // right-click fired: the stick waits for release
-                }
-                dx = e.getX() - downX;
-                dy = e.getY() - downY;
-                if (Math.hypot(dx, dy) > touchSlop) {
-                    removeCallbacks(dragArm); // left the middle: no re-arm
-                }
-                // far left/right = go that way, repeating slowly while
-                // held (hysteresis holds the state between rearm and
-                // threshold); arrows pause while navigating
-                int nd = dx >= navThreshold ? 1 : dx <= -navThreshold ? -1
-                        : Math.abs(dx) > navRearm ? navDir : 0;
-                // engaging nav also needs a clearly horizontal pull (2:1
-                // over the vertical wander, ~27° off axis) — it was too
-                // easy to hit from a sloppy vertical drag; once engaged,
-                // the distance hysteresis alone holds it
-                if (nd != 0 && navDir == 0 && Math.abs(dx) < 2 * Math.abs(dy)) {
-                    nd = 0;
-                }
-                if (nd != navDir) {
-                    removeCallbacks(navRepeater);
-                    navDir = nd;
-                    if (nd != 0) {
-                        fireNav();
-                        postDelayed(navRepeater, navInterval());
-                    }
-                }
-                if (navDir != 0) {
-                    stopRepeat();
-                } else {
-                    int dir = dy <= -vertThreshold ? -1 : dy >= vertThreshold ? 1 : 0;
-                    if (dir != repeatDir) {
-                        // fire on crossing (or reversal), then repeat; the
-                        // repeater re-reads the displacement per tick, so
-                        // pushing deeper speeds it up without re-crossing
-                        stopRepeat();
-                        repeatDir = dir;
-                        if (dir != 0) {
-                            sendKey(dir < 0 ? KeyEvent.KEYCODE_DPAD_UP
-                                    : KeyEvent.KEYCODE_DPAD_DOWN);
-                            postDelayed(repeater, repeatInterval());
-                        }
-                    }
-                }
-                invalidate();
-            }
+            case MotionEvent.ACTION_MOVE -> handleMove(e);
             case MotionEvent.ACTION_UP -> {
                 if (dragging) {
                     callback.dragEnd();
@@ -261,6 +205,71 @@ public final class JoyDot extends View {
             case MotionEvent.ACTION_CANCEL -> reset();
         }
         return true;
+    }
+
+    private void handleMove(MotionEvent e) {
+        if (!tracking) {
+            return;
+        }
+        if (dragging) {
+            callback.drag(e.getRawX() - lastRawX, e.getRawY() - lastRawY);
+            lastRawX = e.getRawX();
+            lastRawY = e.getRawY();
+            return;
+        }
+        if (rightClicked) {
+            return; // right-click fired: the stick waits for release
+        }
+        dx = e.getX() - downX;
+        dy = e.getY() - downY;
+        if (Math.hypot(dx, dy) > touchSlop) {
+            removeCallbacks(dragArm); // left the middle: no re-arm
+        }
+        updateNav();
+        // nav pauses the arrows while it's engaged
+        if (navDir != 0) {
+            stopRepeat();
+        } else {
+            updateRepeat();
+        }
+        invalidate();
+    }
+
+    /** Far left/right pull → directional nav, held with distance hysteresis. */
+    private void updateNav() {
+        // hysteresis holds the state between rearm and threshold
+        int nd = dx >= navThreshold ? 1 : dx <= -navThreshold ? -1
+                : Math.abs(dx) > navRearm ? navDir : 0;
+        // engaging nav also needs a clearly horizontal pull (2:1 over the
+        // vertical wander, ~27° off axis) — it was too easy to hit from a
+        // sloppy vertical drag; once engaged, the distance hysteresis holds it
+        if (nd != 0 && navDir == 0 && Math.abs(dx) < 2 * Math.abs(dy)) {
+            nd = 0;
+        }
+        if (nd != navDir) {
+            removeCallbacks(navRepeater);
+            navDir = nd;
+            if (nd != 0) {
+                fireNav();
+                postDelayed(navRepeater, navInterval());
+            }
+        }
+    }
+
+    /** Up/down pull → repeating arrows, deeper = faster (the repeater re-reads dy). */
+    private void updateRepeat() {
+        int dir = dy <= -vertThreshold ? -1 : dy >= vertThreshold ? 1 : 0;
+        if (dir != repeatDir) {
+            // fire on crossing (or reversal), then repeat; the repeater
+            // re-reads the displacement per tick, so pushing deeper speeds it
+            // up without re-crossing
+            stopRepeat();
+            repeatDir = dir;
+            if (dir != 0) {
+                sendKey(dir < 0 ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN);
+                postDelayed(repeater, repeatInterval());
+            }
+        }
     }
 
     @Override
@@ -300,15 +309,19 @@ public final class JoyDot extends View {
     }
 
     private long repeatInterval() {
-        float t = (Math.abs(dy) - vertThreshold) / (float) (vertFull - vertThreshold);
-        t = Math.max(0f, Math.min(t, 1f));
-        return Math.round(REPEAT_SLOW_MS + t * (REPEAT_FAST_MS - REPEAT_SLOW_MS));
+        return lerpCadence(Math.abs(dy), vertThreshold, vertFull, REPEAT_SLOW_MS, REPEAT_FAST_MS);
     }
 
     private long navInterval() {
-        float t = (Math.abs(dx) - navThreshold) / (float) (navFull - navThreshold);
+        return lerpCadence(Math.abs(dx), navThreshold, navFull, NAV_SLOW_MS, NAV_FAST_MS);
+    }
+
+    /** Interpolate the repeat delay: threshold→slow, full→fast, clamped. */
+    private static long lerpCadence(float displacement, float threshold, float full,
+            long slowMs, long fastMs) {
+        float t = (displacement - threshold) / (full - threshold);
         t = Math.max(0f, Math.min(t, 1f));
-        return Math.round(NAV_SLOW_MS + t * (NAV_FAST_MS - NAV_SLOW_MS));
+        return Math.round(slowMs + t * (fastMs - slowMs));
     }
 
     private void stopRepeat() {

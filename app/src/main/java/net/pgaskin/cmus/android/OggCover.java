@@ -37,6 +37,17 @@ final class OggCover {
 
     private static final String KEY = "METADATA_BLOCK_PICTURE";
 
+    /** Fixed Ogg page header size, before the segment table. */
+    private static final int OGG_PAGE_HEADER_LEN = 27;
+    /** A lacing value of 255 means the packet continues in the next segment. */
+    private static final int LACING_CONTINUATION = 255;
+    /** Packet index of the comment header (0 = the identification header). */
+    private static final int COMMENT_PACKET_INDEX = 1;
+    /** Vorbis comment-header packet type byte. */
+    private static final int VORBIS_COMMENT_HEADER = 0x03;
+    /** FLAC PICTURE fixed fields between description and data: w, h, depth, colors. */
+    private static final int FLAC_PIC_FIXED_FIELDS = 16;
+
     private OggCover() {}
 
     /**
@@ -67,6 +78,35 @@ final class OggCover {
     // -- Ogg container: reassemble packet index 1 (the comment header) of the
     //    first logical bitstream --------------------------------------------
 
+    /** One Ogg page: its bitstream serial, segment table, and body bytes. */
+    private record Page(int serial, byte[] lacing, byte[] body) {}
+
+    /** Next page, or null on clean EOF, short read, or non-Ogg sync. */
+    private static Page readPage(InputStream in, long[] scanned) throws IOException {
+        byte[] hdr = new byte[OGG_PAGE_HEADER_LEN];
+        if (!readFully(in, hdr, OGG_PAGE_HEADER_LEN, scanned)) {
+            return null; // clean EOF or short read
+        }
+        if (hdr[0] != 'O' || hdr[1] != 'g' || hdr[2] != 'g' || hdr[3] != 'S') {
+            return null; // not Ogg (this doubles as the file sniff on page 0)
+        }
+        int serial = (int) u32le(hdr, 14, hdr.length);
+        int segCount = hdr[26] & 0xFF;
+        byte[] lacing = new byte[segCount];
+        if (!readFully(in, lacing, segCount, scanned)) {
+            return null;
+        }
+        int bodyLen = 0;
+        for (int i = 0; i < segCount; i++) {
+            bodyLen += lacing[i] & 0xFF;
+        }
+        byte[] body = new byte[bodyLen];
+        if (!readFully(in, body, bodyLen, scanned)) {
+            return null;
+        }
+        return new Page(serial, lacing, body);
+    }
+
     private static byte[] commentPacket(InputStream in) throws IOException {
         long[] scanned = {0};
         boolean haveSerial = false;
@@ -74,48 +114,32 @@ final class OggCover {
         int packetIndex = 0;
         ByteArrayOutputStream pkt = new ByteArrayOutputStream();
 
-        byte[] hdr = new byte[27];
         while (true) {
-            if (!readFully(in, hdr, 27, scanned)) {
-                return null; // clean EOF or short read
+            Page page = readPage(in, scanned);
+            if (page == null) {
+                return null; // clean EOF, short read, or not Ogg
             }
-            if (hdr[0] != 'O' || hdr[1] != 'g' || hdr[2] != 'g' || hdr[3] != 'S') {
-                return null; // not Ogg (this doubles as the file sniff on page 0)
-            }
-            int pageSerial = le32(hdr, 14);
-            int segCount = hdr[26] & 0xFF;
-            byte[] lacing = new byte[segCount];
-            if (!readFully(in, lacing, segCount, scanned)) {
-                return null;
-            }
-            int bodyLen = 0;
-            for (int i = 0; i < segCount; i++) {
-                bodyLen += lacing[i] & 0xFF;
-            }
-            byte[] body = new byte[bodyLen];
-            if (!readFully(in, body, bodyLen, scanned)) {
-                return null;
-            }
-
             if (!haveSerial) {
-                serial = pageSerial;
+                serial = page.serial();
                 haveSerial = true;
             }
-            if (pageSerial == serial) {
+            if (page.serial() == serial) {
                 // Walk segments, splitting packets on any lacing value < 255.
                 // Pages of other logical streams (skipped above) never break a
                 // packet's segment run for our stream, so the buffer persists
                 // across interleaving/continuation pages untouched.
+                byte[] lacing = page.lacing();
+                byte[] body = page.body();
                 int off = 0;
-                for (int i = 0; i < segCount; i++) {
+                for (int i = 0; i < lacing.length; i++) {
                     int lv = lacing[i] & 0xFF;
                     pkt.write(body, off, lv);
                     off += lv;
                     if (pkt.size() > MAX_PACKET) {
                         return null;
                     }
-                    if (lv < 255) {
-                        if (packetIndex == 1) {
+                    if (lv < LACING_CONTINUATION) {
+                        if (packetIndex == COMMENT_PACKET_INDEX) {
                             return pkt.toByteArray(); // comment header complete
                         }
                         packetIndex++;
@@ -131,7 +155,7 @@ final class OggCover {
 
     /** Length of the codec-specific prefix on the comment header, or -1. */
     private static int commentPrefixLen(byte[] p) {
-        if (p.length >= 7 && (p[0] & 0xFF) == 0x03 && matches(p, 1, "vorbis")) {
+        if (p.length >= 7 && (p[0] & 0xFF) == VORBIS_COMMENT_HEADER && matches(p, 1, "vorbis")) {
             return 7;
         }
         if (p.length >= 8 && matches(p, 0, "OpusTags")) {
@@ -172,14 +196,8 @@ final class OggCover {
             int cLen = (int) clen;
             pos += cLen;
 
-            int eq = indexOf(b, cStart, cLen, '=');
-            if (eq < 0 || !equalsIgnoreCaseAscii(b, cStart, eq - cStart, KEY)) {
-                continue;
-            }
-            byte[] block;
-            try {
-                block = Base64.decode(b, eq + 1, cStart + cLen - (eq + 1), Base64.DEFAULT);
-            } catch (IllegalArgumentException e) {
+            byte[] block = decodePictureBlock(b, cStart, cLen);
+            if (block == null) {
                 continue;
             }
             byte[] data = flacPictureData(block, /*wantFront=*/true);
@@ -194,6 +212,23 @@ final class OggCover {
             }
         }
         return firstAny;
+    }
+
+    /**
+     * The decoded FLAC PICTURE block of the comment at {@code [cStart,
+     * cStart+cLen)}, or null if it isn't a {@code METADATA_BLOCK_PICTURE}
+     * comment or its value doesn't base64-decode.
+     */
+    private static byte[] decodePictureBlock(byte[] b, int cStart, int cLen) {
+        int eq = indexOf(b, cStart, cLen, '=');
+        if (eq < 0 || !equalsIgnoreCaseAscii(b, cStart, eq - cStart, KEY)) {
+            return null;
+        }
+        try {
+            return Base64.decode(b, eq + 1, cStart + cLen - (eq + 1), Base64.DEFAULT);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     // -- FLAC PICTURE metadata block body (all lengths big-endian u32) ------
@@ -229,10 +264,10 @@ final class OggCover {
         if (pos < 0) {
             return null;
         }
-        if ((long) pos + 16 > end) {
+        if ((long) pos + FLAC_PIC_FIXED_FIELDS > end) {
             return null; // width, height, depth, colors
         }
-        pos += 16;
+        pos += FLAC_PIC_FIXED_FIELDS;
         long dataLen = u32be(b, pos, end);
         if (dataLen < 0) {
             return null;
@@ -288,13 +323,6 @@ final class OggCover {
                 | (b[pos + 1] & 0xFFL) << 16
                 | (b[pos + 2] & 0xFFL) << 8
                 | (b[pos + 3] & 0xFFL);
-    }
-
-    private static int le32(byte[] b, int o) {
-        return (b[o] & 0xFF)
-                | (b[o + 1] & 0xFF) << 8
-                | (b[o + 2] & 0xFF) << 16
-                | (b[o + 3] & 0xFF) << 24;
     }
 
     /** ASCII literal {@code s} present at {@code b[off]}. */
