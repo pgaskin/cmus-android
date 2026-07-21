@@ -19,9 +19,25 @@ jobs:
         with:
           submodules: true
 
-      - run: test "${{github.ref_name}}" == "v$(grep -E '^\s*versionName\s+'"'.+'" app/build.gradle | head -n1 | cut -d "'" -f2)" || { echo 'incorrect versionName in app/build.gradle'; exit 1; }
-      - run: test "${{github.ref_name}}" == "v$(grep -E '^\s*versionCode\s+[0-9]+' app/build.gradle | head -n1 | grep -Eo '[0-9]+')" || { echo 'incorrect versionCode in app/build.gradle'; exit 1; }
-      - run: test -f "metadata/en-US/changelogs/$(grep -E '^\s*versionCode\s+[0-9]+' app/build.gradle | head -n1 | grep -Eo '[0-9]+').txt" || { echo 'missing changelog'; exit 1; }
+      - name: Check version
+        id: version
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs')
+            const gradle = fs.readFileSync('app/build.gradle', 'utf8')
+            const versionName = gradle.match(/^\s*versionName\s+'([^']+)'/m)?.[1]
+            const versionCode = gradle.match(/^\s*versionCode\s+([0-9]+)/m)?.[1]
+            if (!versionName) throw new Error('missing versionName in app/build.gradle')
+            if (!versionCode) throw new Error('missing versionCode in app/build.gradle')
+            const tag = context.ref.replace(/^refs\/tags\//, '')
+            if (versionName !== versionCode) throw new Error(`versionName (${versionName}) does not match versionCode (${versionCode})`)
+            if (tag !== `v${versionName}`) throw new Error(`tag (${tag}) does not match versionName (${versionName})`)
+            if (tag !== `v${versionCode}`) throw new Error(`tag (${tag}) does not match versionCode (${versionCode})`)
+            if (!fs.existsSync(`metadata/en-US/changelogs/${versionCode}.txt`)) throw new Error(`missing changelog for versionCode ${versionCode}`)
+            core.setOutput('name', versionName)
+            core.setOutput('code', versionCode)
+            core.setOutput('tag', tag)
 
       - uses: actions/setup-java@v5
         with:
@@ -51,13 +67,15 @@ jobs:
         with:
           retries: 3
           script: |
+            const tag = ${{ toJSON(steps.version.outputs.tag) }}
+            const versionCode = ${{ toJSON(steps.version.outputs.code) }}
             const {data: {id: id}} = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag_name: context.ref.replace(/^refs\/tags\//, ''),
+              tag_name: tag,
               target_commitish: context.sha,
-              name: context.ref.replace(/^refs\/tags\//, ''),
-              body: require('fs').readFileSync(`metadata/en-US/changelogs/${context.ref.replace(/^refs\/tags\//, '').replace(/^v/, '')}.txt`, 'utf8'),
+              name: tag,
+              body: require('fs').readFileSync(`metadata/en-US/changelogs/${versionCode}.txt`, 'utf8'),
               draft: true,
             })
             core.setOutput('id', id)
