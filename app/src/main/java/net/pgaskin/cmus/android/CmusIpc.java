@@ -16,6 +16,7 @@ import java.io.InputStreamReader;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -195,6 +196,17 @@ public final class CmusIpc implements AutoCloseable {
     private volatile Jobs jobs;
     private volatile String version;
 
+    /**
+     * The cached events replayed (in order) to a freshly-added listener —
+     * every full-state field above that has an onEvent form. version (Hello)
+     * is cached for its getter but not replayed. dispatchEvent writes these
+     * fields; the sealed-Event switch there makes a new event type a compile
+     * error until handled, so this and the writes can't silently diverge.
+     */
+    private List<Event> replayables() {
+        return Arrays.asList(status, volume, view, filter, jobs, options);
+    }
+
     /** Starts connecting (and retrying) immediately. */
     public CmusIpc(File socketPath) {
         this.socketPath = socketPath;
@@ -216,23 +228,10 @@ public final class CmusIpc implements AutoCloseable {
             if (connected) {
                 listener.onConnected();
             }
-            if (status != null) {
-                listener.onEvent(status);
-            }
-            if (volume != null) {
-                listener.onEvent(volume);
-            }
-            if (view != null) {
-                listener.onEvent(view);
-            }
-            if (filter != null) {
-                listener.onEvent(filter);
-            }
-            if (jobs != null) {
-                listener.onEvent(jobs);
-            }
-            if (options != null) {
-                listener.onEvent(options);
+            for (Event cached : replayables()) {
+                if (cached != null) {
+                    listener.onEvent(cached);
+                }
             }
         });
     }
@@ -421,6 +420,9 @@ public final class CmusIpc implements AutoCloseable {
         if (closed) {
             return;
         }
+        // caches the full-state events (replayed to new listeners; see
+        // replayables()) and ignores the transient ones — exhaustive over the
+        // sealed Event, so a new type must be classified here to compile
         switch (event) {
             case Hello h -> version = h.version();
             case Status s -> status = s;

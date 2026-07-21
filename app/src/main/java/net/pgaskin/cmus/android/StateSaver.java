@@ -7,11 +7,11 @@ import android.util.Log;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeSet;
 
 /**
  * Debounced continuous state saves (stage 19): closes the loss window for
@@ -56,13 +56,41 @@ final class StateSaver implements CmusIpc.Listener, AutoCloseable {
 
     private static final long SMALL_DEBOUNCE_MS = 5_000;
     private static final long BIG_DEBOUNCE_MS = 15_000;
-    private static final long FULL_SAVE_MS = 15 * 60_000L;
+    private static final long FULL_SAVE_MS = 15 * CmusService.MS_PER_MINUTE;
+
+    /**
+     * A cmus state-file kind. The wire token is the {@code android-save}
+     * argument and the {@code Dirty}/{@code Saved} event token — a protocol
+     * contract with cmus, so it's explicit, not {@code name()}. Only
+     * library/cache/playlist/queue/history are cmus-announced (Dirty);
+     * settings/resume are app-detected save selectors.
+     */
+    private enum Kind {
+        LIBRARY("library"), CACHE("cache"), PLAYLIST("playlist"), QUEUE("queue"),
+        HISTORY("history"), SETTINGS("settings"), RESUME("resume");
+
+        final String wire;
+
+        Kind(String wire) {
+            this.wire = wire;
+        }
+
+        /** A Dirty/Saved wire token → Kind, or null if cmus names one we don't model. */
+        static Kind fromWire(String wire) {
+            for (Kind k : values()) {
+                if (k.wire.equals(wire)) {
+                    return k;
+                }
+            }
+            return null;
+        }
+    }
 
     private final CmusIpc ipc;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     // all state main-thread only
-    private final Set<String> dirty = new TreeSet<>();
+    private final Set<Kind> dirty = EnumSet.noneOf(Kind.class);
     private final ArrayDeque<Runnable> pendingAcks = new ArrayDeque<>(); // null-free; NOOP = no callback
     private static final Runnable NOOP = () -> {
     };
@@ -84,17 +112,17 @@ final class StateSaver implements CmusIpc.Listener, AutoCloseable {
         // the follow-up save persists the truncation. Defer to the
         // job-finished edge, which flushes directly.
         private final boolean deferWhileJobs;
-        private final List<String> kinds;
+        private final List<Kind> kinds;
         private final Runnable fire = this::onFire;
         private boolean armed;
 
-        Bucket(long delayMs, boolean deferWhileJobs, String... kinds) {
+        Bucket(long delayMs, boolean deferWhileJobs, Kind... kinds) {
             this.delayMs = delayMs;
             this.deferWhileJobs = deferWhileJobs;
             this.kinds = List.of(kinds);
         }
 
-        void markDirty(String kind) {
+        void markDirty(Kind kind) {
             dirty.add(kind);
             if (!armed && !closed) {
                 armed = true;
@@ -114,7 +142,7 @@ final class StateSaver implements CmusIpc.Listener, AutoCloseable {
         }
 
         void flush() {
-            List<String> save = new ArrayList<>(kinds);
+            List<Kind> save = new ArrayList<>(kinds);
             save.retainAll(dirty);
             if (!save.isEmpty()) {
                 sendSave(save, NOOP);
@@ -127,11 +155,11 @@ final class StateSaver implements CmusIpc.Listener, AutoCloseable {
         }
     }
 
-    private final Bucket playlists = new Bucket(SMALL_DEBOUNCE_MS, true, "playlist", "queue");
-    private final Bucket history = new Bucket(SMALL_DEBOUNCE_MS, false, "history");
-    private final Bucket settings = new Bucket(SMALL_DEBOUNCE_MS, false, "settings");
-    private final Bucket libCache = new Bucket(BIG_DEBOUNCE_MS, true, "library", "cache");
-    private final Bucket resume = new Bucket(BIG_DEBOUNCE_MS, false, "resume");
+    private final Bucket playlists = new Bucket(SMALL_DEBOUNCE_MS, true, Kind.PLAYLIST, Kind.QUEUE);
+    private final Bucket history = new Bucket(SMALL_DEBOUNCE_MS, false, Kind.HISTORY);
+    private final Bucket settings = new Bucket(SMALL_DEBOUNCE_MS, false, Kind.SETTINGS);
+    private final Bucket libCache = new Bucket(BIG_DEBOUNCE_MS, true, Kind.LIBRARY, Kind.CACHE);
+    private final Bucket resume = new Bucket(BIG_DEBOUNCE_MS, false, Kind.RESUME);
     private final List<Bucket> buckets = List.of(playlists, history, settings, libCache, resume);
 
     StateSaver(CmusIpc ipc) {
@@ -177,11 +205,15 @@ final class StateSaver implements CmusIpc.Listener, AutoCloseable {
         ipc.send("android-save");
     }
 
-    private void sendSave(List<String> kinds, Runnable done) {
+    private void sendSave(List<Kind> kinds, Runnable done) {
         dirty.removeAll(kinds);
         pendingAcks.add(done);
         Log.d(TAG, "save: " + kinds);
-        ipc.send("android-save " + String.join(" ", kinds));
+        StringBuilder cmd = new StringBuilder("android-save");
+        for (Kind k : kinds) {
+            cmd.append(' ').append(k.wire);
+        }
+        ipc.send(cmd.toString());
     }
 
     @Override
@@ -191,12 +223,18 @@ final class StateSaver implements CmusIpc.Listener, AutoCloseable {
         }
         switch (event) {
             case CmusIpc.Dirty d -> {
-                for (String kind : d.what()) {
+                for (String token : d.what()) {
+                    Kind kind = Kind.fromWire(token);
+                    if (kind == null) {
+                        Log.w(TAG, "save: unknown dirty kind " + token);
+                        continue;
+                    }
                     switch (kind) {
-                        case "library", "cache" -> libCache.markDirty(kind);
-                        case "playlist", "queue" -> playlists.markDirty(kind);
-                        case "history" -> history.markDirty(kind);
-                        default -> Log.w(TAG, "save: unknown dirty kind " + kind);
+                        case LIBRARY, CACHE -> libCache.markDirty(kind);
+                        case PLAYLIST, QUEUE -> playlists.markDirty(kind);
+                        case HISTORY -> history.markDirty(kind);
+                        // settings/resume have no cmus-side Dirty writer
+                        default -> Log.w(TAG, "save: unexpected dirty kind " + kind);
                     }
                 }
             }
@@ -226,7 +264,7 @@ final class StateSaver implements CmusIpc.Listener, AutoCloseable {
                 if (!stateChanged && !fileChanged) {
                     return; // metadata-only echo
                 }
-                resume.markDirty("resume");
+                resume.markDirty(Kind.RESUME);
                 // "between track playback": a track boundary or a stop in
                 // playback is where the multi-MB cache write can't stutter
                 boolean boundary = (fileChanged && s.state() == CmusIpc.PlayState.PLAYING)
@@ -241,7 +279,7 @@ final class StateSaver implements CmusIpc.Listener, AutoCloseable {
                 Map<String, String> prev = prevOptions;
                 prevOptions = o.values();
                 if (prev != null && !prev.equals(o.values())) {
-                    settings.markDirty("settings");
+                    settings.markDirty(Kind.SETTINGS);
                 }
             }
             case CmusIpc.Volume v -> {
@@ -250,7 +288,7 @@ final class StateSaver implements CmusIpc.Listener, AutoCloseable {
                 CmusIpc.Volume prev = prevVolume;
                 prevVolume = v;
                 if (prev != null && !prev.equals(v)) {
-                    settings.markDirty("settings");
+                    settings.markDirty(Kind.SETTINGS);
                 }
             }
             case CmusIpc.Saved s -> {

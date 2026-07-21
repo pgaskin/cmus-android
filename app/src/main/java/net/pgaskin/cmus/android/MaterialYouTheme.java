@@ -5,6 +5,8 @@ import android.content.res.Configuration;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.function.ToIntFunction;
 
 /**
  * The generated Material You colorscheme. cmus color values are palette
@@ -27,59 +29,105 @@ final class MaterialYouTheme {
     static final int BASE_INDEX = 16;
 
     /**
-     * Every color role (options.c color_names, all 27) so nothing from a
-     * previously applied theme bleeds through. Order defines the palette
-     * entry assignment — append-only, the indexes end up in autosave.
+     * The tones the roles draw from, computed once per variant. Roles map to
+     * these (see {@link Role}); the variants ({@link #nightTones}/
+     * {@link #lightTones}) differ only in the values here, never in which
+     * role gets which tone. The structure mirrors gruvbox-warm (Patrick's
+     * reference): a hard-contrast window/cmdline bg (darker than the ramp's
+     * end), one band tone shared by both title lines with one accent for both
+     * their fgs, the statusline a shade darker with a *different* accent that
+     * also colors win_cur (its progress band is the lighter band tone),
+     * selections on the band tones (inactive = the darker one), and a plain
+     * grey separator. M3's fixed error tones stand in for a red the ramps
+     * don't have.
      */
-    private static final String[] ROLES = {
-            "color_cmdline_bg",
-            "color_cmdline_fg",
-            "color_error",
-            "color_info",
-            "color_separator",
-            "color_statusline_bg",
-            "color_statusline_fg",
-            "color_statusline_progress_bg",
-            "color_statusline_progress_fg",
-            "color_titleline_bg",
-            "color_titleline_fg",
-            "color_win_bg",
-            "color_win_cur",
-            "color_win_cur_sel_bg",
-            "color_win_cur_sel_fg",
-            "color_win_dir",
-            "color_win_fg",
-            "color_win_inactive_cur_sel_bg",
-            "color_win_inactive_cur_sel_fg",
-            "color_win_inactive_sel_bg",
-            "color_win_inactive_sel_fg",
-            "color_win_sel_bg",
-            "color_win_sel_fg",
-            "color_win_title_bg",
-            "color_win_title_fg",
-            "color_trackwin_album_bg",
-            "color_trackwin_album_fg",
-    };
+    private static final class Tones {
+        int bg;        // window + cmdline + album bg (hard contrast)
+        int band;      // title lines, active selections, progress band
+        int bandDark;  // statusline bg, a shade under the band
+        int topBand;   // scrim over the status bar / inactive selections
+        int title;     // both title-line fgs
+        int status;    // statusline/cmdline fg — the complemented accent
+        int cur;       // playing track in the lists
+        int fg;        // unselected list rows
+        int error;     // M3 fixed error tone (the ramps have no red)
+        int info;      // statusline info accent
+        int separator; // plain grey rule
+        int dir;       // browser directory rows
+        int selFg;     // win_sel_fg / win_inactive_sel_fg
+        int curSelFg;  // win_cur_sel_fg / win_inactive_cur_sel_fg
+    }
+
+    /**
+     * Every color role (options.c color_names, all 27) with the dynamic tone
+     * it draws from. Enum order defines the palette-entry assignment
+     * ({@code BASE_INDEX + ordinal}) — append-only, since the indexes end up
+     * in cmus autosave. Adding a role is a single edit here: {@link
+     * #commands()} and {@link #colors(Context)} both iterate this, so they
+     * can't drift and no hand-aligned array can fall out of role order.
+     * <p>
+     * The cmus option name is the constant's name lowercased (see {@link
+     * #option()}), so the names are the wire contract — renaming one changes
+     * what's `set` on cmus; they mirror cmus's own color_* names by design.
+     */
+    private enum Role {
+        CMDLINE_BG(t -> t.bg),
+        // the bottom line reads in the status accent (Patrick), like the bar over it
+        CMDLINE_FG(t -> t.status),
+        ERROR(t -> t.error),
+        INFO(t -> t.info),
+        SEPARATOR(t -> t.separator),
+        STATUSLINE_BG(t -> t.bandDark),
+        STATUSLINE_FG(t -> t.status),
+        STATUSLINE_PROGRESS_BG(t -> t.band),
+        STATUSLINE_PROGRESS_FG(t -> t.status),
+        TITLELINE_BG(t -> t.band),
+        TITLELINE_FG(t -> t.title),
+        WIN_BG(t -> t.bg),
+        WIN_CUR(t -> t.cur),
+        WIN_CUR_SEL_BG(t -> t.band),
+        WIN_CUR_SEL_FG(t -> t.curSelFg),
+        WIN_DIR(t -> t.dir),
+        WIN_FG(t -> t.fg),
+        // a clear step below the active pane's highlight (Patrick)
+        WIN_INACTIVE_CUR_SEL_BG(t -> t.topBand),
+        WIN_INACTIVE_CUR_SEL_FG(t -> t.curSelFg),
+        WIN_INACTIVE_SEL_BG(t -> t.topBand),
+        WIN_INACTIVE_SEL_FG(t -> t.selFg),
+        WIN_SEL_BG(t -> t.band),
+        // below the playing track's brightness (Patrick)
+        WIN_SEL_FG(t -> t.selFg),
+        WIN_TITLE_BG(t -> t.topBand),
+        WIN_TITLE_FG(t -> t.title),
+        TRACKWIN_ALBUM_BG(t -> t.bg),
+        TRACKWIN_ALBUM_FG(t -> t.title);
+
+        final ToIntFunction<Tones> tone;
+
+        Role(ToIntFunction<Tones> tone) {
+            this.tone = tone;
+        }
+
+        /** cmus option name: the constant name lowercased (WIN_TITLE_FG → color_win_title_fg). */
+        String option() {
+            return "color_" + name().toLowerCase(Locale.ROOT);
+        }
+    }
 
     /** The constant `set` burst pointing every role at its entry. */
     static List<String> commands() {
-        List<String> commands = new ArrayList<>(ROLES.length);
-        for (int i = 0; i < ROLES.length; i++) {
-            commands.add("set " + ROLES[i] + "=" + (BASE_INDEX + i));
+        Role[] roles = Role.values();
+        List<String> commands = new ArrayList<>(roles.length);
+        for (int i = 0; i < roles.length; i++) {
+            commands.add("set " + roles[i].option() + "=" + (BASE_INDEX + i));
         }
         return commands;
     }
 
     /**
-     * Exact ARGB per role from the system dynamic ramps, in ROLES order;
-     * uiMode picks the variant. The role structure mirrors gruvbox-warm
-     * (Patrick's reference): a hard-contrast window/cmdline bg (darker than
-     * the ramp's end), one band tone shared by both title lines with one
-     * accent for both their fgs, the statusline a shade darker with a
-     * *different* accent that also colors win_cur (its progress band is the
-     * lighter band tone), selections on the band tones (inactive = the
-     * darker one), and a plain grey separator. M3's fixed error tones stand
-     * in for a red the ramps don't have.
+     * Exact ARGB per role from the system dynamic ramps, in {@link Role}
+     * order (so entry {@code BASE_INDEX + i} gets {@code colors()[i]});
+     * uiMode picks the variant.
      */
     static int[] colors(Context context) {
         boolean night = (context.getResources().getConfiguration().uiMode
@@ -88,100 +136,64 @@ final class MaterialYouTheme {
         // original complement
         int rotation = CmusService.prefs(context)
                 .getInt(CmusService.PREF_HUE_ROTATION, 180);
-        if (night) {
-            int bg = mix(c(context, android.R.color.system_neutral1_900), 0xFF000000);
-            int band = c(context, android.R.color.system_neutral1_800); // bottom title, active sel
-            int bandDark = mix(band, c(context, android.R.color.system_neutral1_900));
-            // the top band reads as a scrim over the status bar: darker
-            // than the bottom bands, pulled toward the window bg (Patrick)
-            int topBand = mix(band, bg);
-            // darker and more saturated than the pastel ramp end: the title
-            // fgs must read apart from the near-white list text (Patrick)
-            int title = c(context, android.R.color.system_accent1_400); // both title fgs
-            // the ramps' accent2/3 stay in accent1's warm neighborhood by
-            // design, so a "different hue" (Patrick) can't come from them:
-            // complement the ramp tone instead — gruvbox-warm's orange
-            // titles vs teal statusline, wallpaper-derived. Scoped to the
-            // status/cmdline band (and the control bar riding it); the
-            // list's playing-track colors stay in the ramp family
-            int status = rotate(c(context, android.R.color.system_accent3_200), rotation);
-            int cur = c(context, android.R.color.system_accent3_300); // playing track in the lists — a saturated step
-            // dimmer than the sel/cur fgs but on the same warm ramp, not
-            // grey: the unselected list rows sit below the highlights in
-            // brightness only (Patrick)
-            int fg = mix(c(context, android.R.color.system_accent1_200),
-                    c(context, android.R.color.system_neutral1_200)); // half-desaturated
-            return new int[]{
-                    bg, // cmdline_bg
-                    status, // cmdline_fg — the bottom line reads in the
-                            // status accent (Patrick), like the bar over it
-                    0xFFF2B8B5, // error
-                    c(context, android.R.color.system_accent2_200), // info
-                    c(context, android.R.color.system_neutral2_400), // separator
-                    bandDark, // statusline_bg
-                    status, // statusline_fg
-                    band, // statusline_progress_bg
-                    status, // statusline_progress_fg
-                    band, // titleline_bg
-                    title, // titleline_fg
-                    bg, // win_bg
-                    cur, // win_cur
-                    band, // win_cur_sel_bg
-                    c(context, android.R.color.system_accent3_100), // win_cur_sel_fg
-                    c(context, android.R.color.system_accent2_200), // win_dir
-                    fg, // win_fg
-                    topBand, // win_inactive_cur_sel_bg — a clear step
-                             // below the active pane's highlight (Patrick)
-                    c(context, android.R.color.system_accent3_100), // win_inactive_cur_sel_fg
-                    topBand, // win_inactive_sel_bg
-                    c(context, android.R.color.system_accent1_100), // win_inactive_sel_fg
-                    band, // win_sel_bg
-                    c(context, android.R.color.system_accent1_100), // win_sel_fg — below the
-                            // playing track's brightness (Patrick)
-                    topBand, // win_title_bg
-                    title, // win_title_fg
-                    bg, // trackwin_album_bg
-                    title, // trackwin_album_fg
-            };
+        Tones t = night ? nightTones(context, rotation) : lightTones(context, rotation);
+        Role[] roles = Role.values();
+        int[] out = new int[roles.length];
+        for (int i = 0; i < roles.length; i++) {
+            out[i] = roles[i].tone.applyAsInt(t);
         }
-        int bg = mix(c(context, android.R.color.system_neutral1_50), 0xFFFFFFFF);
-        int band = c(context, android.R.color.system_neutral1_100);
-        int bandDark = mix(band, c(context, android.R.color.system_neutral1_200));
-        int topBand = mix(band, bg); // the light mirror: lighter, toward bg
-        int title = c(context, android.R.color.system_accent1_700); // reads apart from the near-black list text
-        int status = rotate(c(context, android.R.color.system_accent3_700), rotation);
-        int cur = c(context, android.R.color.system_accent3_600);
-        int fg = mix(c(context, android.R.color.system_accent1_600),
+        return out;
+    }
+
+    private static Tones nightTones(Context context, int rotation) {
+        Tones t = new Tones();
+        t.bg = mix(c(context, android.R.color.system_neutral1_900), 0xFF000000);
+        t.band = c(context, android.R.color.system_neutral1_800); // bottom title, active sel
+        t.bandDark = mix(t.band, c(context, android.R.color.system_neutral1_900));
+        // the top band reads as a scrim over the status bar: darker than the
+        // bottom bands, pulled toward the window bg (Patrick)
+        t.topBand = mix(t.band, t.bg);
+        // darker and more saturated than the pastel ramp end: the title fgs
+        // must read apart from the near-white list text (Patrick)
+        t.title = c(context, android.R.color.system_accent1_400);
+        // the ramps' accent2/3 stay in accent1's warm neighborhood by design,
+        // so a "different hue" (Patrick) can't come from them: complement the
+        // ramp tone instead — gruvbox-warm's orange titles vs teal statusline,
+        // wallpaper-derived. Scoped to the status/cmdline band (and the control
+        // bar riding it); the list's playing-track colors stay in the ramp family
+        t.status = rotate(c(context, android.R.color.system_accent3_200), rotation);
+        t.cur = c(context, android.R.color.system_accent3_300); // playing track — a saturated step
+        // dimmer than the sel/cur fgs but on the same warm ramp, not grey: the
+        // unselected list rows sit below the highlights in brightness only (Patrick)
+        t.fg = mix(c(context, android.R.color.system_accent1_200),
+                c(context, android.R.color.system_neutral1_200)); // half-desaturated
+        t.error = 0xFFF2B8B5;
+        t.info = c(context, android.R.color.system_accent2_200);
+        t.separator = c(context, android.R.color.system_neutral2_400);
+        t.dir = c(context, android.R.color.system_accent2_200);
+        t.selFg = c(context, android.R.color.system_accent1_100);
+        t.curSelFg = c(context, android.R.color.system_accent3_100);
+        return t;
+    }
+
+    private static Tones lightTones(Context context, int rotation) {
+        Tones t = new Tones();
+        t.bg = mix(c(context, android.R.color.system_neutral1_50), 0xFFFFFFFF);
+        t.band = c(context, android.R.color.system_neutral1_100);
+        t.bandDark = mix(t.band, c(context, android.R.color.system_neutral1_200));
+        t.topBand = mix(t.band, t.bg); // the light mirror: lighter, toward bg
+        t.title = c(context, android.R.color.system_accent1_700); // reads apart from the near-black list text
+        t.status = rotate(c(context, android.R.color.system_accent3_700), rotation);
+        t.cur = c(context, android.R.color.system_accent3_600);
+        t.fg = mix(c(context, android.R.color.system_accent1_600),
                 c(context, android.R.color.system_neutral1_600)); // dimmer + half-desaturated, same ramp
-        return new int[]{
-                bg, // cmdline_bg
-                status, // cmdline_fg — the status accent, like the bar over it
-                0xFFB3261E, // error
-                c(context, android.R.color.system_accent2_700), // info
-                c(context, android.R.color.system_neutral2_500), // separator
-                bandDark, // statusline_bg
-                status, // statusline_fg
-                band, // statusline_progress_bg
-                status, // statusline_progress_fg
-                band, // titleline_bg
-                title, // titleline_fg
-                bg, // win_bg
-                cur, // win_cur
-                band, // win_cur_sel_bg
-                c(context, android.R.color.system_accent3_800), // win_cur_sel_fg
-                c(context, android.R.color.system_accent2_700), // win_dir
-                fg, // win_fg
-                topBand, // win_inactive_cur_sel_bg
-                c(context, android.R.color.system_accent3_800), // win_inactive_cur_sel_fg
-                topBand, // win_inactive_sel_bg
-                c(context, android.R.color.system_accent1_700), // win_inactive_sel_fg
-                band, // win_sel_bg
-                c(context, android.R.color.system_accent1_700), // win_sel_fg
-                topBand, // win_title_bg
-                title, // win_title_fg
-                bg, // trackwin_album_bg
-                title, // trackwin_album_fg
-        };
+        t.error = 0xFFB3261E;
+        t.info = c(context, android.R.color.system_accent2_700);
+        t.separator = c(context, android.R.color.system_neutral2_500);
+        t.dir = c(context, android.R.color.system_accent2_700);
+        t.selFg = c(context, android.R.color.system_accent1_700);
+        t.curSelFg = c(context, android.R.color.system_accent3_800);
+        return t;
     }
 
     private static int c(Context context, int res) {
