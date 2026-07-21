@@ -40,19 +40,24 @@ add_subdirectory("${THIRD_PARTY}/libogg" libogg EXCLUDE_FROM_ALL)
 # libvorbis (find_package(Ogg) -> shim)
 add_subdirectory("${THIRD_PARTY}/libvorbis" libvorbis EXCLUDE_FROM_ALL)
 
+# HACK: stop opusfile from trying to determine its own version from git (we do a
+# shallow clone) so we can override it with a dummy one so it doesn't emit
+# warnings
+set(CMAKE_DISABLE_FIND_PACKAGE_Git TRUE)
+
 # opus
 set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_PACKAGE_VERSION 0.0)
 add_subdirectory("${THIRD_PARTY}/opus" opus EXCLUDE_FROM_ALL)
 
 # opusfile (find_package(Ogg/Opus) -> shims; no-HTTP also drops OpenSSL)
 set(OP_DISABLE_HTTP ON CACHE BOOL "" FORCE)
 set(OP_DISABLE_EXAMPLES ON CACHE BOOL "" FORCE)
 set(OP_DISABLE_DOCS ON CACHE BOOL "" FORCE)
-# HACK: stop opusfile from trying to determine its own version from git (we do a shallow clone)
-set(CMAKE_DISABLE_FIND_PACKAGE_Git TRUE)
 set(OPUSFILE_PACKAGE_VERSION 0.0)
 add_subdirectory("${THIRD_PARTY}/opusfile" opusfile EXCLUDE_FROM_ALL)
+
 unset(CMAKE_DISABLE_FIND_PACKAGE_Git)
 
 # flac (sees TARGET Ogg::ogg itself, no find_package needed)
