@@ -11,8 +11,8 @@ android {
         applicationId 'net.pgaskin.cmus.android'
         minSdk 34
         targetSdk 36
-        versionCode 3
-        versionName '3'
+        versionCode 4
+        versionName '4'
 
         externalNativeBuild {
             cmake {
