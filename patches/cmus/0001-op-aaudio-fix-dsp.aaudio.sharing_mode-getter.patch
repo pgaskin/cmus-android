@@ -1,0 +1,19 @@
+From ab227d2c2091c171cb157ae26a77367260bf817e Mon Sep 17 00:00:00 2001
+From: Patrick Gaskin <patrick@pgaskin.net>
+Date: Mon, 20 Jul 2026 03:37:39 -0400
+Subject: [PATCH 01/13] op/aaudio: fix dsp.aaudio.sharing_mode getter
+
+
+diff --git a/op/aaudio.c b/op/aaudio.c
+index 8edeceb..29f4f3a 100644
+--- a/op/aaudio.c
++++ b/op/aaudio.c
+@@ -449,7 +449,7 @@ static int op_aaudio_set_sharing_mode(const char *val)
+ 
+ static int op_aaudio_get_sharing_mode(char **val)
+ {
+-	switch (op_aaudio_opt_performance_mode) {
++	switch (op_aaudio_opt_sharing_mode) {
+ 	default:
+ 		__attribute__((fallthrough));
+ 	case AAUDIO_SHARING_MODE_SHARED:

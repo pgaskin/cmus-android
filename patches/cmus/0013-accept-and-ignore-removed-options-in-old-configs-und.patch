@@ -1,7 +1,7 @@
-From 30e5a8a060cd7d8e7a40be9bf043182702b80ac2 Mon Sep 17 00:00:00 2001
+From c0a14fdb0d4b1234da7e7da14a4f9d678ffbb420 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:49:16 -0400
-Subject: [PATCH 11/13] accept-and-ignore removed options in old configs under
+Subject: [PATCH 13/13] accept-and-ignore removed options in old configs under
  CONFIG_ANDROID
 
 An autosave or rc written by an older build may still 'set device=...' or
@@ -11,7 +11,7 @@ option_set now silently accepts those specific removed names (other unknown
 options still error).
 
 diff --git a/options.c b/options.c
-index 6affd21..c50c82c 100644
+index c2be710..e567ea5 100644
 --- a/options.c
 +++ b/options.c
 @@ -1796,12 +1796,30 @@ struct cmus_opt *option_find_silent(const char *name)
@@ -46,4 +46,4 @@ index 6affd21..c50c82c 100644
 +	error_msg("no such option %s", name);
  }
  
- void options_add(void)
+ static int default_colors[NR_COLORS];

@@ -1,7 +1,7 @@
-From 8b050ce147390d5338fb47174ee8b9be0b472f55 Mon Sep 17 00:00:00 2001
+From 82fa9cc97207a421c391bfc205e79dc7a9e8c790 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
-Subject: [PATCH 01/13] add an Android app IPC socket
+Subject: [PATCH 04/13] add an Android app IPC socket
 
 A unix stream socket at $CMUS_ANDROID_SOCKET (unset = disabled) for the
 Android wrapper app: pushes newline-delimited JSON events (status,
@@ -1028,7 +1028,7 @@ index e76cfc4..38034b1 100644
  				if (track_info_unique_ref(ti)) {
  					track_info_unref(ti);
 diff --git a/command_mode.c b/command_mode.c
-index b794399..b11aa62 100644
+index 5ca854f..292ae2d 100644
 --- a/command_mode.c
 +++ b/command_mode.c
 @@ -17,6 +17,7 @@
@@ -1039,21 +1039,20 @@ index b794399..b11aa62 100644
  #include "search_mode.h"
  #include "cmdline.h"
  #include "options.h"
-@@ -775,9 +776,12 @@ static void cmd_colorscheme(char *arg)
- 	snprintf(filename, sizeof(filename), "%s/%s.theme", cmus_config_dir, arg);
- 	if (source_file(filename) == -1) {
- 		snprintf(filename, sizeof(filename), "%s/%s.theme", cmus_data_dir, arg);
--		if (source_file(filename) == -1)
-+		if (source_file(filename) == -1) {
- 			error_msg("sourcing %s: %s", filename, strerror(errno));
-+			return;
-+		}
- 	}
+@@ -786,8 +787,11 @@ static void cmd_colorscheme(char *arg)
+ 	/* so incomplete themes don't leave behind old colors */
+ 	colors_reset();
+ 
+-	if (source_file(filename) == -1)
++	if (source_file(filename) == -1) {
+ 		error_msg("sourcing %s: %s", filename, strerror(errno));
++		return;
++	}
 +	android_colorscheme_event(arg);
  }
  
  /*
-@@ -2967,6 +2971,11 @@ void run_parsed_command(char *cmd, char *arg)
+@@ -2977,6 +2981,11 @@ void run_parsed_command(char *cmd, char *arg)
  		}
  		i++;
  	}
@@ -1065,7 +1064,7 @@ index b794399..b11aa62 100644
  }
  
  void run_command(const char *buf)
-@@ -3179,6 +3188,14 @@ void commands_init(void)
+@@ -3189,6 +3198,14 @@ void commands_init(void)
  	history_load(&cmd_history, cmd_history_filename, 2000);
  }
  

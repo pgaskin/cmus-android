@@ -1,7 +1,7 @@
-From 46c7c8a2d957314c9ebf88ba8708e5dc65856aaa Mon Sep 17 00:00:00 2001
+From 7d227a67952a2a9f6e8ad867f4d185d33bc2a1fd Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:41:36 -0400
-Subject: [PATCH 10/13] drop CD-audio support under CONFIG_ANDROID
+Subject: [PATCH 12/13] drop CD-audio support under CONFIG_ANDROID
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -80,7 +80,7 @@ index aeb7ee1..d044035 100644
  	case FILE_TYPE_PL:
  		add_pl(jd->name);
 diff --git a/options.c b/options.c
-index 6131a44..6affd21 100644
+index 8b2be91..c2be710 100644
 --- a/options.c
 +++ b/options.c
 @@ -57,7 +57,9 @@
@@ -119,7 +119,7 @@ index 6131a44..6affd21 100644
  	DN(buffer_seconds)
  	DN(scroll_offset)
  	DN(rewind_offset)
-@@ -1842,7 +1848,9 @@ void options_load(void)
+@@ -1856,7 +1862,9 @@ void options_load(void)
  	int i;
  
  	/* initialize those that can't be statically initialized */

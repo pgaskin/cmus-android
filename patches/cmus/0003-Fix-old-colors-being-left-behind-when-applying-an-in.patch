@@ -1,15 +1,15 @@
-From cb76f1920b5a81c17138743fcff82041bdf5f18b Mon Sep 17 00:00:00 2001
+From fb7f0ea874571b2ac6b0e89920dab0298cbd45d0 Mon Sep 17 00:00:00 2001
 From: Patrick Gaskin <patrick@pgaskin.net>
-Date: Tue, 21 Jul 2026 18:06:09 -0400
-Subject: [PATCH 13/13] Fix old colors being left behind when applying an
+Date: Tue, 21 Jul 2026 18:13:22 -0400
+Subject: [PATCH 03/13] Fix old colors being left behind when applying an
  incomplete theme
 
 
 diff --git a/command_mode.c b/command_mode.c
-index b73dd42..1aa9ecf 100644
+index b794399..5ca854f 100644
 --- a/command_mode.c
 +++ b/command_mode.c
-@@ -55,6 +55,7 @@
+@@ -54,6 +54,7 @@
  #include <sys/types.h>
  #include <sys/wait.h>
  #include <dirent.h>
@@ -17,7 +17,7 @@ index b73dd42..1aa9ecf 100644
  
  static struct history cmd_history;
  static char *cmd_history_filename;
-@@ -773,14 +774,23 @@ static void cmd_colorscheme(char *arg)
+@@ -772,12 +773,21 @@ static void cmd_colorscheme(char *arg)
  {
  	char filename[512];
  
@@ -26,29 +26,27 @@ index b73dd42..1aa9ecf 100644
 -	if (source_file(filename) == -1) {
 +	if (access(filename, R_OK) != 0) {
  		snprintf(filename, sizeof(filename), "%s/%s.theme", cmus_data_dir, arg);
--		if (source_file(filename) == -1) {
+-		if (source_file(filename) == -1)
 +		if (access(filename, R_OK) != 0) {
  			error_msg("sourcing %s: %s", filename, strerror(errno));
- 			return;
- 		}
++			return;
++		}
  	}
 +
 +	/* so incomplete themes don't leave behind old colors */
 +	colors_reset();
 +
-+	if (source_file(filename) == -1) {
++	if (source_file(filename) == -1)
 +		error_msg("sourcing %s: %s", filename, strerror(errno));
-+		return;
-+	}
- 	android_colorscheme_event(arg);
  }
  
+ /*
 diff --git a/options.c b/options.c
-index c50c82c..e567ea5 100644
+index 155e358..891ce78 100644
 --- a/options.c
 +++ b/options.c
-@@ -1822,10 +1822,24 @@ void option_set(const char *name, const char *value)
- 	error_msg("no such option %s", name);
+@@ -1792,10 +1792,24 @@ void option_set(const char *name, const char *value)
+ 		opt->set(opt->data, value);
  }
  
 +static int default_colors[NR_COLORS];

@@ -1,0 +1,53 @@
+From a413e2ec5ed171928a2f323cd6e5b921da08db49 Mon Sep 17 00:00:00 2001
+From: Patrick Gaskin <patrick@pgaskin.net>
+Date: Mon, 20 Jul 2026 03:43:47 -0400
+Subject: [PATCH 02/13] Properly handle directory listing errors in browser
+
+If a directory isn't accessible, don't leave it in a half-broken state
+with the new path but the old listing. Instead, try the parents until
+we find an accessible directory, failing and preserving the current
+state otherwise.
+
+diff --git a/browser.c b/browser.c
+index 43f2d40..4cc2b95 100644
+--- a/browser.c
++++ b/browser.c
+@@ -332,19 +332,29 @@ void browser_up(void)
+ 	len = strlen(ptr);
+ 	pos = xstrdup(ptr);
+ 
+-	errno = 0;
+-	if (browser_load(new)) {
+-		if (errno == ENOENT) {
++	while (1) {
++		errno = 0;
++		if (browser_load(new) == 0)
++			break;
++		if (errno != ENOENT || strcmp(new, "/") == 0) {
++			error_msg("could not open directory '%s': %s\n", new, strerror(errno));
++			free(new);
+ 			free(pos);
+-			free(browser_dir);
+-			browser_dir = new;
+-			browser_up();
+ 			return;
+ 		}
+-		error_msg("could not open directory '%s': %s\n", new, strerror(errno));
+-		free(new);
++		/* failed to open, try the parent */
++		ptr = strrchr(new, '/');
+ 		free(pos);
+-		return;
++		pos = xstrdup(ptr + 1);
++		len = strlen(pos);
++		if (ptr == new) {
++			free(new);
++			new = xstrdup("/");
++		} else {
++			char *parent = xstrndup(new, ptr - new);
++			free(new);
++			new = parent;
++		}
+ 	}
+ 	free(new);
+ 
