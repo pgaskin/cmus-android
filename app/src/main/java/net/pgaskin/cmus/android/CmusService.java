@@ -5,8 +5,10 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.os.Binder;
@@ -78,6 +80,16 @@ public class CmusService extends Service implements TerminalSessionClient {
      * needs a restart; off by default even in debuggable builds (overhead). */
     static final String PREF_DEBUG_LOG = "debug_logging";
 
+    static final long MS_PER_MINUTE = 60_000L;
+
+    static SharedPreferences prefs(Context ctx) {
+        return ctx.getSharedPreferences(PREFS, MODE_PRIVATE);
+    }
+
+    static boolean isDebuggableBuild(Context ctx) {
+        return (ctx.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+    }
+
     /** What the attached activity cares about; safe to leave unregistered. */
     public interface SessionCallback {
         void onTextChanged();
@@ -141,11 +153,10 @@ public class CmusService extends Service implements TerminalSessionClient {
         instance = this;
         // Material You is the default theme (stage 18); an explicit
         // colorscheme pick stores false, so existing picks are untouched
-        materialActive = getSharedPreferences(PREFS, MODE_PRIVATE)
+        materialActive = prefs(this)
                 .getBoolean(PREF_MATERIAL, true);
-        ipcLogging = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getBoolean(PREF_IPC_LOG, (getApplicationInfo().flags
-                        & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
+        ipcLogging = prefs(this)
+                .getBoolean(PREF_IPC_LOG, isDebuggableBuild(this));
         NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
                 getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
@@ -219,7 +230,7 @@ public class CmusService extends Service implements TerminalSessionClient {
             env.add("CMUS_ANDROID_BROWSER_DIR=" + browserHomeDir());
             // debug.c reads this once at startup (patches/cmus/0007) so early
             // logs get through; a change needs a respawn, hence the settings note
-            if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_DEBUG_LOG, false)) {
+            if (prefs(this).getBoolean(PREF_DEBUG_LOG, false)) {
                 env.add("CMUS_ANDROID_DEBUG_LOG=1");
             }
             // 100 transcript rows is the minimum honored (cmus is an
@@ -232,7 +243,7 @@ public class CmusService extends Service implements TerminalSessionClient {
             // resurrection has no activity) at the last attached size so a
             // later reopen doesn't shift layout; an attaching view merely
             // resizes the pty and cmus redraws on the WINCH
-            SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+            SharedPreferences prefs = prefs(this);
             session.updateSize(prefs.getInt(PREF_COLS, 80), prefs.getInt(PREF_ROWS, 24), 8, 16);
             prefs.edit().putBoolean(PREF_RESURRECT, true).apply();
             pendingResumePause = prefs.getBoolean(PREF_RESUME_PAUSED, false);
@@ -337,8 +348,8 @@ public class CmusService extends Service implements TerminalSessionClient {
                             // resume leaves the saved track paused at
                             // position, so toggle; player-play would
                             // restart it from the beginning
-                            case PAUSED -> ipc.send("player-pause");
-                            case STOPPED -> ipc.send("player-play");
+                            case PAUSED -> ipc.send(CmusIpc.CMD_TOGGLE_PAUSE);
+                            case STOPPED -> ipc.send(CmusIpc.CMD_PLAY);
                             case PLAYING -> {
                             }
                         }
@@ -346,7 +357,7 @@ public class CmusService extends Service implements TerminalSessionClient {
                         // "always resume paused": quit-while-playing
                         // restores playing; park it at position instead
                         Log.i(TAG, "resume-paused: pausing restored playback");
-                        ipc.send("player-pause-playback");
+                        ipc.send(CmusIpc.CMD_PAUSE);
                     }
                 }
                 case CmusIpc.Position p -> logIpc("ipc position " + p.position());
@@ -385,7 +396,7 @@ public class CmusService extends Service implements TerminalSessionClient {
                         // scheme (from either side — the app's selector or
                         // a TUI :colorscheme): back to the stock palette
                         materialActive = false;
-                        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        prefs(CmusService.this).edit()
                                 .putBoolean(PREF_MATERIAL, false).apply();
                         pushPalette();
                     }
@@ -422,9 +433,8 @@ public class CmusService extends Service implements TerminalSessionClient {
 
     /** Settings toggled PREF_IPC_LOG. */
     public void ipcLogSettingChanged() {
-        ipcLogging = getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getBoolean(PREF_IPC_LOG, (getApplicationInfo().flags
-                        & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
+        ipcLogging = prefs(this)
+                .getBoolean(PREF_IPC_LOG, isDebuggableBuild(this));
     }
 
     // Material You (stage 16): the app redefines terminal palette entries
@@ -441,7 +451,7 @@ public class CmusService extends Service implements TerminalSessionClient {
      */
     public void applyMaterialYou() {
         materialActive = true;
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+        prefs(this).edit()
                 .putBoolean(PREF_MATERIAL, true).apply();
         pushPalette();
         if (ipc != null) {
@@ -479,7 +489,7 @@ public class CmusService extends Service implements TerminalSessionClient {
 
     /** The Direct-touch-input pref, default on (today's forced mouse=true). */
     private boolean directTouch() {
-        return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_DIRECT_TOUCH, true);
+        return prefs(this).getBoolean(PREF_DIRECT_TOUCH, true);
     }
 
     /**
@@ -540,7 +550,7 @@ public class CmusService extends Service implements TerminalSessionClient {
         visibleActivities = Math.max(0, visibleActivities + (visible ? 1 : -1));
         if (!visible && session != null && session.getEmulator() != null) {
             // remember the attached size for the next headless spawn
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            prefs(this).edit()
                     .putInt(PREF_COLS, session.getEmulator().mColumns)
                     .putInt(PREF_ROWS, session.getEmulator().mRows)
                     .apply();
@@ -563,7 +573,7 @@ public class CmusService extends Service implements TerminalSessionClient {
         idleQuitArmed = arm;
         if (arm) {
             Log.d(TAG, "idle-quit: armed");
-            mainHandler.postDelayed(idleQuit, idleQuitMinutes() * 60_000L);
+            mainHandler.postDelayed(idleQuit, idleQuitMinutes() * MS_PER_MINUTE);
         } else {
             Log.d(TAG, "idle-quit: cancelled");
             idleQuitPendingJobs = false; // a stale poll answer must not quit
@@ -582,12 +592,12 @@ public class CmusService extends Service implements TerminalSessionClient {
 
     private final Runnable sleepFire = () -> {
         sleepDeadline = 0;
-        if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_SLEEP_EXIT, false)) {
+        if (prefs(this).getBoolean(PREF_SLEEP_EXIT, false)) {
             // exit mode (stage 18): a full, clean exit — and no media-key
             // resurrection afterwards, or a pocketed BT play key would
             // undo the sleep (the pref is re-set true by the next spawn)
             Log.i(TAG, "sleep timer: exiting");
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            prefs(this).edit()
                     .putBoolean(PREF_RESURRECT, false).apply();
             if (ipc != null) {
                 ipc.send("set resume=true");
@@ -599,15 +609,15 @@ public class CmusService extends Service implements TerminalSessionClient {
         }
         Log.i(TAG, "sleep timer: pausing");
         if (ipc != null) {
-            ipc.send("player-pause-playback");
+            ipc.send(CmusIpc.CMD_PAUSE);
         }
     };
 
     /** (Re)starts the countdown. */
     public void setSleepTimer(int minutes) {
         mainHandler.removeCallbacks(sleepFire);
-        sleepDeadline = SystemClock.elapsedRealtime() + minutes * 60_000L;
-        mainHandler.postDelayed(sleepFire, minutes * 60_000L);
+        sleepDeadline = SystemClock.elapsedRealtime() + minutes * MS_PER_MINUTE;
+        mainHandler.postDelayed(sleepFire, minutes * MS_PER_MINUTE);
         Log.d(TAG, "sleep timer: set " + minutes + "m");
     }
 
@@ -650,7 +660,7 @@ public class CmusService extends Service implements TerminalSessionClient {
 
     /** The idle-quit setting; 0 = off. */
     private int idleQuitMinutes() {
-        return getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_IDLE_QUIT_MIN, 15);
+        return prefs(this).getInt(PREF_IDLE_QUIT_MIN, 15);
     }
 
     /**
@@ -800,7 +810,7 @@ public class CmusService extends Service implements TerminalSessionClient {
         // teardown below so nothing can interrupt it. Not during a data
         // reset: that death is ours, and the respawn re-sets the pref anyway
         if (visibleActivities > 0 && pendingResetOp == null) {
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            prefs(this).edit()
                     .putBoolean(PREF_RESURRECT, false).apply();
         }
         if (mediaControl != null) {

@@ -3,7 +3,6 @@ package net.pgaskin.cmus.android;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
 import android.util.Log;
 
 /**
@@ -22,10 +21,9 @@ public class CmusDebugReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (!context.getSharedPreferences(CmusService.PREFS, Context.MODE_PRIVATE)
+        if (!CmusService.prefs(context)
                 .getBoolean(CmusService.PREF_DEBUG_RECEIVER,
-                        (context.getApplicationInfo().flags
-                                & ApplicationInfo.FLAG_DEBUGGABLE) != 0)) {
+                        CmusService.isDebuggableBuild(context))) {
             return;
         }
         String cmd = intent.getStringExtra("cmd");

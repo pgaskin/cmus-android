@@ -1,11 +1,9 @@
 package net.pgaskin.cmus.android;
 
 import android.app.Activity;
-import android.graphics.Insets;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.MenuItem;
-import android.view.WindowInsets;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 
@@ -36,12 +34,7 @@ public class LicensesActivity extends Activity {
         // edge-to-edge (targetSdk 36): keep content clear of the action bar,
         // status bar, nav pill, and cutout (the dispatched top inset already
         // folds in the action bar height, per SettingsActivity)
-        web.setOnApplyWindowInsetsListener((v, insets) -> {
-            Insets bars = insets.getInsets(
-                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            return insets;
-        });
+        Ui.applySystemBarPadding(web);
         setContentView(web);
         web.loadUrl("file:///android_asset/licenses.html");
     }

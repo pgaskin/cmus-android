@@ -7,9 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
-import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
@@ -22,7 +20,6 @@ import android.view.Gravity;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowInsets;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -123,12 +120,7 @@ public class SettingsActivity extends Activity {
         // dispatched here already fold in the action bar height, so applying
         // them as padding drops the content below the bar and above the nav
         // pill (plus the cutout in landscape).
-        scroll.setOnApplyWindowInsetsListener((v, insets) -> {
-            Insets bars = insets.getInsets(
-                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            return insets;
-        });
+        Ui.applySystemBarPadding(scroll);
         setContentView(scroll);
 
         buildAppSection();
@@ -217,7 +209,7 @@ public class SettingsActivity extends Activity {
     }
 
     private SharedPreferences appPrefs() {
-        return getSharedPreferences(CmusService.PREFS, MODE_PRIVATE);
+        return CmusService.prefs(this);
     }
 
     // sections
@@ -524,14 +516,14 @@ public class SettingsActivity extends Activity {
         Switch sw = switchPrefRow("Debug command receiver",
                 "Let adb (root) send cmus commands through the app",
                 CmusService.PREF_DEBUG_RECEIVER,
-                (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0, null);
+                CmusService.isDebuggableBuild(this), null);
         list.addView(example);
         refreshers.add(() -> example.setVisibility(sw.isChecked() ? View.VISIBLE : View.GONE));
 
         switchPrefRow("IPC event logging",
                 "Log every cmus IPC event at info level with the logcat tag cmus",
                 CmusService.PREF_IPC_LOG,
-                (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0, () -> {
+                CmusService.isDebuggableBuild(this), () -> {
                     if (service != null) {
                         service.ipcLogSettingChanged();
                     }
@@ -539,7 +531,7 @@ public class SettingsActivity extends Activity {
 
         // read once at spawn (verbose, so off by default even here) — only
         // offered on debuggable builds
-        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+        if (CmusService.isDebuggableBuild(this)) {
             switchPrefRow("cmus debug logging",
                     "Log cmus d_print output at debug level with the logcat tag "
                             + "cmus. Applies on the next app restart.",
@@ -942,8 +934,7 @@ public class SettingsActivity extends Activity {
     // small helpers
 
     private int dp(int dp) {
-        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp,
-                getResources().getDisplayMetrics()));
+        return Ui.dp(this, dp);
     }
 
     private static int clamp(int v, int min, int max) {

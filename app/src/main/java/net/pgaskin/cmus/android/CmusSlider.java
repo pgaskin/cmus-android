@@ -3,7 +3,6 @@ package net.pgaskin.cmus.android;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
-import android.util.TypedValue;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -111,7 +110,7 @@ public final class CmusSlider extends View {
         float pos = positionForProgress();
         drawnPos = pos;
 
-        paint.setColor((color & 0x00FFFFFF) | (active ? 0x55000000 : 0x30000000));
+        paint.setColor(Ui.withAlpha(color, active ? 0x55 : 0x30));
         if (vertical) {
             canvas.drawRect(mid - track / 2, in, mid + track / 2, end, paint);
         } else {
@@ -175,7 +174,6 @@ public final class CmusSlider extends View {
     }
 
     private int dp(float dp) {
-        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp,
-                getResources().getDisplayMetrics()));
+        return Ui.dp(getContext(), dp);
     }
 }

@@ -34,6 +34,12 @@ import java.util.Map;
 public final class CmusIpc implements AutoCloseable {
     private static final String TAG = "cmus";
 
+    static final String CMD_PLAY = "player-play"; // restarts the loaded track
+    static final String CMD_TOGGLE_PAUSE = "player-pause"; // toggles play/pause
+    static final String CMD_PAUSE = "player-pause-playback"; // idempotent pause
+    static final String CMD_NEXT = "player-next"; // next track
+    static final String CMD_PREV = "player-prev"; // previous track
+
     public sealed interface Event permits Hello, Status, Position, Volume, View, Filter,
             Options, Selected, Colorscheme, Jobs, Dirty, Saved {
     }

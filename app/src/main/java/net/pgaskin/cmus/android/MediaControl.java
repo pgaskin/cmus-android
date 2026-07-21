@@ -300,25 +300,25 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
             // when one is loaded (player.c _producer_play), so resume from
             // pause must be the toggle
             if (status != null && status.state() == CmusIpc.PlayState.PAUSED) {
-                ipc.send("player-pause");
+                ipc.send(CmusIpc.CMD_TOGGLE_PAUSE);
             } else {
-                ipc.send("player-play");
+                ipc.send(CmusIpc.CMD_PLAY);
             }
         }
 
         @Override
         public void onPause() {
-            ipc.send("player-pause-playback");
+            ipc.send(CmusIpc.CMD_PAUSE);
         }
 
         @Override
         public void onSkipToNext() {
-            ipc.send("player-next");
+            ipc.send(CmusIpc.CMD_NEXT);
         }
 
         @Override
         public void onSkipToPrevious() {
-            ipc.send("player-prev");
+            ipc.send(CmusIpc.CMD_PREV);
         }
 
         @Override
@@ -336,7 +336,7 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
         @Override
         public void onReceive(Context context, Intent intent) {
             // headphones unplugged / BT gone: don't blast the speaker
-            ipc.send("player-pause-playback");
+            ipc.send(CmusIpc.CMD_PAUSE);
         }
     };
 
@@ -370,17 +370,17 @@ public final class MediaControl implements CmusIpc.Listener, AutoCloseable {
             case AudioManager.AUDIOFOCUS_LOSS -> {
                 resumeOnFocusGain = false;
                 focusHeld = false; // no GAIN follows a permanent loss
-                ipc.send("player-pause-playback");
+                ipc.send(CmusIpc.CMD_PAUSE);
             }
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 resumeOnFocusGain = status != null
                         && status.state() == CmusIpc.PlayState.PLAYING;
-                ipc.send("player-pause-playback");
+                ipc.send(CmusIpc.CMD_PAUSE);
             }
             case AudioManager.AUDIOFOCUS_GAIN -> {
                 if (resumeOnFocusGain && status != null
                         && status.state() == CmusIpc.PlayState.PAUSED) {
-                    ipc.send("player-pause"); // toggle back to playing
+                    ipc.send(CmusIpc.CMD_TOGGLE_PAUSE); // toggle back to playing
                 }
                 resumeOnFocusGain = false;
             }

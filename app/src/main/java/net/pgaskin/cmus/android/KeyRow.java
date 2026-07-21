@@ -213,11 +213,8 @@ public final class KeyRow extends HorizontalScrollView {
         t.setGravity(Gravity.CENTER);
         t.setPadding(dp(9), dp(8), dp(9), dp(8));
         t.setMinWidth(dp(40));
-        TypedValue tv = new TypedValue();
-        getContext().getTheme().resolveAttribute(
-                android.R.attr.selectableItemBackgroundBorderless, tv, true);
         // ripple as the foreground so modifier state can own the background
-        t.setForeground(getContext().getDrawable(tv.resourceId));
+        t.setForeground(getContext().getDrawable(Ui.selectableBorderlessRes(getContext())));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT);
         if (groupStart) {
@@ -236,7 +233,6 @@ public final class KeyRow extends HorizontalScrollView {
     }
 
     private int dp(int dp) {
-        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp,
-                getResources().getDisplayMetrics()));
+        return Ui.dp(getContext(), dp);
     }
 }

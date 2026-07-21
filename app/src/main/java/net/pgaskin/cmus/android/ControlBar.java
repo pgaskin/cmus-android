@@ -6,7 +6,6 @@ import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.os.SystemClock;
-import android.util.TypedValue;
 import android.view.Gravity;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -33,7 +32,7 @@ public final class ControlBar extends LinearLayout {
     }
 
     /** Inactive toggle tint: fg at ~55% alpha, same blend as inactive tabs. */
-    private static final int INACTIVE_ALPHA = 0x8C000000;
+    private static final int INACTIVE_ALPHA = 0x8C;
 
     private final ImageButton playPause;
     private final ImageButton repeat;
@@ -82,9 +81,9 @@ public final class ControlBar extends LinearLayout {
             // player-play *restarts* a loaded track, so it's only for
             // STOPPED; pausing uses the idempotent form (no toggle race) —
             // the same mapping as MediaControl
-            case PLAYING -> "player-pause-playback";
-            case PAUSED -> "player-pause";
-            case STOPPED -> "player-play";
+            case PLAYING -> CmusIpc.CMD_PAUSE;
+            case PAUSED -> CmusIpc.CMD_TOGGLE_PAUSE;
+            case STOPPED -> CmusIpc.CMD_PLAY;
         }));
         // toasts predict the toggle's result from the current (echoed) state,
         // so they read as "what this tap does"
@@ -158,8 +157,7 @@ public final class ControlBar extends LinearLayout {
         // keep going to the activity)
         volumePopup = new PopupWindow(volumeSlider, 0, 0, false);
         volumePopup.setOutsideTouchable(true);
-        volumePopup.setElevation(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 6,
-                getResources().getDisplayMetrics()));
+        volumePopup.setElevation(Ui.dp(getContext(), 6));
     }
 
     /** Bar = 3 terminal rows tall, icons = 2; tracks pinch-zoom + the font. */
@@ -283,7 +281,7 @@ public final class ControlBar extends LinearLayout {
     }
 
     private void applyTints() {
-        int dim = (fg & 0x00FFFFFF) | INACTIVE_ALPHA;
+        int dim = Ui.withAlpha(fg, INACTIVE_ALPHA);
         for (ImageButton b : buttons) {
             b.setImageTintList(ColorStateList.valueOf(fg));
         }
@@ -307,10 +305,7 @@ public final class ControlBar extends LinearLayout {
         ImageButton b = new ImageButton(getContext());
         b.setImageResource(icon);
         b.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        TypedValue tv = new TypedValue();
-        getContext().getTheme().resolveAttribute(
-                android.R.attr.selectableItemBackgroundBorderless, tv, true);
-        b.setBackgroundResource(tv.resourceId);
+        b.setBackgroundResource(Ui.selectableBorderlessRes(getContext()));
         b.setOnClickListener(v -> action.run());
         addView(b);
         return b;

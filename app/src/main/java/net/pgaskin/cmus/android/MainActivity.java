@@ -64,7 +64,11 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
     /** Views whose tab shows only while active (rarely used; clutter). */
     private static final List<String> HIDDEN_TABS = List.of("filters", "settings");
     /** Inactive tab text: win_title_fg at ~55% alpha, blending toward bg. */
-    private static final int INACTIVE_TAB_ALPHA = 0x8C000000;
+    private static final int INACTIVE_TAB_ALPHA = 0x8C;
+    /** Floating (direct-touch) settings icon tint over the terminal. */
+    private static final int FLOAT_ICON_ALPHA = 0x66;
+    /** Floating sleep-timer text over the terminal. */
+    private static final int FLOAT_TEXT_ALPHA = 0xAA;
     /** Protocol code for the right button (same in SGR and X10 encodings). */
     private static final int MOUSE_RIGHT_BUTTON = 2;
     /** requestPermissions code for the refresh action (0 = notifications). */
@@ -225,14 +229,14 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         // reopening at a reset font would immediately resize it (layout
         // shift + a cmus redraw); keep the pinch-zoomed size instead
         fontSize = Math.max(minFontSize, Math.min(
-                getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).getInt(PREF_FONT, dp(13)),
+                CmusService.prefs(this).getInt(PREF_FONT, dp(13)),
                 maxFontSize));
-        colorschemeName = getSharedPreferences(CmusService.PREFS, MODE_PRIVATE)
+        colorschemeName = CmusService.prefs(this)
                 .getString(PREF_COLORSCHEME, null);
         // restore the font before anything measures: the saved headless pty
         // grid was sized under it (the same reasoning as the font size).
         // Iosevka is the default (Patrick); "" is the explicit System pick
-        String savedFont = getSharedPreferences(CmusService.PREFS, MODE_PRIVATE)
+        String savedFont = CmusService.prefs(this)
                 .getString(PREF_TYPEFACE, "fonts/Iosevka-Regular.ttf");
         fontAsset = savedFont.isEmpty() ? null : savedFont;
         activeTypeface = loadTypeface(fontAsset);
@@ -433,7 +437,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
                     return;
                 }
                 String sfx = joyKeySuffix();
-                getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).edit()
+                CmusService.prefs(MainActivity.this).edit()
                         .putFloat(PREF_JOY_X + sfx, joyCx / w)
                         .putFloat(PREF_JOY_Y + sfx, joyCy / h)
                         .apply();
@@ -582,7 +586,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         // apply here; no-ops when nothing moved
         applyBarVisibility();
         applyFontSize(Math.max(minFontSize, Math.min(
-                getSharedPreferences(CmusService.PREFS, MODE_PRIVATE)
+                CmusService.prefs(this)
                         .getInt(PREF_FONT, dp(13)), maxFontSize)));
         if (service != null) {
             service.setActivityVisible(true);
@@ -629,8 +633,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
     }
 
     private int dp(int dp) {
-        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp,
-                getResources().getDisplayMetrics()));
+        return Ui.dp(this, dp);
     }
 
     private String joyKeySuffix() {
@@ -675,7 +678,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         if (w == 0 || h == 0) {
             return;
         }
-        SharedPreferences prefs = getSharedPreferences(CmusService.PREFS, MODE_PRIVATE);
+        SharedPreferences prefs = CmusService.prefs(this);
         String sfx = joyKeySuffix();
         float fx = prefs.getFloat(PREF_JOY_X + sfx, Float.NaN);
         float fy = prefs.getFloat(PREF_JOY_Y + sfx, Float.NaN);
@@ -793,7 +796,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
      * moment MainActivity returns to the front.
      */
     private void applyBarVisibility() {
-        SharedPreferences prefs = getSharedPreferences(CmusService.PREFS, MODE_PRIVATE);
+        SharedPreferences prefs = CmusService.prefs(this);
         topBarShown = prefs.getBoolean(CmusService.PREF_SHOW_TOP_BAR, true);
         controlBarShown = prefs.getBoolean(CmusService.PREF_SHOW_CONTROL_BAR, true);
         joyShown = prefs.getBoolean(CmusService.PREF_SHOW_JOYSTICK, true);
@@ -903,7 +906,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         rootLayout.setBackgroundColor(theme.cmdlineBg());
         topBar.setBackgroundColor(theme.winTitleBg());
         filterBox.setTextColor(theme.winTitleFg());
-        filterBox.setHintTextColor((theme.winTitleFg() & 0x00FFFFFF) | INACTIVE_TAB_ALPHA);
+        filterBox.setHintTextColor(Ui.withAlpha(theme.winTitleFg(), INACTIVE_TAB_ALPHA));
         titleStrip.setBackgroundColor(theme.winTitleBg());
         terminalWrapper.setBackgroundColor(theme.winBg());
         // cmdline_bg so the bar blends with the TUI's bottom row (default =
@@ -912,9 +915,9 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         keyRow.applyTheme(theme.cmdlineBg(), theme.statuslineFg());
         joyDot.applyTheme(theme.winFg());
         // faint over the terminal like the joystick (translucent fg tint)
-        int floatTint = (theme.winFg() & 0x00FFFFFF) | 0x66000000;
+        int floatTint = Ui.withAlpha(theme.winFg(), FLOAT_ICON_ALPHA);
         floatSettingsBtn.setImageTintList(ColorStateList.valueOf(floatTint));
-        floatSleepText.setTextColor((theme.winFg() & 0x00FFFFFF) | 0xAA000000);
+        floatSleepText.setTextColor(Ui.withAlpha(theme.winFg(), FLOAT_TEXT_ALPHA));
         applyTabColors();
         int appearance = 0;
         if (CmusTheme.isLight(theme.winTitleBg())) {
@@ -962,7 +965,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
             return;
         }
         int fg = theme.winTitleFg();
-        int dim = (fg & 0x00FFFFFF) | INACTIVE_TAB_ALPHA;
+        int dim = Ui.withAlpha(fg, INACTIVE_TAB_ALPHA);
         for (int i = 0; i < viewTabs.length; i++) {
             viewTabs[i].setTextColor(VIEW_NAMES[i].equals(viewName) ? fg : dim);
             // the filters/settings views are reachable from the TUI (the
@@ -1071,7 +1074,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         titleStrip.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ControlBar.firstRowOffset(fontSize, activeTypeface)));
-        getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).edit()
+        CmusService.prefs(this).edit()
                 .putInt(PREF_FONT, fontSize).apply();
     }
 
@@ -1173,7 +1176,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
     /** A successful `colorscheme` echo, from either side. */
     private void onColorscheme(String name) {
         colorschemeName = name;
-        getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).edit()
+        CmusService.prefs(this).edit()
                 .putString(PREF_COLORSCHEME, name).apply();
         if (selectorRefresh != null) {
             selectorRefresh.run();
@@ -1195,7 +1198,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         menu.getMenu().add("Sleep timer");
         // the control bar owns the keyboard toggle; when it's hidden the
         // menu is the way in (stage 18)
-        if (!getSharedPreferences(CmusService.PREFS, MODE_PRIVATE)
+        if (!CmusService.prefs(this)
                 .getBoolean(CmusService.PREF_SHOW_CONTROL_BAR, true)) {
             menu.getMenu().add("Keyboard");
         }
@@ -1333,7 +1336,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         fontAsset = asset;
         activeTypeface = loadTypeface(asset);
         // "" = System: an absent key means the Iosevka default, not System
-        getSharedPreferences(CmusService.PREFS, MODE_PRIVATE).edit()
+        CmusService.prefs(this).edit()
                 .putString(PREF_TYPEFACE, asset == null ? "" : asset).apply();
         terminalView.setTypeface(activeTypeface);
         for (TextView tab : viewTabs) {
@@ -1436,7 +1439,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         frame.addView(scroll);
         selectorRefresh = () -> {
             int sel = selected.getAsInt();
-            int dim = (theme.winFg() & 0x00FFFFFF) | INACTIVE_TAB_ALPHA;
+            int dim = Ui.withAlpha(theme.winFg(), INACTIVE_TAB_ALPHA);
             for (int i = 0; i < rows.length; i++) {
                 rows[i].setTextColor(i == sel ? theme.winFg() : dim);
             }
@@ -1480,9 +1483,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         ImageButton b = new ImageButton(this);
         b.setImageResource(icon);
         b.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        TypedValue tv = new TypedValue();
-        getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true);
-        b.setBackgroundResource(tv.resourceId);
+        b.setBackgroundResource(Ui.selectableBorderlessRes(this));
         b.setOnClickListener(v -> action.run());
         return b;
     }
@@ -1542,13 +1543,13 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
             floatSleepText.setVisibility(View.GONE);
             return;
         }
-        String left = (remaining + 59_999) / 60_000 + "m";
+        String left = (remaining + (CmusService.MS_PER_MINUTE - 1)) / CmusService.MS_PER_MINUTE + "m";
         sleepText.setText(left);
         sleepText.setVisibility(View.VISIBLE);
         floatSleepText.setText(left);
         floatSleepText.setVisibility(View.VISIBLE);
         if (visible) {
-            sleepText.postDelayed(sleepTick, remaining % 60_000 + 100);
+            sleepText.postDelayed(sleepTick, remaining % CmusService.MS_PER_MINUTE + 100);
         }
     }
 
@@ -1564,7 +1565,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         }
         items[n] = "Custom…";
         if (remaining > 0) {
-            items[n + 1] = "Turn off (" + (remaining + 59_999) / 60_000 + "m left)";
+            items[n + 1] = "Turn off (" + (remaining + (CmusService.MS_PER_MINUTE - 1)) / CmusService.MS_PER_MINUTE + "m left)";
         }
         // removeDialog = "the current dialog": stop/crash dismissal covers
         // this one the same way as the item dialogs

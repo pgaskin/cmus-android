@@ -4,7 +4,6 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
-import android.util.TypedValue;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -273,8 +272,7 @@ public final class JoyDot extends View {
         }
         float cx = floating ? downX : getWidth() / 2f;
         float cy = floating ? downY : getHeight() / 2f;
-        paint.setColor((fg & 0x00FFFFFF)
-                | (tracking ? BASE_ALPHA_ACTIVE : BASE_ALPHA) << 24);
+        paint.setColor(Ui.withAlpha(fg, tracking ? BASE_ALPHA_ACTIVE : BASE_ALPHA));
         canvas.drawCircle(cx, cy, baseRadius, paint);
         // the knob follows the finger past the base circle, up to about
         // the gesture thresholds
@@ -285,8 +283,7 @@ public final class JoyDot extends View {
             kx = (float) (kx / len * knobTravel);
             ky = (float) (ky / len * knobTravel);
         }
-        paint.setColor((fg & 0x00FFFFFF)
-                | (tracking ? KNOB_ALPHA_ACTIVE : KNOB_ALPHA) << 24);
+        paint.setColor(Ui.withAlpha(fg, tracking ? KNOB_ALPHA_ACTIVE : KNOB_ALPHA));
         canvas.drawCircle(cx + kx, cy + ky, knobRadius, paint);
     }
 
@@ -341,7 +338,6 @@ public final class JoyDot extends View {
     }
 
     private int dp(int dp) {
-        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp,
-                getResources().getDisplayMetrics()));
+        return Ui.dp(getContext(), dp);
     }
 }

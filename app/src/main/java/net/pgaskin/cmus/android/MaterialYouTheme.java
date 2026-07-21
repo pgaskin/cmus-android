@@ -86,7 +86,7 @@ final class MaterialYouTheme {
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         // the control-color rotation is a setting (stage 18); 180 = the
         // original complement
-        int rotation = context.getSharedPreferences(CmusService.PREFS, Context.MODE_PRIVATE)
+        int rotation = CmusService.prefs(context)
                 .getInt(CmusService.PREF_HUE_ROTATION, 180);
         if (night) {
             int bg = mix(c(context, android.R.color.system_neutral1_900), 0xFF000000);
