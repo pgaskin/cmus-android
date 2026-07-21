@@ -1,0 +1,41 @@
+From 2809f51df27598ef4c532e98e23f4b3c49755267 Mon Sep 17 00:00:00 2001
+From: Patrick Gaskin <patrick@pgaskin.net>
+Date: Tue, 21 Jul 2026 03:22:24 -0400
+Subject: [PATCH 2/2] silence deprecation warnings
+
+
+diff --git a/terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java b/terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java
+index 324e0bc..341d1bf 100644
+--- a/terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java
++++ b/terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java
+@@ -2,6 +2,7 @@ package com.termux.terminal;
+ 
+ import android.annotation.SuppressLint;
+ import android.os.Handler;
++import android.os.Looper;
+ import android.os.Message;
+ import android.system.ErrnoException;
+ import android.system.Os;
+@@ -335,6 +336,10 @@ public final class TerminalSession extends TerminalOutput {
+     @SuppressLint("HandlerLeak")
+     class MainThreadHandler extends Handler {
+ 
++        MainThreadHandler() {
++            super(Looper.getMainLooper());
++        }
++
+         final byte[] mReceiveBuffer = new byte[4 * 1024];
+ 
+         @Override
+diff --git a/terminal-view/src/main/java/com/termux/view/TerminalView.java b/terminal-view/src/main/java/com/termux/view/TerminalView.java
+index 351f47a..d4763ab 100644
+--- a/terminal-view/src/main/java/com/termux/view/TerminalView.java
++++ b/terminal-view/src/main/java/com/termux/view/TerminalView.java
+@@ -750,6 +750,7 @@ public final class TerminalView extends View {
+      * https://cs.android.com/android/platform/superproject/+/android-11.0.0_r40:frameworks/base/services/core/jni/com_android_server_input_InputManagerService.cpp;l=616
+      */
+     @Override
++    @SuppressWarnings("deprecation") // legacy ACTION_MULTIPLE/getCharacters batch-key path
+     public boolean onKeyDown(int keyCode, KeyEvent event) {
+         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
+             mClient.logInfo(LOG_TAG, "onKeyDown(keyCode=" + keyCode + ", isSystem()=" + event.isSystem() + ", event=" + event + ")");
