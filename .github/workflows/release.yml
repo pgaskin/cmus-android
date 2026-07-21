@@ -42,7 +42,10 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
-          java-version: '25'
+          # must match app/build.gradle's Java toolchain and F-Droid's
+          # buildserver JDK: javac's lambda naming (and thus the dex) differs
+          # between JDK <=21 and 22+, so a mismatch breaks reproducibility.
+          java-version: '21'
           cache: gradle
       - run: yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses; ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager 'cmake;3.30.5' 'ndk;28.2.13676358' 'build-tools;36.0.0'
       - run: ./patch.sh
@@ -56,7 +59,11 @@ jobs:
       - name: Sign APK
         # v1 (JAR) signing off: minSdk 34 never uses it, and it only adds dead
         # META-INF entries. The APK Signing Block (v2/v3) is the whole signature.
-        run: $ANDROID_HOME/build-tools/36.0.0/apksigner sign --v1-signing-enabled false --ks "$KEYSTORE_PATH" --ks-pass env:KEYSTORE_PASSWORD --in app/build/outputs/apk/release/app-release-unsigned.apk --out app-release.apk
+        # --alignment-preserved: keep AGP's existing zip alignment instead of
+        # letting apksigner re-align (its default), so the signed APK's entry
+        # layout stays identical to the unsigned build F-Droid rebuilds and
+        # apksigcopier reattaches the signature to.
+        run: $ANDROID_HOME/build-tools/36.0.0/apksigner sign --v1-signing-enabled false --alignment-preserved --ks "$KEYSTORE_PATH" --ks-pass env:KEYSTORE_PASSWORD --in app/build/outputs/apk/release/app-release-unsigned.apk --out app-release.apk
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/keystore.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}

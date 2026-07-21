@@ -14,6 +14,16 @@ project(cmus_android C CXX)
 get_filename_component(_repo_root "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 add_compile_options("-ffile-prefix-map=${_repo_root}=.")
 
+# Reproducible builds: lld computes the SHA-1 .note.gnu.build-id over the
+# linked image *before* strip, and that image still carries the NDK sysroot
+# paths in .debug_* / .comment (which -ffile-prefix-map above doesn't rewrite,
+# since it only maps the repo root, not the NDK install path). Those sections
+# are stripped from the packaged .so, so the shipped libcmus.so/libtermux.so
+# are byte-identical across environments EXCEPT for the build-id note — the one
+# thing that survives. Drop it so the .so is fully path-independent. Set before
+# any add_subdirectory so every native target inherits it.
+add_link_options("-Wl,--build-id=none")
+
 # AGP configures the debug variant with CMAKE_BUILD_TYPE=Debug, i.e. -O0
 # for cmus and every codec — 3-4x the decode CPU of termux's optimized
 # packages, very noticeable during playback. Decoding is the whole point,

@@ -41,6 +41,15 @@ Three things, all small:
    out entirely — but the flag is the actual guarantee and covers any remaining
    `__FILE__`.)
 
+   Same file also drops the linker build-id: `-Wl,--build-id=none`. lld
+   computes the SHA-1 `.note.gnu.build-id` over the linked image *before*
+   strip, and that image still carries NDK sysroot paths in `.debug_*` /
+   `.comment` (the prefix-map only rewrites the repo root, not the NDK install
+   path). Those sections are stripped from the packaged `.so`, so the shipped
+   libraries are otherwise byte-identical across environments — the build-id
+   note is the one path-dependent thing that survives strip. Dropping it makes
+   `libcmus.so`/`libtermux.so` fully environment-independent.
+
 2. **Dependency metadata — [`app/build.gradle`](./../app/build.gradle).**
    `dependenciesInfo { includeInApk=false; includeInBundle=false }`. AGP
    otherwise embeds a Google-signed dependency blob as an extra APK Signing
@@ -50,6 +59,17 @@ Three things, all small:
    `release { vcsInfo.include=false }`. AGP otherwise stamps the git HEAD into
    `version-control-info.textproto`; dropping it makes the APK a pure function
    of the source, independent of git state.
+
+4. **Java toolchain — [`app/build.gradle`](./../app/build.gradle).**
+   `java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }`.
+   javac's synthetic lambda method names (`lambda$<method>$<N>`) are numbered
+   with a single class-global counter on JDK ≤21 but reset per-enclosing-method
+   on JDK 22+, so the same source dexes differently depending on which JDK runs
+   the build — and every lambda name feeds the `$r8$lambda$<hash>` accessors,
+   shifting the whole `classes.dex` string pool and layout. Pinning the
+   toolchain fixes the compiler regardless of the launching JDK. F-Droid's
+   buildserver runs JDK 21, so we align to it (and `release.yml` installs 21 to
+   match).
 
 Everything else was already deterministic: static `versionCode`/`versionName`,
 sorted license/asset generation, AGP 9's fixed ZIP epoch (`1981-01-01`
@@ -61,8 +81,9 @@ Reproducing requires the same tools. All are pinned:
 
 - NDK `28.2.13676358`, CMake `3.30.5`, build-tools `36.0.0` — `app/build.gradle`.
 - AGP `9.3.0` (`build.gradle`) and the Gradle wrapper version.
+- JDK `21` — `app/build.gradle` toolchain + `release.yml`, matching F-Droid.
 
-Different NDK or AGP versions will produce different bytes.
+Different NDK, AGP, or JDK-major versions will produce different bytes.
 
 ## Verifying
 
@@ -72,10 +93,12 @@ order, compression method, and *raw compressed bytes* (what apksigcopier
 copies), ignoring the v1 files and the APK Signing Block. When both APKs are
 fully unsigned it also requires bit-for-bit whole-file identity.
 
-It deliberately does **not** compare the raw byte ranges of the two archives:
-`apksigner` re-aligns entries when it signs (padding in each local-header extra
-field), which shifts offsets throughout the file even though no entry payload
-changed. The per-entry raw-bytes comparison is alignment-independent and still
+It deliberately does **not** compare the raw byte ranges of the two archives.
+The release signs with `apksigner --alignment-preserved` so it keeps AGP's
+existing alignment instead of re-aligning (apksigner's default re-align pads
+each local-header extra field, shifting offsets throughout the file even though
+no entry payload changed). The per-entry raw-bytes comparison is
+alignment-independent regardless, so it stays correct either way and remains
 strict — a changed payload, compression method, entry, or order is caught.
 
 ```bash

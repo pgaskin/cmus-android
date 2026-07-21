@@ -88,6 +88,19 @@ android {
     }
 }
 
+// Reproducible builds: javac's synthetic lambda method names
+// (lambda$<method>$<N>) are numbered per-enclosing-method on JDK 22+ but with
+// a single class-global counter on JDK <=21, so the same source dexes
+// differently depending on which JDK runs the build. Pin the toolchain so the
+// compiler is fixed regardless of the launching JDK; F-Droid's buildserver
+// runs JDK 21, so we align to it (matching java-version in release.yml). See
+// notes/reproducible-builds.md.
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
 dependencies {
     // terminal-view/-emulator are now built from the third_party/termux-app
     // submodule (see sourceSets); androidx.annotation was theirs transitively
