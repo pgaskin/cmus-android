@@ -21,6 +21,7 @@ jobs:
 
       - run: test "${{github.ref_name}}" == "v$(grep -E '^\s*versionName\s+'"'.+'" app/build.gradle | head -n1 | cut -d "'" -f2)" || { echo 'incorrect versionName in app/build.gradle'; exit 1; }
       - run: test "${{github.ref_name}}" == "v$(grep -E '^\s*versionCode\s+[0-9]+' app/build.gradle | head -n1 | grep -Eo '[0-9]+')" || { echo 'incorrect versionCode in app/build.gradle'; exit 1; }
+      - run: test -f "metadata/en-US/changelogs/$(grep -E '^\s*versionCode\s+[0-9]+' app/build.gradle | head -n1 | grep -Eo '[0-9]+').txt" || { echo 'missing changelog'; exit 1; }
 
       - uses: actions/setup-java@v5
         with:
@@ -56,6 +57,7 @@ jobs:
               tag_name: context.ref.replace(/^refs\/tags\//, ''),
               target_commitish: context.sha,
               name: context.ref.replace(/^refs\/tags\//, ''),
+              body: require('fs').readFileSync(`metadata/en-US/changelogs/${context.ref.replace(/^refs\/tags\//, '').replace(/^v/, '')}.txt`, 'utf8'),
               draft: true,
             })
             core.setOutput('id', id)
