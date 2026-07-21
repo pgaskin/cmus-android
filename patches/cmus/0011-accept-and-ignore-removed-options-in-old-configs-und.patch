@@ -1,7 +1,7 @@
-From 0213d855ec45859e4eaba55317cc9d4d192b9694 Mon Sep 17 00:00:00 2001
+From 30e5a8a060cd7d8e7a40be9bf043182702b80ac2 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:49:16 -0400
-Subject: [PATCH 11/12] accept-and-ignore removed options in old configs under
+Subject: [PATCH 11/13] accept-and-ignore removed options in old configs under
  CONFIG_ANDROID
 
 An autosave or rc written by an older build may still 'set device=...' or

@@ -1,7 +1,7 @@
-From 270131b9f93edb6617bbf1253a33c317cae14de8 Mon Sep 17 00:00:00 2001
+From 0566d6afef025dbab9ff76b5009a633769f5cc4a Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 22:03:15 -0400
-Subject: [PATCH 12/12] browser-up: only commit browser_dir after a successful
+Subject: [PATCH 12/13] browser-up: only commit browser_dir after a successful
  load
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

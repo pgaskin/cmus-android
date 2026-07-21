@@ -1,0 +1,88 @@
+From cb76f1920b5a81c17138743fcff82041bdf5f18b Mon Sep 17 00:00:00 2001
+From: Patrick Gaskin <patrick@pgaskin.net>
+Date: Tue, 21 Jul 2026 18:06:09 -0400
+Subject: [PATCH 13/13] Fix old colors being left behind when applying an
+ incomplete theme
+
+
+diff --git a/command_mode.c b/command_mode.c
+index b73dd42..1aa9ecf 100644
+--- a/command_mode.c
++++ b/command_mode.c
+@@ -55,6 +55,7 @@
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ #include <dirent.h>
++#include <unistd.h>
+ 
+ static struct history cmd_history;
+ static char *cmd_history_filename;
+@@ -773,14 +774,23 @@ static void cmd_colorscheme(char *arg)
+ {
+ 	char filename[512];
+ 
++	/* check that the theme at least exists before resetting the colors */
+ 	snprintf(filename, sizeof(filename), "%s/%s.theme", cmus_config_dir, arg);
+-	if (source_file(filename) == -1) {
++	if (access(filename, R_OK) != 0) {
+ 		snprintf(filename, sizeof(filename), "%s/%s.theme", cmus_data_dir, arg);
+-		if (source_file(filename) == -1) {
++		if (access(filename, R_OK) != 0) {
+ 			error_msg("sourcing %s: %s", filename, strerror(errno));
+ 			return;
+ 		}
+ 	}
++
++	/* so incomplete themes don't leave behind old colors */
++	colors_reset();
++
++	if (source_file(filename) == -1) {
++		error_msg("sourcing %s: %s", filename, strerror(errno));
++		return;
++	}
+ 	android_colorscheme_event(arg);
+ }
+ 
+diff --git a/options.c b/options.c
+index c50c82c..e567ea5 100644
+--- a/options.c
++++ b/options.c
+@@ -1822,10 +1822,24 @@ void option_set(const char *name, const char *value)
+ 	error_msg("no such option %s", name);
+ }
+ 
++static int default_colors[NR_COLORS];
++static int default_attrs[NR_ATTRS];
++
++void colors_reset(void)
++{
++	memcpy(colors, default_colors, sizeof(colors));
++	memcpy(attrs, default_attrs, sizeof(attrs));
++	update_colors();
++	update_full();
++}
++
+ void options_add(void)
+ {
+ 	int i;
+ 
++	memcpy(default_colors, colors, sizeof(colors));
++	memcpy(default_attrs, attrs, sizeof(attrs));
++
+ 	for (i = 0; simple_options[i].name; i++)
+ 		option_add(simple_options[i].name, NULL, simple_options[i].get,
+ 				simple_options[i].set, simple_options[i].toggle,
+diff --git a/options.h b/options.h
+index c45e974..6c3bb64 100644
+--- a/options.h
++++ b/options.h
+@@ -231,6 +231,9 @@ extern char **pl_env_vars;
+ /* build option list */
+ void options_add(void);
+ 
++/* restore colors[]/attrs[] to the initial state */
++void colors_reset(void);
++
+ /* load options from the config file */
+ void options_load(void);
+ 
