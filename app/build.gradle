@@ -33,6 +33,17 @@ android {
         debug {
             applicationIdSuffix ".debug"
         }
+        release {
+            // ensure the git state doesn't affect the build reproducibility
+            vcsInfo.include = false
+        }
+    }
+
+    // exclude the dependency-metadata blob in the signing block since it's
+    // non-deterministic
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     externalNativeBuild {

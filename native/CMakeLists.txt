@@ -1,6 +1,19 @@
 cmake_minimum_required(VERSION 3.30)
 project(cmus_android C CXX)
 
+# Reproducible builds: the codec libs use assert()/__FILE__ liberally, which
+# bakes the absolute path of each source file into .rodata (these strings
+# survive release stripping, unlike DWARF). Left alone, a .so built here
+# ("/home/.../cmus-android/...") differs byte-for-byte from one built in CI or
+# in F-Droid's buildserver ("/build/net.pgaskin.cmus.android/..."), breaking
+# reproducibility. -ffile-prefix-map rewrites those embedded paths (it implies
+# both -fmacro-prefix-map for __FILE__ and -fdebug-prefix-map for debug info);
+# every environment maps its own checkout root to the same "." placeholder, so
+# the emitted strings match regardless of where the tree lives. Set before any
+# add_subdirectory so it's inherited by all third-party targets.
+get_filename_component(_repo_root "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+add_compile_options("-ffile-prefix-map=${_repo_root}=.")
+
 # AGP configures the debug variant with CMAKE_BUILD_TYPE=Debug, i.e. -O0
 # for cmus and every codec — 3-4x the decode CPU of termux's optimized
 # packages, very noticeable during playback. Decoding is the whole point,

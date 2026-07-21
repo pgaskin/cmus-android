@@ -54,12 +54,34 @@ jobs:
           KEYSTORE_PATH: ${{ github.workspace }}/keystore.jks
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
       - name: Sign APK
-        run: $ANDROID_HOME/build-tools/36.0.0/apksigner sign --ks "$KEYSTORE_PATH" --ks-pass env:KEYSTORE_PASSWORD --in app/build/outputs/apk/release/app-release-unsigned.apk --out app-release.apk
+        # v1 (JAR) signing off: minSdk 34 never uses it, and it only adds dead
+        # META-INF entries. The APK Signing Block (v2/v3) is the whole signature.
+        run: $ANDROID_HOME/build-tools/36.0.0/apksigner sign --v1-signing-enabled false --ks "$KEYSTORE_PATH" --ks-pass env:KEYSTORE_PASSWORD --in app/build/outputs/apk/release/app-release-unsigned.apk --out app-release.apk
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/keystore.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       - name: Verify APK signature
         run: $ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs app-release.apk
+
+      - name: Verify reproducible build
+        # Rebuild from a copy at a different absolute path (a reproducible build
+        # must not depend on the checkout location), then confirm both the two
+        # independent unsigned builds and the signed APK we're about to publish
+        # reproduce. See notes/reproducible-builds.md.
+        run: |
+          set -euo pipefail
+          rebuild=/tmp/cmus-rebuild-at-a-different-path
+          rsync -a --delete \
+            --exclude='/build/' --exclude='/app/build/' \
+            --exclude='.gradle/' --exclude='.cxx/' \
+            ./ "$rebuild/"
+          ( cd "$rebuild" && ./gradlew --no-daemon app:assembleRelease )
+          unsigned=app/build/outputs/apk/release/app-release-unsigned.apk
+          rebuilt="$rebuild/app/build/outputs/apk/release/app-release-unsigned.apk"
+          # the two independent builds must be bit-for-bit identical
+          go run notes/check-reproducible.go "$unsigned" "$rebuilt"
+          # the signed APK must reproduce from that build (differing only in the signature)
+          go run notes/check-reproducible.go app-release.apk "$rebuilt"
 
       - name: Create release
         id: create-release
