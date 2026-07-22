@@ -3,6 +3,54 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-22 — Stage 23 Session C (cmus side): SAF transport 0015 + /saf VFS 0016 (built)
+
+- Per [plans/23-saf.md](plans/23-saf.md) *Build order* steps 2–6 (the cmus
+  half). Two committed cmus patches; no app work yet, so nothing is
+  device-runnable — `saf_enabled()` is false unless `CMUS_ANDROID_SAF_SOCKET`
+  is set, and every `/saf` branch is inert until the app binds that socket.
+- **0015 — SAF RPC transport** (committed earlier this session, `bc110c2`): a
+  second, dedicated AF_UNIX channel in `android.c`/`android.h`,
+  correlation-id multiplexed, one reader/dispatcher thread owning all
+  `recvmsg` (a shared socket carrying `SCM_RIGHTS` fds can't have callers
+  race their own replies). Public API in android.h: `saf_enabled`,
+  `saf_open` (returns a seekable fd; `fstat`+`S_ISREG` rejects a non-seekable
+  provider fd with `-SAF_ENOTSEEK`), `saf_stat`, `saf_list`/`saf_list_free`.
+  Wire frames are length-prefixed, ≤1 passed fd per recvmsg.
+- **0016 — /saf VFS branch + file-op hooks** (`9e9e499`): wires the four
+  interception sites, all gated `is_saf_path()` (a path-*segment* test —
+  `.../saffron` must not match):
+  - **OPEN** `input.c` `open_file_locked`: `/saf` fd via `saf_open()`.
+  - **Reopen seam** `ip_reopen_path`: `/saf` main reopen → `/proc/self/fd/N`
+    of the open bridge fd (independent, seekable — fills 0004's seam so
+    ffmpeg/mp4/aac + mad/wavpack tag readers need no per-plugin surgery). A
+    non-NULL sidecar (wavpack `.wvc`) issues a fresh bridge OPEN and returns
+    its `/proc/self/fd`; that extra fd rides a new
+    `input_plugin_data.saf_extra_fd` (init -1 in `ip_init`, closed in
+    `ip_reset`) so it dies with the input.
+  - **LIST** `load_dir`: `dir_open` fetches the whole child listing in one
+    `saf_list()` (dir->d == NULL marks SAF mode), `dir_read` walks it
+    synthesizing `st_mode`/size/mtime (no symlinks). **The app must supply the
+    `..` entry** in each non-root LIST. Also `browser.c` `do_browser_load`
+    skips its pre-`dir_open` `stat()` for `/saf` (would ENOENT) and treats the
+    path as a directory — the flagged extra interception site.
+  - **STAT** `cache.c`: both freshness `stat`s go through `saf_stat()` —
+    `file_get_mtime` at first-cache **and** `cache_refresh`'s mtime compare.
+    Patrick's call: **do the STAT properly** (an RPC), *not* fstat on the open
+    bridge fd — so both sites use the same provider-mtime source and the
+    Refresh-metadata compare is stable. `-SAF_ENOENT` drops a vanished track;
+    any other bridge error (I/O / cancel) leaves the track be.
+- `saf_errno()` (new, android.h) maps `-SAF_E*` → errno for the bridged
+  sites; `saf_stat` ENOENT-vs-transient is told apart via it without exporting
+  the internal enum.
+- Built clean (`assembleDebug`), `patch.sh check` green (0001–0015 only shift
+  their format-patch count /15→/16). **App side is next** (build-order 4–8):
+  the SAF RPC *service thread* (bind `CMUS_ANDROID_SAF_SOCKET`, serve
+  LIST/OPEN/STAT + `..` entries + cancel window), storage-connections manager
+  + dual-backend resolver (tree grant → MediaStore), Music Import via
+  MediaProvider, browser default `/saf`, album art, per-volume pl_env vars,
+  storage-mode selector. None runnable until the service thread lands.
+
 ## 2026-07-22 — Stage 23 Session B: reopen seam (patch 0004, built)
 
 - Per [plans/23-saf.md](plans/23-saf.md) *Plugin reopen seam* / *Build order
