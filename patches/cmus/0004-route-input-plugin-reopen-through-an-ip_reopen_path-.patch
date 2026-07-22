@@ -1,7 +1,7 @@
 From 4fbb9998f726b22248ca2601405603b0764ac924 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Wed, 22 Jul 2026 02:11:14 -0400
-Subject: [PATCH 04/15] route input-plugin reopen through an ip_reopen_path
+Subject: [PATCH 04/16] route input-plugin reopen through an ip_reopen_path
  seam
 
 A handful of input plugins open the input a second time by path rather

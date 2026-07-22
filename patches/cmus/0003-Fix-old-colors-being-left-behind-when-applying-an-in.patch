@@ -1,7 +1,7 @@
 From fb7f0ea874571b2ac6b0e89920dab0298cbd45d0 Mon Sep 17 00:00:00 2001
 From: Patrick Gaskin <patrick@pgaskin.net>
 Date: Tue, 21 Jul 2026 18:13:22 -0400
-Subject: [PATCH 03/15] Fix old colors being left behind when applying an
+Subject: [PATCH 03/16] Fix old colors being left behind when applying an
  incomplete theme
 
 

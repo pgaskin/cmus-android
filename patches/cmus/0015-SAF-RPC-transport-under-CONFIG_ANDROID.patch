@@ -1,7 +1,7 @@
 From 6c1b871072c0caa64ea178f5dba85671517d696d Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Wed, 22 Jul 2026 02:41:33 -0400
-Subject: [PATCH 15/15] SAF RPC transport under CONFIG_ANDROID
+Subject: [PATCH 15/16] SAF RPC transport under CONFIG_ANDROID
 
 Add a second, dedicated AF_UNIX channel to the Android app that will
 service the /saf pseudo-paths (patch 0016): directory LIST, file OPEN with

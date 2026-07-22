@@ -1,7 +1,7 @@
 From 0fe38f86228557087d71cac4d8befc60076be8a8 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:41:36 -0400
-Subject: [PATCH 13/15] drop CD-audio support under CONFIG_ANDROID
+Subject: [PATCH 13/16] drop CD-audio support under CONFIG_ANDROID
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

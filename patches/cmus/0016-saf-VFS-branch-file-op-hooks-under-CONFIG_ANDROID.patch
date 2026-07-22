@@ -1,0 +1,437 @@
+From 279208efba39b21853ea984baf24c37774d13c54 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Wed, 22 Jul 2026 02:57:09 -0400
+Subject: [PATCH 16/16] /saf VFS branch + file-op hooks under CONFIG_ANDROID
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Wire the /saf pseudo-paths into cmus's file ops, consuming the SAF RPC
+transport from the previous patch. A /saf/... path looks like a normal
+absolute path, so cmus's char* machinery (dirname/join, browser .., the
+cache/library/playlist key) is untouched; only the sites that actually
+touch the filesystem branch on is_saf_path().
+
+- OPEN (input.c open_file_locked): a /saf input's fd comes from saf_open()
+  (a real, seekable bridge fd passed over SCM_RIGHTS) instead of open().
+- Reopen seam (ip_reopen_path): for a /saf input, return /proc/self/fd/N
+  — an independent, seekable re-open of the already-open bridge fd — so
+  the ex-open-by-path plugins (ffmpeg/mp4/aac + mad/wavpack tag readers)
+  work with no per-plugin surgery. A non-NULL sidecar (wavpack's .wvc)
+  issues a fresh bridge OPEN and returns its /proc/self/fd; that extra fd
+  rides input_plugin_data.saf_extra_fd and is closed with the input in
+  ip_reset().
+- LIST (load_dir): dir_open() fetches a whole /saf child listing in one
+  saf_list() RPC and dir_read() walks it in place of readdir(), so a
+  library import is one round-trip per directory, not per entry. The app
+  supplies the ".." entry. browser.c's do_browser_load() also skips its
+  pre-dir_open stat() for /saf (which would ENOENT) and treats the path
+  as a directory.
+- STAT (cache.c freshness): both sites that stat ti->filename go through
+  saf_stat() for a /saf path — file_get_mtime at first-cache and the
+  cache_refresh (update-cache / Refresh metadata) mtime compare. Using
+  the STAT RPC's mtime at both keeps the compare stable; a -SAF_ENOENT
+  drops a vanished track while a transient bridge error leaves it be.
+
+Gated on CONFIG_ANDROID and inert unless $CMUS_ANDROID_SAF_SOCKET is set;
+direct-mode POSIX paths never reach these branches.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+diff --git a/android.c b/android.c
+index 3056ca1..4004945 100644
+--- a/android.c
++++ b/android.c
+@@ -998,6 +998,28 @@ int saf_enabled(void)
+ 	return saf_reader_started;
+ }
+ 
++/*
++ * Path-segment test: exactly "/saf" or a "/saf/..." prefix. A substring
++ * match would wrongly catch a real ".../saffron", so the segment must end
++ * at a '/' or the string's end.
++ */
++int is_saf_path(const char *path)
++{
++	return path[0] == '/' && path[1] == 's' && path[2] == 'a' &&
++		path[3] == 'f' && (path[4] == '\0' || path[4] == '/');
++}
++
++/* map a negative -SAF_E* code to an errno for the bridged file-op sites */
++int saf_errno(int rc)
++{
++	switch (-rc) {
++	case SAF_ENOENT:	return ENOENT;
++	case SAF_ENOTSEEK:	return ESPIPE;
++	case SAF_ECANCELED:	return ECANCELED;
++	default:		return EIO;
++	}
++}
++
+ /* little-endian encode into a request frame */
+ static void saf_put_u16(struct gbuf *b, uint16_t v)
+ {
+diff --git a/android.h b/android.h
+index af425ba..d8313f0 100644
+--- a/android.h
++++ b/android.h
+@@ -100,8 +100,24 @@ int saf_stat(const char *path, struct saf_stat *st);
+ int saf_list(const char *path, struct saf_dirent **entries, size_t *count);
+ void saf_list_free(struct saf_dirent *entries, size_t count);
+ 
++/*
++ * /saf VFS branch (patch 0016).
++ *
++ * is_saf_path() is a path-segment test: it matches exactly "/saf" or a
++ * "/saf/" prefix, never a substring (".../saffron" does not match), so the
++ * file-op sites can cheaply route a pseudo-path to the bridge above.
++ * saf_errno() maps a negative -SAF_E* code (as returned by saf_open/
++ * saf_stat/saf_list) to an errno value, so a bridged site can set errno and
++ * report a normal I/O failure; -SAF_ENOENT maps to ENOENT, which the cache
++ * refresh uses to tell a vanished file from a transient bridge error.
++ */
++int is_saf_path(const char *path);
++int saf_errno(int rc);
++
+ #else
+ 
++#define is_saf_path(path) 0
++
+ #define android_fd -1
+ #define android_client_fd -1
+ #define android_init() { }
+diff --git a/browser.c b/browser.c
+index 238b396..78d6f39 100644
+--- a/browser.c
++++ b/browser.c
+@@ -25,6 +25,7 @@
+ #include "misc.h"
+ #include "options.h"
+ #include "uchar.h"
++#include "android.h"
+ 
+ #include <sys/types.h>
+ #include <sys/stat.h>
+@@ -132,11 +133,19 @@ static int add_pl_line(void *data, const char *line)
+ static int do_browser_load(const char *name)
+ {
+ 	struct stat st;
++	int saf = 0;
+ 
+-	if (stat(name, &st))
++#ifdef CONFIG_ANDROID
++	/* a raw stat() ENOENTs on a /saf pseudo-path, and the browser only ever
++	 * loads directories (it plays/adds files rather than loading them), so
++	 * treat any /saf path as a directory and skip the stat/playlist probe */
++	saf = is_saf_path(name);
++#endif
++
++	if (!saf && stat(name, &st))
+ 		return -1;
+ 
+-	if (S_ISREG(st.st_mode) && cmus_is_playlist(name)) {
++	if (!saf && S_ISREG(st.st_mode) && cmus_is_playlist(name)) {
+ 		char *buf;
+ 		ssize_t size;
+ 
+@@ -155,7 +164,7 @@ static int do_browser_load(const char *name)
+ 			cmus_playlist_for_each(buf, size, 0, add_pl_line, NULL);
+ 			munmap(buf, size);
+ 		}
+-	} else if (S_ISDIR(st.st_mode)) {
++	} else if (saf || S_ISDIR(st.st_mode)) {
+ 		int (*filter)(const char *, const struct stat *) = normal_filter;
+ 		struct directory dir;
+ 		const char *str;
+diff --git a/cache.c b/cache.c
+index 38034b1..78dbb3a 100644
+--- a/cache.c
++++ b/cache.c
+@@ -443,7 +443,20 @@ static struct track_info *ip_get_ti(const char *filename)
+ 		ti->bitrate = ip_bitrate(ip);
+ 		ti->codec = ip_codec(ip);
+ 		ti->codec_profile = ip_codec_profile(ip);
+-		ti->mtime = ip_is_remote(ip) ? -1 : file_get_mtime(filename);
++		if (ip_is_remote(ip))
++			ti->mtime = -1;
++#ifdef CONFIG_ANDROID
++		else if (is_saf_path(filename)) {
++			/* a STAT RPC, not a raw stat() (which ENOENTs on /saf) —
++			 * and the same mtime source cache_refresh compares against,
++			 * so a later Refresh metadata sees a stable value */
++			struct saf_stat ss;
++			ti->mtime = saf_stat(filename, &ss) == 0
++				? (time_t)ss.mtime : -1;
++		}
++#endif
++		else
++			ti->mtime = file_get_mtime(filename);
+ 	}
+ 	ip_delete(ip);
+ 	return ti;
+@@ -520,6 +533,28 @@ struct track_info **cache_refresh(int *count, int force)
+ 		 */
+ 
+ 		if (!is_url(ti->filename)) {
++#ifdef CONFIG_ANDROID
++			if (is_saf_path(ti->filename)) {
++				/* per-file STAT RPC: no enumerating LIST to
++				 * piggyback on here (contrast recursive add) */
++				struct saf_stat ss;
++				int sr = saf_stat(ti->filename, &ss);
++				if (sr < 0) {
++					if (saf_errno(sr) == ENOENT) {
++						rc = -1;	/* vanished: drop */
++					} else {
++						/* transient bridge error (I/O or
++						 * a cancel) — leave the track be */
++						track_info_unref(ti);
++						tis[i] = NULL;
++						continue;
++					}
++				} else {
++					rc = 0;
++					st.st_mtime = (time_t)ss.mtime;
++				}
++			} else
++#endif
+ 			rc = stat(ti->filename, &st);
+ 			if (!rc && !force && ti->mtime == st.st_mtime) {
+ 				// unchanged
+diff --git a/input.c b/input.c
+index 54bc802..54046f5 100644
+--- a/input.c
++++ b/input.c
+@@ -35,6 +35,7 @@
+ #include "locking.h"
+ #include "xstrjoin.h"
+ #include "static_plugins.h"
++#include "android.h"
+ 
+ #include <unistd.h>
+ #include <stdbool.h>
+@@ -433,6 +434,9 @@ static void ip_init(struct input_plugin *ip, char *filename)
+ 		.bitrate            = -1,
+ 		.data = {
+ 			.fd         = -1,
++#ifdef CONFIG_ANDROID
++			.saf_extra_fd = -1,
++#endif
+ 			.filename   = filename,
+ 			.remote     = is_http_url(filename),
+ 			.channel_map = CHANNEL_MAP_INIT
+@@ -444,8 +448,17 @@ static void ip_init(struct input_plugin *ip, char *filename)
+ static void ip_reset(struct input_plugin *ip, int close_fd)
+ {
+ 	int fd = ip->data.fd;
++#ifdef CONFIG_ANDROID
++	int extra_fd = ip->data.saf_extra_fd;
++#endif
+ 	free(ip->data.metadata);
+ 	ip_init(ip, ip->data.filename);
++#ifdef CONFIG_ANDROID
++	/* a sidecar bridge fd (wavpack .wvc) always dies with the input; ip_init
++	 * has reset the field to -1 */
++	if (extra_fd != -1)
++		close(extra_fd);
++#endif
+ 	if (fd != -1) {
+ 		if (close_fd)
+ 			close(fd);
+@@ -460,6 +473,34 @@ char *ip_reopen_path(struct input_plugin_data *ip_data, const char *sidecar)
+ {
+ 	if (is_url(ip_data->filename))
+ 		return NULL;
++#ifdef CONFIG_ANDROID
++	if (is_saf_path(ip_data->filename)) {
++		char *path = xnew(char, sizeof("/proc/self/fd/") + 20);
++		int fd;
++
++		if (!sidecar) {
++			/* an independent, seekable re-open of the already-open
++			 * bridge fd via its /proc/self/fd magic symlink — gives
++			 * the tag readers their own file offset without a dup() */
++			sprintf(path, "/proc/self/fd/%d", ip_data->fd);
++			return path;
++		}
++		/* a same-directory companion (wavpack's .wvc): issue a fresh
++		 * bridge OPEN for its /saf path and hand back /proc/self/fd. The
++		 * new bridge fd's lifetime rides the input — closed in ip_reset,
++		 * after the plugin has re-opened the symlink for its own handle */
++		fd = saf_open(sidecar);
++		if (fd < 0) {
++			free(path);
++			return NULL;
++		}
++		if (ip_data->saf_extra_fd != -1)
++			close(ip_data->saf_extra_fd);
++		ip_data->saf_extra_fd = fd;
++		sprintf(path, "/proc/self/fd/%d", fd);
++		return path;
++	}
++#endif
+ 	return xstrdup(sidecar ? sidecar : ip_data->filename);
+ }
+ 
+@@ -478,9 +519,21 @@ static int open_file_locked(struct input_plugin *ip)
+ 	if (!ops)
+ 		return -IP_ERROR_UNRECOGNIZED_FILE_TYPE;
+ 
+-	ip->data.fd = open(ip->data.filename, O_RDONLY);
+-	if (ip->data.fd == -1)
+-		return -IP_ERROR_ERRNO;
++#ifdef CONFIG_ANDROID
++	if (is_saf_path(ip->data.filename)) {
++		int fd = saf_open(ip->data.filename);
++		if (fd < 0) {
++			errno = saf_errno(fd);
++			return -IP_ERROR_ERRNO;
++		}
++		ip->data.fd = fd;
++	} else
++#endif
++	{
++		ip->data.fd = open(ip->data.filename, O_RDONLY);
++		if (ip->data.fd == -1)
++			return -IP_ERROR_ERRNO;
++	}
+ 
+ 	while (1) {
+ 		ip->ops = ops;
+diff --git a/ip.h b/ip.h
+index e983e08..dceb7ec 100644
+--- a/ip.h
++++ b/ip.h
+@@ -68,6 +68,13 @@ struct input_plugin_data {
+ 	char *filename;
+ 	int fd;
+ 
++#ifdef CONFIG_ANDROID
++	/* a secondary SAF bridge fd opened by ip_reopen_path() for a sidecar
++	 * companion (wavpack's .wvc); -1 when none, closed with the input in
++	 * ip_reset() */
++	int saf_extra_fd;
++#endif
++
+ 	unsigned int remote : 1;
+ 	unsigned int metadata_changed : 1;
+ 
+diff --git a/load_dir.c b/load_dir.c
+index 007ecfb..3062391 100644
+--- a/load_dir.c
++++ b/load_dir.c
+@@ -18,6 +18,7 @@
+ 
+ #include "load_dir.h"
+ #include "xmalloc.h"
++#include "android.h"
+ 
+ #include <sys/types.h>
+ #include <sys/stat.h>
+@@ -34,6 +35,28 @@ int dir_open(struct directory *dir, const char *name)
+ 		return -1;
+ 	}
+ 
++#ifdef CONFIG_ANDROID
++	dir->saf_entries = NULL;
++	dir->saf_count = 0;
++	dir->saf_pos = 0;
++	if (is_saf_path(name)) {
++		/* one LIST RPC fetches the whole child listing; dir_read then
++		 * walks it with no further round-trips. dir->d stays NULL to
++		 * mark this mode. */
++		int rc = saf_list(name, &dir->saf_entries, &dir->saf_count);
++		if (rc < 0) {
++			errno = saf_errno(rc);
++			return -1;
++		}
++		dir->d = NULL;
++		memcpy(dir->path, name, len);
++		dir->path[len++] = '/';
++		dir->path[len] = 0;
++		dir->len = len;
++		return 0;
++	}
++#endif
++
+ 	dir->d = opendir(name);
+ 	if (!dir->d)
+ 		return -1;
+@@ -47,16 +70,49 @@ int dir_open(struct directory *dir, const char *name)
+ 
+ void dir_close(struct directory *dir)
+ {
++#ifdef CONFIG_ANDROID
++	if (!dir->d) {
++		saf_list_free(dir->saf_entries, dir->saf_count);
++		dir->saf_entries = NULL;
++		return;
++	}
++#endif
+ 	closedir(dir->d);
+ }
+ 
+ const char *dir_read(struct directory *dir)
+ {
+-	DIR *d = dir->d;
++	DIR *d;
+ 	int len = dir->len;
+ 	char *full = dir->path;
+ 	struct dirent *de;
+ 
++#ifdef CONFIG_ANDROID
++	if (!dir->d) {
++		/* /saf mode: iterate the cached LIST result. SAF has no symlinks;
++		 * synthesize just the stat fields load_dir's callers read
++		 * (S_ISDIR + size/mtime). The app supplies the ".." entry. */
++		while (dir->saf_pos < dir->saf_count) {
++			struct saf_dirent *e = &dir->saf_entries[dir->saf_pos++];
++			int nlen = strlen(e->name);
++
++			if (len + nlen + 1 >= (int)sizeof(dir->path))
++				continue;
++			memcpy(full + len, e->name, nlen + 1);
++			memset(&dir->st, 0, sizeof(dir->st));
++			dir->st.st_mode = e->is_dir ? (S_IFDIR | 0755)
++						    : (S_IFREG | 0644);
++			dir->st.st_size = e->size;
++			dir->st.st_mtime = e->mtime;
++			dir->is_link = 0;
++			return full + len;
++		}
++		return NULL;
++	}
++#endif
++
++	d = dir->d;
++
+ #if defined(__CYGWIN__)
+ 	/* Fix for cygwin "hang" bug when browsing /
+ 	 * Windows treats // as a network path.
+diff --git a/load_dir.h b/load_dir.h
+index 06168cc..132c733 100644
+--- a/load_dir.h
++++ b/load_dir.h
+@@ -23,6 +23,8 @@
+ #include <stdlib.h>
+ #include <dirent.h>
+ 
++struct saf_dirent;
++
+ struct directory {
+ 	DIR *d;
+ 	int len;
+@@ -31,6 +33,13 @@ struct directory {
+ 	/* stat() information. ie. for the symlink target */
+ 	struct stat st;
+ 	char path[1024];
++#ifdef CONFIG_ANDROID
++	/* a /saf listing fetched in one LIST RPC; dir_read walks it in place of
++	 * readdir(). dir->d is NULL in this mode. */
++	struct saf_dirent *saf_entries;
++	size_t saf_count;
++	size_t saf_pos;
++#endif
+ };
+ 
+ int dir_open(struct directory *dir, const char *name);
