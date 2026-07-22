@@ -704,11 +704,13 @@ each self-contained and committed before the next begins:
    explain-on-press dialogs) in one session. They're independent of the SAF
    work and touch only app code, so they land and get committed on their own,
    first.
-2. **Session B — the reopen seam only.** Implement *and commit* patch 0004
-   (`ip_reopen_path`), rebased into place before the Android-IPC patch, in its
-   own session. It's a behavior-preserving upstream candidate; verify it
-   against a normal filesystem (all seam-touching codecs + the http/tag checks
-   in *Verify*) before moving on.
+2. **Session B — the reopen seam only. ✅ DONE (2026-07-22).** Implemented
+   *and committed* patch 0004 (`ip_reopen_path`), rebased into place before
+   the Android-IPC patch (renumbering the Android stack, `patch.sh check`
+   green), in its own session. Behavior-preserving upstream candidate; builds
+   clean (`assembleDebug`). The normal-filesystem codec/http/tag *Verify*
+   checks are device-side, left to Patrick next session. See
+   [status.md](../status.md).
 3. **Session C onward — the rest.** The SAF transport (0015), `/saf` VFS
    (0016), and all app work follow in subsequent session(s), per the numbered
    steps below.

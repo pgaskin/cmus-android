@@ -1,7 +1,7 @@
-From 7d227a67952a2a9f6e8ad867f4d185d33bc2a1fd Mon Sep 17 00:00:00 2001
+From 0fe38f86228557087d71cac4d8befc60076be8a8 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:41:36 -0400
-Subject: [PATCH 12/13] drop CD-audio support under CONFIG_ANDROID
+Subject: [PATCH 13/14] drop CD-audio support under CONFIG_ANDROID
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -31,10 +31,10 @@ index c3eec51..84b2b9c 100644
  	*ret = NULL;
  	absolute = path_absolute(name);
 diff --git a/input.c b/input.c
-index 16757d2..d46e22f 100644
+index 2b4e2a9..54bc802 100644
 --- a/input.c
 +++ b/input.c
-@@ -636,10 +636,13 @@ int ip_open(struct input_plugin *ip)
+@@ -643,10 +643,13 @@ int ip_open(struct input_plugin *ip)
  		if (rc == 0)
  			rc = ip->ops->open(&ip->data);
  	} else {

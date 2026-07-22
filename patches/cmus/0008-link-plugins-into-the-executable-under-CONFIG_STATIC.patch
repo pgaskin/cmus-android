@@ -1,7 +1,7 @@
-From c80da21c293055d57b7e3f81fe40344be852fc0a Mon Sep 17 00:00:00 2001
+From 476a83449caed77579c36421ea679442fb5d417e Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:34:55 -0400
-Subject: [PATCH 07/13] link plugins into the executable under
+Subject: [PATCH 08/14] link plugins into the executable under
  CONFIG_STATIC_PLUGINS
 
 Instead of dlopen()ing <libdir>/{ip,op}/*.so, compile every plugin into
@@ -17,7 +17,7 @@ Makefile leaves it unset and keeps the dlopen path.
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
 diff --git a/input.c b/input.c
-index 0f5e5b9..16757d2 100644
+index cba8a71..2b4e2a9 100644
 --- a/input.c
 +++ b/input.c
 @@ -34,6 +34,7 @@
@@ -28,7 +28,7 @@ index 0f5e5b9..16757d2 100644
  
  #include <unistd.h>
  #include <stdbool.h>
-@@ -508,6 +509,35 @@ static int sort_ip(const struct list_head *a_, const struct list_head *b_)
+@@ -515,6 +516,35 @@ static int sort_ip(const struct list_head *a_, const struct list_head *b_)
  
  void ip_load_plugins(void)
  {
@@ -64,7 +64,7 @@ index 0f5e5b9..16757d2 100644
  	DIR *dir;
  	struct dirent *d;
  
-@@ -575,6 +605,7 @@ void ip_load_plugins(void)
+@@ -582,6 +612,7 @@ void ip_load_plugins(void)
  	list_mergesort(&ip_head, sort_ip);
  	closedir(dir);
  	ip_unlock();

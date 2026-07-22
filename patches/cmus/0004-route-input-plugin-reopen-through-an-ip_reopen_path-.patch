@@ -1,0 +1,200 @@
+From 4fbb9998f726b22248ca2601405603b0764ac924 Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Wed, 22 Jul 2026 02:11:14 -0400
+Subject: [PATCH 04/14] route input-plugin reopen through an ip_reopen_path
+ seam
+
+A handful of input plugins open the input a second time by path rather
+than reuse ip_data->fd:
+
+  - ffmpeg and mp4v2 take a filename instead of an fd for their main open;
+  - the mad, aac and wavpack tag readers want an independent file offset
+    from the playback fd, so they open a fresh handle by name;
+  - wavpack additionally opens a ".wvc" correction file, a sibling of the
+    input computed as "<filename>c".
+
+Funnel all of these through a single helper, ip_reopen_path(ip_data,
+sidecar), which returns the path a plugin should (re)open (caller frees):
+sidecar == NULL reopens the main input, a non-NULL sidecar names a
+same-directory companion file. It returns NULL for inputs with no
+reopenable filesystem path (remote streams, cdda), which the callers
+already treated as "skip" -- open("http://...") simply failed before.
+
+The ffmpeg main open is the one site that legitimately reopens a remote
+input by URL, so it only routes through the seam for !remote inputs and
+passes the URL straight through otherwise.
+
+Behavior-preserving on a normal filesystem: the default helper just hands
+back a copy of the filename (or the sidecar). It gives a single point of
+indirection a backend that lacks POSIX paths can later override.
+
+diff --git a/input.c b/input.c
+index ed07656..1923715 100644
+--- a/input.c
++++ b/input.c
+@@ -443,6 +443,13 @@ static void ip_reset(struct input_plugin *ip, int close_fd)
+ 	}
+ }
+ 
++char *ip_reopen_path(struct input_plugin_data *ip_data, const char *sidecar)
++{
++	if (is_url(ip_data->filename))
++		return NULL;
++	return xstrdup(sidecar ? sidecar : ip_data->filename);
++}
++
+ static int open_file_locked(struct input_plugin *ip)
+ {
+ 	const struct input_plugin_ops *ops;
+diff --git a/ip.h b/ip.h
+index 38fa25f..e983e08 100644
+--- a/ip.h
++++ b/ip.h
+@@ -86,6 +86,22 @@ struct input_plugin_data {
+ 	void *private;
+ };
+ 
++/*
++ * Path an input plugin should (re)open for a secondary handle onto the file
++ * backing ip_data. A few plugins open the input a second time by path rather
++ * than reuse ip_data->fd: tag readers want an independent file offset, and
++ * some decode libraries (ffmpeg, mp4v2) take a filename instead of an fd.
++ *
++ * With sidecar == NULL the main input is reopened; a non-NULL sidecar names a
++ * companion file in the same directory as the input (e.g. wavpack's ".wvc"
++ * correction file) and replaces the file to open. Opening a file in a
++ * different directory is deliberately not supported.
++ *
++ * Returns a newly-allocated path on success (caller frees), or NULL when the
++ * input has no reopenable filesystem path (remote streams, cdda, ...).
++ */
++char *ip_reopen_path(struct input_plugin_data *ip_data, const char *sidecar);
++
+ struct input_plugin_ops {
+ 	int (*open)(struct input_plugin_data *ip_data);
+ 	int (*close)(struct input_plugin_data *ip_data);
+diff --git a/ip/aac.c b/ip/aac.c
+index 954740b..af415a5 100644
+--- a/ip/aac.c
++++ b/ip/aac.c
+@@ -394,7 +394,11 @@ static int aac_read_comments(struct input_plugin_data *ip_data,
+ 	struct id3tag id3;
+ 	int rc, fd, i;
+ 
+-	fd = open(ip_data->filename, O_RDONLY);
++	char *reopen = ip_reopen_path(ip_data, NULL);
++	if (!reopen)
++		return -1;
++	fd = open(reopen, O_RDONLY);
++	free(reopen);
+ 	if (fd == -1)
+ 		return -1;
+ 
+diff --git a/ip/ffmpeg.c b/ip/ffmpeg.c
+index 09848c8..12b20ab 100644
+--- a/ip/ffmpeg.c
++++ b/ip/ffmpeg.c
+@@ -91,7 +91,18 @@ static int ffmpeg_open_input(struct input_plugin_data *ip_data,
+ 	int stream_index = -1;
+ 
+ 	int err;
+-	int res = avformat_open_input(&ic, ip_data->filename, NULL, NULL);
++	/* Remote inputs are opened by URL; only local inputs route through the
++	 * reopen seam (which yields a plain path an fd-less libavformat accepts). */
++	const char *path = ip_data->filename;
++	char *reopen = NULL;
++	if (!ip_data->remote) {
++		reopen = ip_reopen_path(ip_data, NULL);
++		if (!reopen)
++			return -IP_ERROR_FILE_FORMAT;
++		path = reopen;
++	}
++	int res = avformat_open_input(&ic, path, NULL, NULL);
++	free(reopen);
+ 	if (res < 0) {
+ 		err = -IP_ERROR_FILE_FORMAT;
+ 		goto err;
+diff --git a/ip/mad.c b/ip/mad.c
+index 60b6022..8cd8b14 100644
+--- a/ip/mad.c
++++ b/ip/mad.c
+@@ -130,7 +130,11 @@ static int mad_read_comments(struct input_plugin_data *ip_data,
+ 	APETAG(ape);
+ 	GROWING_KEYVALS(c);
+ 
+-	fd = open(ip_data->filename, O_RDONLY);
++	char *reopen = ip_reopen_path(ip_data, NULL);
++	if (!reopen)
++		return -1;
++	fd = open(reopen, O_RDONLY);
++	free(reopen);
+ 	if (fd == -1) {
+ 		return -1;
+ 	}
+diff --git a/ip/mp4.c b/ip/mp4.c
+index fdc9a57..0479cc5 100644
+--- a/ip/mp4.c
++++ b/ip/mp4.c
+@@ -212,11 +212,15 @@ static int mp4_open(struct input_plugin_data *ip_data)
+ 	NeAACDecSetConfiguration(priv->decoder, neaac_cfg);
+ 
+ 	/* open mpeg-4 file */
++	char *reopen = ip_reopen_path(ip_data, NULL);
++	if (!reopen)
++		goto out;
+ #ifdef MP4_DETAILS_ALL
+-	priv->mp4.handle = MP4Read(ip_data->filename, 0);
++	priv->mp4.handle = MP4Read(reopen, 0);
+ #else
+-	priv->mp4.handle = MP4Read(ip_data->filename);
++	priv->mp4.handle = MP4Read(reopen);
+ #endif
++	free(reopen);
+ 	if (!priv->mp4.handle) {
+ 		d_print("MP4Read failed\n");
+ 		goto out;
+diff --git a/ip/wavpack.c b/ip/wavpack.c
+index 02fa777..cafbe75 100644
+--- a/ip/wavpack.c
++++ b/ip/wavpack.c
+@@ -176,13 +176,17 @@ static int wavpack_open(struct input_plugin_data *ip_data)
+ 	*priv = priv_init;
+ 	if (!ip_data->remote && fstat(ip_data->fd, &st) == 0) {
+ 		char *filename_wvc;
++		char *reopen;
+ 
+ 		priv->wv_file.len = st.st_size;
+ 
++		/* the ".wvc" correction file is a sibling of the input; route it
++		 * through the reopen seam as a same-directory companion */
+ 		filename_wvc = xnew(char, strlen(ip_data->filename) + 2);
+ 		sprintf(filename_wvc, "%sc", ip_data->filename);
+-		if (stat(filename_wvc, &st) == 0) {
+-			priv->wvc_file.fd = open(filename_wvc, O_RDONLY);
++		reopen = ip_reopen_path(ip_data, filename_wvc);
++		if (reopen && stat(reopen, &st) == 0) {
++			priv->wvc_file.fd = open(reopen, O_RDONLY);
+ 			if (priv->wvc_file.fd != -1) {
+ 				priv->wvc_file.len = st.st_size;
+ 				priv->wvc_file.push_back_byte = EOF;
+@@ -190,6 +194,7 @@ static int wavpack_open(struct input_plugin_data *ip_data)
+ 				d_print("use correction file: %s\n", filename_wvc);
+ 			}
+ 		}
++		free(reopen);
+ 		free(filename_wvc);
+ 	} else
+ 		priv->wv_file.len = -1;
+@@ -298,7 +303,11 @@ static int wavpack_read_comments(struct input_plugin_data *ip_data,
+ 	GROWING_KEYVALS(c);
+ 	int fd, rc, save, i;
+ 
+-	fd = open(ip_data->filename, O_RDONLY);
++	char *reopen = ip_reopen_path(ip_data, NULL);
++	if (!reopen)
++		return -1;
++	fd = open(reopen, O_RDONLY);
++	free(reopen);
+ 	if (fd == -1)
+ 		return -1;
+ 	d_print("filename: %s\n", ip_data->filename);

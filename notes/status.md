@@ -3,6 +3,31 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-22 — Stage 23 Session B: reopen seam (patch 0004, built)
+
+- Per [plans/23-saf.md](plans/23-saf.md) *Plugin reopen seam* / *Build order
+  → Session staging* step 2: the `ip_reopen_path` seam only, its own session.
+  A behavior-preserving upstream candidate, no `CONFIG_ANDROID`.
+- **New helper `ip_reopen_path(ip_data, sidecar)`** (`input.c`, declared in
+  `ip.h`): returns a malloc'd path a plugin should (re)open (caller frees).
+  `sidecar == NULL` → reopen the main input; non-NULL `sidecar` → a
+  same-directory companion. Returns `NULL` for `is_url()` inputs (remote/
+  cdda) — the by-name reopens already failed on those, so it's a no-op.
+- **Routed the by-name sites through it**: ffmpeg main open (guarded
+  `!ip_data->remote`, so remote URLs still pass straight to
+  `avformat_open_input`), mp4 main open, and the mad/aac/wavpack id3 tag
+  readers (`sidecar==NULL`). Wavpack's `.wvc` correction file goes through
+  the non-NULL `sidecar` form; wavpack *decode* is untouched (already off
+  `ip_data->fd`).
+- **Inserted as patch 0004, before the Android-IPC patch** — rebased the
+  submodule stack (base→0001-0003→**seam**→old 0004-0013) and regenerated.
+  Renumbering matches the plan: android.sock 0005, drop-remote 0006, browser
+  dir 0011, drop-cdda 0013, accept-removed 0014. `patch.sh check` green.
+- **Built clean** via `./gradlew :app:assembleDebug` (exit 0). Device/codec
+  runtime verification (the *Verify* list) stays Patrick's, next session.
+- Commit: `cmus: route input-plugin reopen through ip_reopen_path seam
+  (patch 0004)`. Next: Session C — SAF transport (0015) + `/saf` VFS (0016).
+
 ## 2026-07-22 — Stage 23 Session A: SAF prep tasks (app-only, built)
 
 - Per [plans/23-saf.md](plans/23-saf.md) *Prep tasks* / *Build order →

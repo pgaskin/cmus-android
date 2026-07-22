@@ -1,7 +1,7 @@
-From 13865e0363a143e9d7159d5546bee301b44ff36b Mon Sep 17 00:00:00 2001
+From 88109e13fb2f224d2ba828405d42334e0349783f Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
-Subject: [PATCH 05/13] drop remote stream support under CONFIG_ANDROID
+Subject: [PATCH 06/14] drop remote stream support under CONFIG_ANDROID
 
 Guard input.c's remote machinery (do_http_get through open_remote plus
 the timeouts/playlist-mime statics) behind #ifndef CONFIG_ANDROID with a
@@ -30,7 +30,7 @@ index 2b5ccf6..14213c1 100644
  		return FILE_TYPE_URL;
  	}
 diff --git a/input.c b/input.c
-index ed07656..0f5e5b9 100644
+index 1923715..cba8a71 100644
 --- a/input.c
 +++ b/input.c
 @@ -103,6 +103,7 @@ static pthread_rwlock_t ip_lock = CMUS_RWLOCK_INITIALIZER;

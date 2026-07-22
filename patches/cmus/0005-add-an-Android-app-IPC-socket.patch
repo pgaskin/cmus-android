@@ -1,7 +1,7 @@
-From 82fa9cc97207a421c391bfc205e79dc7a9e8c790 Mon Sep 17 00:00:00 2001
+From 28a6b505fa0a0745fbacff42ec21d9f358a7c3c1 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
-Subject: [PATCH 04/13] add an Android app IPC socket
+Subject: [PATCH 05/14] add an Android app IPC socket
 
 A unix stream socket at $CMUS_ANDROID_SOCKET (unset = disabled) for the
 Android wrapper app: pushes newline-delimited JSON events (status,
