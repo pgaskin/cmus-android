@@ -111,12 +111,20 @@ changed the design; recorded here with what each unlocked:
   Import = Music folder, connections = other trees, Refresh metadata =
   re-probe the existing library.
 
-## Prep tasks (do first)
+## Prep tasks (do first) — ✅ DONE (Session A, 2026-07-22)
 
 Small, independent cleanups **Patrick asked for and specified**, to land
 before the SAF work proper (each its own small commit). **These are Session A
 (Patrick): implement and commit all of the prep tasks in one session, before
-the reopen seam or any SAF work** — see *Build order → Session staging*:
+the reopen seam or any SAF work** — see *Build order → Session staging*.
+
+**Done 2026-07-22** in `MainActivity` (app-only, no cmus patch): both tasks
+below implemented as specified — rename + a shared `explainThenRun` helper
+(version-acked per-action, not boolean). Message copy is Patrick's final
+wording (the plan's draft copy below is superseded); the Import message omits
+the not-yet-existent "Settings connections / file browser" clause until the
+SAF UI lands (bump the message version and extend the copy then). See
+[status.md](../status.md).
 
 - **Rename the popover item "Update cache" → "Refresh metadata"**
   (`MainActivity`: the `menu.add` label + the `switch` case; the
@@ -691,10 +699,11 @@ unaffected.
 **Session staging (Patrick).** Land the work across at least three sessions,
 each self-contained and committed before the next begins:
 
-1. **Session A — prep tasks only.** Implement *and commit* the *Prep tasks*
-   (the "Refresh metadata" rename + the two explain-on-press dialogs) in one
-   session. They're independent of the SAF work and touch only app code, so
-   they land and get committed on their own, first.
+1. **Session A — prep tasks only. ✅ DONE (2026-07-22).** Implement *and
+   commit* the *Prep tasks* (the "Refresh metadata" rename + the two
+   explain-on-press dialogs) in one session. They're independent of the SAF
+   work and touch only app code, so they land and get committed on their own,
+   first.
 2. **Session B — the reopen seam only.** Implement *and commit* patch 0004
    (`ip_reopen_path`), rebased into place before the Android-IPC patch, in its
    own session. It's a behavior-preserving upstream candidate; verify it

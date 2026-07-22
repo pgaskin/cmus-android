@@ -3,6 +3,35 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-07-22 — Stage 23 Session A: SAF prep tasks (app-only, built)
+
+- Per [plans/23-saf.md](plans/23-saf.md) *Prep tasks* / *Build order →
+  Session staging*: the independent, app-only cleanups that land before any
+  SAF work. No cmus patch, no `patch.sh` touch.
+- **"Update cache" → "Refresh metadata"** (`MainActivity`): the popover
+  label + its `switch` case, and the `updateCache()` toast ("Updating track
+  metadata" → "Refreshing metadata"). Also updated the doc comment and the
+  jobs-edge comment that named the old label. Pure rename — still
+  `update-cache` = `cache_refresh` under the hood.
+- **Explain-on-press dialogs for Import + Refresh metadata**: shared
+  `explainThenRun(prefKey, version, title, message, action)` — shows an
+  explanatory dialog with a "Don't show this again" checkbox, runs the action
+  on Continue, aborts on Cancel. **Version-acked, not boolean** (Patrick):
+  `PREF_ACK_IMPORT`/`PREF_ACK_REFRESH` store the highest `MSG_VERSION_*` the
+  user dismissed; shown iff `acked < current`, so bumping a message's version
+  after editing its copy re-surfaces it once. Both currently version 1.
+- **Message copy (Patrick's exact wording):** Import = "New from the Music
+  folder will be added to the library. Deleted files will not be removed.";
+  Refresh = "Cached tags for files in the library with a changed modification
+  time since the last scan will be updated." (Deliberately omits the plan's
+  "other directories via the file browser / Settings connections" clause —
+  that UI doesn't exist until the SAF sessions; bump `MSG_VERSION_IMPORT` to 2
+  and extend the copy when it lands.)
+- `compileDebugJavaWithJavac` green. **Not yet device-tested** — the dialog
+  should show once per action, checkbox suppresses it thereafter (verify the
+  ack persists across restart). Sessions B (reopen seam 0004) and C+ (SAF
+  transport/VFS + app) follow.
+
 ## 2026-07-19 — UI polish: control-bar toasts + sleep timer to the settings menu (device-confirmed by Patrick)
 
 - **Control-bar toasts** (`ControlBar`): the add/remove, shuffle, and repeat

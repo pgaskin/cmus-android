@@ -30,6 +30,7 @@ import android.view.WindowInsetsAnimation;
 import android.view.WindowInsetsController;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
@@ -87,6 +88,24 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
     /** The joystick center keeps at least this far from the wrapper edges,
      * while dragging and when restoring a saved spot. */
     private static final int JOY_EDGE_DP = 64;
+
+    /** Explain-on-press acks: the highest message version the user has
+     * dismissed with "Don't show again" for each data action. Stored as a
+     * version int, not a boolean, so bumping a message's version (below) after
+     * editing its copy re-shows it once; absent = never acked (shown). */
+    private static final String PREF_ACK_IMPORT = "ack_import_msg";
+    private static final String PREF_ACK_REFRESH = "ack_refresh_msg";
+    /** Current copy version of each explain-on-press message. Bump when the
+     * corresponding *_MESSAGE text changes to re-surface it to users who had
+     * dismissed the old copy. */
+    private static final int MSG_VERSION_IMPORT = 1;
+    private static final int MSG_VERSION_REFRESH = 1;
+    private static final String IMPORT_MESSAGE =
+            "New from the Music folder will be added to the library. "
+            + "Deleted files will not be removed.";
+    private static final String REFRESH_MESSAGE =
+            "Cached tags for files in the library with a changed modification "
+            + "time since the last scan will be updated.";
 
     /** The bundled monospace fonts (assets/fonts, license texts beside them). */
     private static final String[] FONT_NAMES = {
@@ -884,7 +903,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
                 // event-driven by design (Patrick): the diffed jobs event
                 // covers every import trigger, not just our refresh
                 if (Boolean.TRUE.equals(jobsRunning) && !j.running()) {
-                    // any worker job: Import adds and Update cache alike
+                    // any worker job: Import adds and Refresh metadata alike
                     Toast.makeText(this, "Library update finished", Toast.LENGTH_SHORT).show();
                 }
                 jobsRunning = j.running();
@@ -1194,7 +1213,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         menu.getMenu().add("Theme");
         menu.getMenu().add("Font");
         menu.getMenu().add("Import");
-        menu.getMenu().add("Update cache");
+        menu.getMenu().add("Refresh metadata");
         menu.getMenu().add("Sleep timer");
         // the control bar owns the keyboard toggle; when it's hidden the
         // menu is the way in (stage 18)
@@ -1207,8 +1226,12 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
             switch (item.getTitle().toString()) {
                 case "Theme" -> showThemeSelector();
                 case "Font" -> showFontSelector();
-                case "Import" -> refreshTracks();
-                case "Update cache" -> updateCache();
+                case "Import" -> explainThenRun(PREF_ACK_IMPORT,
+                        MSG_VERSION_IMPORT, "Import", IMPORT_MESSAGE,
+                        this::refreshTracks);
+                case "Refresh metadata" -> explainThenRun(PREF_ACK_REFRESH,
+                        MSG_VERSION_REFRESH, "Refresh metadata", REFRESH_MESSAGE,
+                        this::updateCache);
                 case "Sleep timer" -> showSleepDialog();
                 case "Keyboard" -> toggleSoftKeyboard();
                 case "Settings" -> startActivityForResult(
@@ -1268,7 +1291,7 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
     // filename), so this is safely re-tappable with no app-side state
 
     /**
-     * The popover's Update cache: cmus's own update-cache worker job —
+     * The popover's Refresh metadata: cmus's own update-cache worker job —
      * re-reads metadata for changed files and for entries added under
      * skip_track_info (their unset mtime never matches, so no -f needed;
      * -f would re-read the whole library). Completion lands as the usual
@@ -1278,8 +1301,44 @@ public class MainActivity extends Activity implements TerminalViewClient, CmusSe
         if (crashScreen || session == null || !session.isRunning()) {
             return;
         }
-        Toast.makeText(this, "Updating track metadata", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Refreshing metadata", Toast.LENGTH_SHORT).show();
         sendCommand("update-cache");
+    }
+
+    /**
+     * Explain-on-press: the first time a data action is invoked (or the first
+     * time after its message copy is bumped) show an explanatory dialog with a
+     * "Don't show again" checkbox; Continue runs the action, Cancel aborts.
+     * The ack is persisted as the message version the user dismissed (see the
+     * PREF_ACK_* / MSG_VERSION_* fields), so shown iff the acked version is
+     * older than the current one.
+     */
+    private void explainThenRun(String prefKey, int version, String title,
+            String message, Runnable action) {
+        SharedPreferences prefs = CmusService.prefs(this);
+        if (prefs.getInt(prefKey, 0) >= version) {
+            action.run();
+            return;
+        }
+        CheckBox dontShow = new CheckBox(this);
+        dontShow.setText("Don't show this again");
+        // indent the checkbox to line up with the dialog's message body
+        FrameLayout wrap = new FrameLayout(this);
+        wrap.setPadding(dp(24), dp(8), dp(24), 0);
+        wrap.addView(dontShow);
+        // removeDialog = "the current dialog", covered by stop/crash dismissal
+        removeDialog = new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setView(wrap)
+                .setPositiveButton("Continue", (d, w) -> {
+                    if (dontShow.isChecked()) {
+                        prefs.edit().putInt(prefKey, version).apply();
+                    }
+                    action.run();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void refreshTracks() {
