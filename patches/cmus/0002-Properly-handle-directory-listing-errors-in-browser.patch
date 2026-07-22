@@ -1,7 +1,7 @@
 From a413e2ec5ed171928a2f323cd6e5b921da08db49 Mon Sep 17 00:00:00 2001
 From: Patrick Gaskin <patrick@pgaskin.net>
 Date: Mon, 20 Jul 2026 03:43:47 -0400
-Subject: [PATCH 02/14] Properly handle directory listing errors in browser
+Subject: [PATCH 02/15] Properly handle directory listing errors in browser
 
 If a directory isn't accessible, don't leave it in a half-broken state
 with the new path but the old listing. Instead, try the parents until

@@ -1,0 +1,883 @@
+From 6c1b871072c0caa64ea178f5dba85671517d696d Mon Sep 17 00:00:00 2001
+From: "Claude Opus 4.8" <noreply@anthropic.com>
+Date: Wed, 22 Jul 2026 02:41:33 -0400
+Subject: [PATCH 15/15] SAF RPC transport under CONFIG_ANDROID
+
+Add a second, dedicated AF_UNIX channel to the Android app that will
+service the /saf pseudo-paths (patch 0016): directory LIST, file OPEN with
+the fd passed back over SCM_RIGHTS, and STAT. It is kept separate from the
+event/command socket (patch 0005) so a blocking request from the worker or
+player-consumer thread never interleaves with the main loop's command
+stream.
+
+The channel is correlation-id multiplexed: one dedicated reader thread owns
+all recvmsg() (a shared socket carrying passed fds cannot have callers race
+their own replies and steal each other's fds) and hands each reply to the
+waiting issuer through a small id-keyed table guarded by a condvar; senders
+just serialize their request under a mutex and block for the reply. At most
+three threads issue (main/worker/consumer), each waiting before it returns.
+
+Every reply is length-prefixed and self-delimiting, and at most one passed
+fd rides each recvmsg (the kernel won't coalesce a following message that
+carries ancillary data), so the fd always binds to the OPEN reply it belongs
+to. OPEN validates the returned fd is a seekable regular file (fstat +
+S_ISREG), failing a non-seekable provider fd cleanly with a distinct code
+rather than letting a decoder crash mid-read.
+
+Enabled only when $CMUS_ANDROID_SAF_SOCKET is set (the app binds a
+private-dir path and connects); no file-op site calls into it yet, so this
+changes no behavior on its own.
+
+diff --git a/android.c b/android.c
+index 8a180fb..3056ca1 100644
+--- a/android.c
++++ b/android.c
+@@ -185,12 +185,19 @@
+ #include <ctype.h>
+ #include <errno.h>
+ #include <fcntl.h>
++#include <poll.h>
++#include <pthread.h>
++#include <stdint.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/uio.h>
+ #include <sys/un.h>
+ #include <unistd.h>
+ 
++#include "locking.h"
++
+ int android_fd = -1;
+ int android_client_fd = -1;
+ 
+@@ -237,6 +244,8 @@ static int android_rbuf_pos;
+ 
+ static void android_jobs_event(void);
+ static void android_saved_event(int kinds);
++static void saf_init(void);
++static void saf_free(void);
+ 
+ static void android_close_client(void)
+ {
+@@ -252,6 +261,10 @@ void android_init(void)
+ 	struct sockaddr_un addr;
+ 	const char *path = getenv("CMUS_ANDROID_SOCKET");
+ 
++	/* the SAF bridge is an independent channel with its own env var and
++	 * reader thread; bring it up regardless of the event socket */
++	saf_init();
++
+ 	if (!path || !path[0])
+ 		return;
+ 	if (strlen(path) >= sizeof(addr.sun_path)) {
+@@ -296,6 +309,8 @@ void android_free(void)
+ 	}
+ 	free(android_live_filter);
+ 	android_live_filter = NULL;
++
++	saf_free();
+ }
+ 
+ void android_accept(void)
+@@ -884,3 +899,736 @@ void android_flush(void)
+ 		android_write(&buf);
+ 	gbuf_free(&buf);
+ }
++
++/*
++ * ============================ SAF RPC transport ============================
++ *
++ * A dedicated, synchronous, correlation-id-multiplexed RPC channel to the
++ * app that services the /saf pseudo-paths (LIST / OPEN / STAT). See the
++ * header comment on saf_open() for the why; this is the transport, wired to
++ * no file-op site yet (that is patch 0016).
++ *
++ * Wire framing (both directions), all integers little-endian:
++ *
++ *   frame  = u32 payload_len, payload
++ *   request  payload = u32 id, u8 op, u16 path_len, path[path_len]
++ *   reply    payload = u32 id, i32 status, body
++ *              OPEN body = (none; the fd rides SCM_RIGHTS when status == 0)
++ *              STAT body = i64 size, i64 mtime
++ *              LIST body = u32 count, count x { u8 is_dir, i64 size,
++ *                                              i64 mtime, u16 nlen, name }
++ *
++ * The u32 length prefix makes every reply self-delimiting, so the reader
++ * can skip a reply whose id it no longer knows without losing stream sync.
++ *
++ * Concurrency (the part to get right): a single socket carrying replies
++ * *with SCM_RIGHTS fds* cannot have caller threads recvmsg their own
++ * replies — two callers racing recvmsg would steal each other's responses
++ * and passed fds. So one dedicated reader thread owns all recvmsg on the
++ * socket, matches each reply to its waiting caller by id, and hands off the
++ * result (and fd) through a small per-request table guarded by a condvar.
++ * The write side is light: senders serialize their request under saf_mutex
++ * (a stream socket has no message boundaries) and block on their slot's
++ * cond for the reply. At most three threads issue requests (main/worker/
++ * consumer), each waiting for its reply before returning, so the table
++ * stays tiny and the send buffer never backs up.
++ */
++
++/* request op (wire) */
++enum {
++	SAF_OP_LIST = 1,
++	SAF_OP_OPEN = 2,
++	SAF_OP_STAT = 3,
++};
++
++/*
++ * reply status; 0 = ok, positive = error. These are the negated return
++ * values of the public saf_* calls, so a caller may test e.g.
++ * rc == -SAF_ENOTSEEK. (Prefixed, so no clash with <errno.h>'s EIO etc.)
++ */
++enum {
++	SAF_OK		= 0, /* success */
++	SAF_EIO		= 1, /* transport / provider I/O error, or not connected */
++	SAF_ENOENT	= 2, /* no such path */
++	SAF_ENOTSEEK	= 3, /* OPEN returned a non-seekable fd */
++	SAF_ECANCELED	= 4, /* failed by the app's cancel window */
++};
++
++/* guards runaway allocation from a bogus LIST reply */
++#define SAF_MAX_FRAME	(16u * 1024 * 1024)
++/* correlation table size; only the main/worker/consumer threads issue */
++#define SAF_MAX_INFLIGHT 16
++
++/*
++ * One outstanding request. Allocated under saf_mutex by the issuing
++ * thread, filled by the reader thread on the matching reply, then read and
++ * released by the issuer. `done` + `cond` are the handoff; the result
++ * fields are valid once done is set.
++ */
++struct saf_req {
++	uint32_t id;
++	int op;
++	int in_use;
++	int done;
++	int status;
++	int fd;				/* OPEN result, else -1 */
++	int64_t size;			/* STAT result */
++	int64_t mtime;			/* STAT result */
++	struct saf_dirent *entries;	/* LIST result (moved to caller) */
++	size_t count;
++	pthread_cond_t cond;
++};
++
++static int saf_listen_fd = -1;
++static int saf_conn_fd = -1;		/* current app connection, -1 if none */
++static char *saf_socket_path;
++static pthread_t saf_reader;
++static int saf_reader_started;
++static int saf_inited;
++static int saf_wake_pipe[2] = { -1, -1 };
++static int saf_stop;			/* set (+ pipe poked) by saf_free */
++
++static pthread_mutex_t saf_mutex = CMUS_MUTEX_INITIALIZER;
++static pthread_cond_t saf_slot_avail = CMUS_COND_INITIALIZER;
++static struct saf_req saf_slots[SAF_MAX_INFLIGHT];
++static uint32_t saf_next_id = 1;	/* 0 is never a valid id */
++
++int saf_enabled(void)
++{
++	return saf_reader_started;
++}
++
++/* little-endian encode into a request frame */
++static void saf_put_u16(struct gbuf *b, uint16_t v)
++{
++	unsigned char t[2] = { v & 0xff, (v >> 8) & 0xff };
++	gbuf_add_bytes(b, t, sizeof(t));
++}
++
++static void saf_put_u32(struct gbuf *b, uint32_t v)
++{
++	unsigned char t[4] = { v & 0xff, (v >> 8) & 0xff,
++			(v >> 16) & 0xff, (v >> 24) & 0xff };
++	gbuf_add_bytes(b, t, sizeof(t));
++}
++
++/* bounds-checked little-endian decode of a reply body */
++struct saf_cursor {
++	const unsigned char *p;
++	const unsigned char *end;
++	int err;
++};
++
++static uint16_t saf_get_u16(struct saf_cursor *c)
++{
++	uint16_t v;
++	if ((size_t)(c->end - c->p) < 2) {
++		c->err = 1;
++		return 0;
++	}
++	v = (uint16_t)c->p[0] | ((uint16_t)c->p[1] << 8);
++	c->p += 2;
++	return v;
++}
++
++static uint32_t saf_get_u32(struct saf_cursor *c)
++{
++	uint32_t v;
++	if ((size_t)(c->end - c->p) < 4) {
++		c->err = 1;
++		return 0;
++	}
++	v = (uint32_t)c->p[0] | ((uint32_t)c->p[1] << 8) |
++		((uint32_t)c->p[2] << 16) | ((uint32_t)c->p[3] << 24);
++	c->p += 4;
++	return v;
++}
++
++static uint64_t saf_get_u64(struct saf_cursor *c)
++{
++	uint64_t v;
++	if ((size_t)(c->end - c->p) < 8) {
++		c->err = 1;
++		return 0;
++	}
++	v = (uint64_t)c->p[0] | ((uint64_t)c->p[1] << 8) |
++		((uint64_t)c->p[2] << 16) | ((uint64_t)c->p[3] << 24) |
++		((uint64_t)c->p[4] << 32) | ((uint64_t)c->p[5] << 40) |
++		((uint64_t)c->p[6] << 48) | ((uint64_t)c->p[7] << 56);
++	c->p += 8;
++	return v;
++}
++
++void saf_list_free(struct saf_dirent *entries, size_t count)
++{
++	size_t i;
++	for (i = 0; i < count; i++)
++		free(entries[i].name);
++	free(entries);
++}
++
++/* caller holds saf_mutex */
++static void saf_fail_all_locked(int status)
++{
++	int i;
++	for (i = 0; i < SAF_MAX_INFLIGHT; i++) {
++		struct saf_req *r = &saf_slots[i];
++		if (r->in_use && !r->done) {
++			r->status = status;
++			r->done = 1;
++			pthread_cond_signal(&r->cond);
++		}
++	}
++}
++
++/* the reader lost / is dropping the connection: fail everything in flight */
++static void saf_reader_drop(int *pending_fd)
++{
++	cmus_mutex_lock(&saf_mutex);
++	if (saf_conn_fd != -1) {
++		close(saf_conn_fd);
++		saf_conn_fd = -1;
++	}
++	saf_fail_all_locked(SAF_EIO);
++	cmus_mutex_unlock(&saf_mutex);
++	if (*pending_fd != -1) {
++		close(*pending_fd);
++		*pending_fd = -1;
++	}
++}
++
++/*
++ * A complete reply frame. Matches it to its slot by id and fills the
++ * result. `*pending_fd`, if set, is the SCM_RIGHTS fd that arrived at the
++ * start of this reply (see the reader loop) — this frame owns it.
++ */
++static void saf_handle_reply(const unsigned char *buf, size_t len,
++		int *pending_fd)
++{
++	struct saf_cursor c = { buf, buf + len, 0 };
++	uint32_t id = saf_get_u32(&c);
++	int32_t status = (int32_t)saf_get_u32(&c);
++	int fd = *pending_fd;
++	struct saf_req *r = NULL;
++	int i;
++
++	*pending_fd = -1;
++
++	cmus_mutex_lock(&saf_mutex);
++	for (i = 0; i < SAF_MAX_INFLIGHT; i++) {
++		if (saf_slots[i].in_use && !saf_slots[i].done &&
++				saf_slots[i].id == id) {
++			r = &saf_slots[i];
++			break;
++		}
++	}
++	if (!r) {
++		cmus_mutex_unlock(&saf_mutex);
++		d_print("saf: reply for unknown id %u\n", id);
++		if (fd != -1)
++			close(fd);
++		return;
++	}
++
++	if (c.err || status < 0) {
++		r->status = SAF_EIO;
++	} else if (status != SAF_OK) {
++		r->status = status;
++	} else switch (r->op) {
++	case SAF_OP_OPEN:
++		if (fd == -1) {
++			r->status = SAF_EIO;
++		} else {
++			r->fd = fd;
++			fd = -1;
++			r->status = SAF_OK;
++		}
++		break;
++	case SAF_OP_STAT:
++		r->size = (int64_t)saf_get_u64(&c);
++		r->mtime = (int64_t)saf_get_u64(&c);
++		r->status = c.err ? SAF_EIO : SAF_OK;
++		break;
++	case SAF_OP_LIST: {
++		uint32_t n = saf_get_u32(&c);
++		struct saf_dirent *ents = NULL;
++		uint32_t k;
++
++		/* each entry is >= 1 wire byte, so a count exceeding the
++		 * bytes left is bogus — bounds the allocation to the frame */
++		if (c.err || n > (uint32_t)(c.end - c.p)) {
++			r->status = SAF_EIO;
++			break;
++		}
++		if (n)
++			ents = xnew(struct saf_dirent, n);
++		for (k = 0; k < n; k++) {
++			uint8_t is_dir;
++			int64_t sz, mt;
++			uint16_t nl;
++
++			if ((size_t)(c.end - c.p) < 1) {
++				c.err = 1;
++				break;
++			}
++			is_dir = *c.p++;
++			sz = (int64_t)saf_get_u64(&c);
++			mt = (int64_t)saf_get_u64(&c);
++			nl = saf_get_u16(&c);
++			if (c.err || (size_t)(c.end - c.p) < nl) {
++				c.err = 1;
++				break;
++			}
++			ents[k].name = xstrndup((const char *)c.p, nl);
++			ents[k].is_dir = is_dir;
++			ents[k].size = sz;
++			ents[k].mtime = mt;
++			c.p += nl;
++		}
++		if (c.err) {
++			saf_list_free(ents, k);
++			r->status = SAF_EIO;
++		} else {
++			r->entries = ents;
++			r->count = n;
++			r->status = SAF_OK;
++		}
++		break;
++	}
++	default:
++		r->status = SAF_EIO;
++		break;
++	}
++
++	/* a stray fd on a non-OPEN reply (protocol slip) must not leak */
++	if (fd != -1)
++		close(fd);
++
++	r->done = 1;
++	pthread_cond_signal(&r->cond);
++	cmus_mutex_unlock(&saf_mutex);
++}
++
++/*
++ * The reader/dispatcher thread: owns accept() and all recvmsg() on the
++ * bridge socket. It serves one app connection at a time (a reconnect is
++ * accepted after a drop), reads replies with room for one passed fd, and
++ * hands each to saf_handle_reply. saf_free() stops it via the wake pipe.
++ */
++static void *saf_reader_thread(void *arg)
++{
++	unsigned char *rb = NULL;	/* reassembly buffer */
++	size_t rb_len = 0, rb_alloc = 0;
++	int pending_fd = -1;
++
++	while (!__atomic_load_n(&saf_stop, __ATOMIC_RELAXED)) {
++		struct pollfd pfd[2];
++		int have_conn = saf_conn_fd != -1;
++		unsigned char tmp[8192];
++		union {
++			struct cmsghdr align;
++			unsigned char buf[CMSG_SPACE(sizeof(int))];
++		} cmsgu;
++		struct cmsghdr *cmsg;
++		struct iovec iov;
++		struct msghdr msg;
++		ssize_t n;
++		size_t off;
++
++		pfd[0].fd = have_conn ? saf_conn_fd : saf_listen_fd;
++		pfd[0].events = POLLIN;
++		pfd[0].revents = 0;
++		pfd[1].fd = saf_wake_pipe[0];
++		pfd[1].events = POLLIN;
++		pfd[1].revents = 0;
++		if (poll(pfd, 2, -1) == -1) {
++			if (errno == EINTR)
++				continue;
++			break;
++		}
++		if (pfd[1].revents)		/* saf_free poked us: stop */
++			break;
++		if (!pfd[0].revents)
++			continue;
++
++		if (!have_conn) {
++			int fd = accept(saf_listen_fd, NULL, NULL);
++			if (fd == -1) {
++				if (errno == EINTR || errno == EAGAIN ||
++						errno == EWOULDBLOCK)
++					continue;
++				break;
++			}
++			cmus_mutex_lock(&saf_mutex);
++			saf_conn_fd = fd;
++			cmus_mutex_unlock(&saf_mutex);
++			rb_len = 0;		/* a fresh stream */
++			if (pending_fd != -1) {
++				close(pending_fd);
++				pending_fd = -1;
++			}
++			continue;
++		}
++
++		memset(&msg, 0, sizeof(msg));
++		iov.iov_base = tmp;
++		iov.iov_len = sizeof(tmp);
++		msg.msg_iov = &iov;
++		msg.msg_iovlen = 1;
++		msg.msg_control = cmsgu.buf;
++		msg.msg_controllen = sizeof(cmsgu.buf);
++		n = recvmsg(saf_conn_fd, &msg, 0);
++		if (n == -1) {
++			if (errno == EINTR)
++				continue;
++			saf_reader_drop(&pending_fd);
++			rb_len = 0;
++			continue;
++		}
++		if (n == 0) {			/* app closed the connection */
++			saf_reader_drop(&pending_fd);
++			rb_len = 0;
++			continue;
++		}
++
++		/*
++		 * At most one fd per recvmsg: the kernel will not coalesce a
++		 * following message that carries ancillary data, so an fd
++		 * always arrives with the first byte of the reply it belongs
++		 * to. pending_fd therefore rides along until that reply's
++		 * frame completes and saf_handle_reply consumes it.
++		 */
++		for (cmsg = CMSG_FIRSTHDR(&msg); cmsg;
++				cmsg = CMSG_NXTHDR(&msg, cmsg)) {
++			if (cmsg->cmsg_level == SOL_SOCKET &&
++					cmsg->cmsg_type == SCM_RIGHTS) {
++				int got;
++				memcpy(&got, CMSG_DATA(cmsg), sizeof(got));
++				if (pending_fd != -1)
++					close(pending_fd);
++				pending_fd = got;
++			}
++		}
++
++		if (rb_len + (size_t)n > rb_alloc) {
++			rb_alloc = rb_len + (size_t)n;
++			rb = xrealloc(rb, rb_alloc);
++		}
++		memcpy(rb + rb_len, tmp, n);
++		rb_len += n;
++
++		off = 0;
++		while (rb_len - off >= 4) {
++			uint32_t flen = (uint32_t)rb[off] |
++				((uint32_t)rb[off + 1] << 8) |
++				((uint32_t)rb[off + 2] << 16) |
++				((uint32_t)rb[off + 3] << 24);
++			if (flen > SAF_MAX_FRAME) {
++				d_print("saf: oversized frame %u\n", flen);
++				off = rb_len;	/* forces a drop below */
++				saf_reader_drop(&pending_fd);
++				break;
++			}
++			if (rb_len - off - 4 < flen)
++				break;		/* frame still incomplete */
++			saf_handle_reply(rb + off + 4, flen, &pending_fd);
++			off += 4 + flen;
++		}
++		if (off) {
++			memmove(rb, rb + off, rb_len - off);
++			rb_len -= off;
++		}
++	}
++
++	if (pending_fd != -1)
++		close(pending_fd);
++	cmus_mutex_lock(&saf_mutex);
++	if (saf_conn_fd != -1) {
++		close(saf_conn_fd);
++		saf_conn_fd = -1;
++	}
++	saf_fail_all_locked(SAF_EIO);
++	cmus_mutex_unlock(&saf_mutex);
++	free(rb);
++	return NULL;
++}
++
++/* caller holds saf_mutex; blocks briefly if all slots are busy */
++static struct saf_req *saf_alloc_locked(int op)
++{
++	for (;;) {
++		int i;
++		for (i = 0; i < SAF_MAX_INFLIGHT; i++) {
++			struct saf_req *r = &saf_slots[i];
++			if (r->in_use)
++				continue;
++			r->in_use = 1;
++			r->done = 0;
++			r->op = op;
++			r->status = SAF_EIO;
++			r->fd = -1;
++			r->size = 0;
++			r->mtime = 0;
++			r->entries = NULL;
++			r->count = 0;
++			r->id = saf_next_id++;
++			if (saf_next_id == 0)
++				saf_next_id = 1;
++			return r;
++		}
++		if (saf_stop)
++			return NULL;
++		pthread_cond_wait(&saf_slot_avail, &saf_mutex);
++	}
++}
++
++static void saf_release(struct saf_req *r)
++{
++	cmus_mutex_lock(&saf_mutex);
++	if (r->entries) {
++		saf_list_free(r->entries, r->count);
++		r->entries = NULL;
++	}
++	if (r->fd != -1) {
++		close(r->fd);
++		r->fd = -1;
++	}
++	r->in_use = 0;
++	pthread_cond_signal(&saf_slot_avail);
++	cmus_mutex_unlock(&saf_mutex);
++}
++
++static int saf_write_all(int fd, const void *buf, size_t len)
++{
++	const char *p = buf;
++	while (len) {
++		ssize_t rc = write(fd, p, len);
++		if (rc == -1) {
++			if (errno == EINTR)
++				continue;
++			return -1;
++		}
++		p += rc;
++		len -= rc;
++	}
++	return 0;
++}
++
++/*
++ * Send a request and block for its reply. Returns the still-in_use slot
++ * holding the result (caller reads it, then saf_release()s), or NULL on a
++ * transport failure with nothing to release.
++ */
++static struct saf_req *saf_call(int op, const char *path)
++{
++	GBUF(frame);
++	struct saf_req *r;
++	size_t pathlen = strlen(path);
++	uint32_t plen;
++
++	if (pathlen > 0xffff)
++		return NULL;
++
++	cmus_mutex_lock(&saf_mutex);
++	if (saf_conn_fd == -1 || saf_stop) {
++		cmus_mutex_unlock(&saf_mutex);
++		return NULL;
++	}
++	r = saf_alloc_locked(op);
++	if (!r) {
++		cmus_mutex_unlock(&saf_mutex);
++		return NULL;
++	}
++
++	saf_put_u32(&frame, 0);			/* length placeholder */
++	saf_put_u32(&frame, r->id);
++	gbuf_add_ch(&frame, (char)op);
++	saf_put_u16(&frame, (uint16_t)pathlen);
++	gbuf_add_bytes(&frame, path, pathlen);
++	plen = (uint32_t)(frame.len - 4);
++	frame.buffer[0] = plen & 0xff;
++	frame.buffer[1] = (plen >> 8) & 0xff;
++	frame.buffer[2] = (plen >> 16) & 0xff;
++	frame.buffer[3] = (plen >> 24) & 0xff;
++
++	/*
++	 * Serialize the write (a stream socket has no message boundaries).
++	 * A failure here may have put a partial frame on the wire, so drop
++	 * the connection to resync — shutdown() wakes the reader, which does
++	 * the close and fails the rest.
++	 */
++	if (saf_write_all(saf_conn_fd, frame.buffer, frame.len) == -1) {
++		shutdown(saf_conn_fd, SHUT_RDWR);
++		r->status = SAF_EIO;
++		r->done = 1;
++	}
++	gbuf_free(&frame);
++
++	while (!r->done)
++		pthread_cond_wait(&r->cond, &saf_mutex);
++	cmus_mutex_unlock(&saf_mutex);
++	return r;
++}
++
++int saf_open(const char *path)
++{
++	struct saf_req *r = saf_call(SAF_OP_OPEN, path);
++	struct stat st;
++	int fd, status;
++
++	if (!r)
++		return -SAF_EIO;
++	status = r->status;
++	fd = r->fd;
++	r->fd = -1;			/* took ownership */
++	saf_release(r);
++
++	if (status != SAF_OK) {
++		if (fd != -1)
++			close(fd);
++		return -status;
++	}
++	if (fd == -1)
++		return -SAF_EIO;
++
++	/*
++	 * The bridge fd must be a seekable regular file: playback and the
++	 * reopen seam both seek it. A non-seekable provider fd (a pipe from
++	 * a streaming/cloud DocumentsProvider) fails cleanly here rather
++	 * than crashing a decoder mid-read. Materialize-to-tempfile is a
++	 * later increment.
++	 */
++	if (fstat(fd, &st) == -1 || !S_ISREG(st.st_mode)) {
++		close(fd);
++		return -SAF_ENOTSEEK;
++	}
++	return fd;
++}
++
++int saf_stat(const char *path, struct saf_stat *out)
++{
++	struct saf_req *r = saf_call(SAF_OP_STAT, path);
++	int status;
++
++	if (!r)
++		return -SAF_EIO;
++	status = r->status;
++	if (status == SAF_OK) {
++		out->size = r->size;
++		out->mtime = r->mtime;
++	}
++	saf_release(r);
++	return status == SAF_OK ? 0 : -status;
++}
++
++int saf_list(const char *path, struct saf_dirent **entries, size_t *count)
++{
++	struct saf_req *r = saf_call(SAF_OP_LIST, path);
++	int status;
++
++	if (!r)
++		return -SAF_EIO;
++	status = r->status;
++	if (status == SAF_OK) {
++		*entries = r->entries;
++		*count = r->count;
++		r->entries = NULL;	/* moved to caller */
++		r->count = 0;
++	}
++	saf_release(r);
++	return status == SAF_OK ? 0 : -status;
++}
++
++static void saf_init(void)
++{
++	struct sockaddr_un addr;
++	const char *path = getenv("CMUS_ANDROID_SAF_SOCKET");
++	int i;
++
++	if (!path || !path[0])
++		return;
++	if (strlen(path) >= sizeof(addr.sun_path)) {
++		error_msg("CMUS_ANDROID_SAF_SOCKET is too long for sun_path");
++		return;
++	}
++
++	for (i = 0; i < SAF_MAX_INFLIGHT; i++)
++		pthread_cond_init(&saf_slots[i].cond, NULL);
++	saf_inited = 1;
++
++	if (pipe(saf_wake_pipe) == -1) {
++		error_msg("saf wake pipe: %s", strerror(errno));
++		return;
++	}
++
++	memset(&addr, 0, sizeof(addr));
++	addr.sun_family = AF_UNIX;
++	strcpy(addr.sun_path, path);
++
++	/* the app owns the private dir; a leftover socket is always stale */
++	unlink(path);
++
++	saf_listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
++	if (saf_listen_fd == -1) {
++		error_msg("saf socket: %s", strerror(errno));
++		return;
++	}
++	if (bind(saf_listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1 ||
++			listen(saf_listen_fd, 1) == -1) {
++		error_msg("saf socket %s: %s", path, strerror(errno));
++		close(saf_listen_fd);
++		saf_listen_fd = -1;
++		return;
++	}
++	saf_socket_path = xstrdup(path);
++
++	if (pthread_create(&saf_reader, NULL, saf_reader_thread, NULL) != 0) {
++		error_msg("saf reader thread: %s", strerror(errno));
++		close(saf_listen_fd);
++		saf_listen_fd = -1;
++		unlink(saf_socket_path);
++		free(saf_socket_path);
++		saf_socket_path = NULL;
++		return;
++	}
++	saf_reader_started = 1;
++}
++
++static void saf_free(void)
++{
++	int i;
++
++	if (saf_reader_started) {
++		char c = 0;
++		__atomic_store_n(&saf_stop, 1, __ATOMIC_RELAXED);
++		if (saf_wake_pipe[1] != -1)
++			(void)!write(saf_wake_pipe[1], &c, 1);
++		/* release any thread blocked waiting for a free slot */
++		cmus_mutex_lock(&saf_mutex);
++		pthread_cond_broadcast(&saf_slot_avail);
++		cmus_mutex_unlock(&saf_mutex);
++		pthread_join(saf_reader, NULL);
++		saf_reader_started = 0;
++	}
++
++	if (saf_listen_fd != -1) {
++		close(saf_listen_fd);
++		saf_listen_fd = -1;
++	}
++	for (i = 0; i < 2; i++) {
++		if (saf_wake_pipe[i] != -1) {
++			close(saf_wake_pipe[i]);
++			saf_wake_pipe[i] = -1;
++		}
++	}
++	if (saf_socket_path) {
++		unlink(saf_socket_path);
++		free(saf_socket_path);
++		saf_socket_path = NULL;
++	}
++	if (saf_inited) {
++		for (i = 0; i < SAF_MAX_INFLIGHT; i++)
++			pthread_cond_destroy(&saf_slots[i].cond);
++		saf_inited = 0;
++	}
++}
+diff --git a/android.h b/android.h
+index d9a92eb..af425ba 100644
+--- a/android.h
++++ b/android.h
+@@ -18,6 +18,9 @@
+ #ifndef CMUS_ANDROID_H
+ #define CMUS_ANDROID_H
+ 
++#include <stddef.h> /* size_t */
++#include <stdint.h> /* int64_t */
++
+ /* CONFIG_ANDROID is a plain compile definition from the app build (not a
+  * generated config header): upstream builds never define it, keeping this
+  * inert. */
+@@ -55,6 +58,48 @@ void android_colorscheme_event(const char *name);
+ void android_state_dirty(int kinds);
+ void android_editable_dirty(struct editable *e);
+ 
++/*
++ * SAF RPC transport (patch 0015).
++ *
++ * A second, dedicated AF_UNIX channel to the app that services the /saf
++ * pseudo-paths (patch 0016): directory LIST, file OPEN (the fd is passed
++ * back over SCM_RIGHTS), and STAT. It is deliberately separate from the
++ * event/command socket above so that a blocking request issued from the
++ * worker or player-consumer thread never interleaves with the main loop's
++ * command stream, and it is correlation-id multiplexed so the three issuer
++ * threads (main/worker/consumer) don't head-of-line-block each other.
++ *
++ * Enabled only when $CMUS_ANDROID_SAF_SOCKET is set (the app binds a
++ * private-dir path and connects); otherwise every call below fails
++ * cleanly. The /saf VFS hooks that call these land in patch 0016 — this
++ * patch is transport only and changes no file-op behavior on its own.
++ *
++ * All calls block until the app answers (it services SAF on its own
++ * thread and never calls back into cmus, so there is no deadlock) and are
++ * safe to call concurrently from any thread. They return 0 on success and
++ * a negative SAF_E* code on failure (see android.c); -SAF_ENOTSEEK marks
++ * an OPEN that returned a non-seekable fd.
++ */
++struct saf_dirent {
++	char *name;
++	int is_dir;
++	int64_t size;
++	int64_t mtime;
++};
++
++struct saf_stat {
++	int64_t size;
++	int64_t mtime;
++};
++
++int saf_enabled(void);
++/* returns a seekable fd (>= 0) or a negative SAF_E* code */
++int saf_open(const char *path);
++int saf_stat(const char *path, struct saf_stat *st);
++/* on success stores a malloc'd array (free with saf_list_free) + its count */
++int saf_list(const char *path, struct saf_dirent **entries, size_t *count);
++void saf_list_free(struct saf_dirent *entries, size_t count);
++
+ #else
+ 
+ #define android_fd -1

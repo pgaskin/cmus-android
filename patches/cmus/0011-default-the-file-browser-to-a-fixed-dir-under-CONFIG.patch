@@ -1,7 +1,7 @@
 From 6ea6de784d39d258f1b503e8542330b15b10b6f5 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 20:09:09 -0400
-Subject: [PATCH 11/14] default the file browser to a fixed dir under
+Subject: [PATCH 11/15] default the file browser to a fixed dir under
  CONFIG_ANDROID
 
 browser_init() takes its default dir from CMUS_ANDROID_BROWSER_DIR when set,
