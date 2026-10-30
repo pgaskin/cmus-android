@@ -1,7 +1,7 @@
-From cdf7d25adfecbcf53873687a7d3a34cfd75b8984 Mon Sep 17 00:00:00 2001
+From 6c1fd55f2eae96f607ac73fbce256ce6d6eb6687 Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 14:53:47 -0400
-Subject: [PATCH 06/13] save playlists atomically via a temporary file
+Subject: [PATCH 03/10] save playlists atomically via a temporary file
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -20,7 +20,7 @@ rejected — saving playlist X writes X.tmp, which would clobber the
 file of a playlist literally named X.tmp.
 
 diff --git a/cmus.c b/cmus.c
-index 14213c1..c3eec51 100644
+index 14213c1d..c3eec515 100644
 --- a/cmus.c
 +++ b/cmus.c
 @@ -31,6 +31,7 @@
@@ -79,7 +79,7 @@ index 14213c1..c3eec51 100644
  }
  
 diff --git a/pl.c b/pl.c
-index 7ac8348..5ead98b 100644
+index 8ef52ccf..d7cab93e 100644
 --- a/pl.c
 +++ b/pl.c
 @@ -27,6 +27,7 @@
@@ -101,7 +101,7 @@ index 7ac8348..5ead98b 100644
  		pl_load_one(file);
  	}
  	dir_close(&dir);
-@@ -566,6 +571,14 @@ static int pl_check_new_pl_name(const char *name)
+@@ -573,6 +578,14 @@ static int pl_check_new_pl_name(const char *name)
  		return 0;
  	}
  

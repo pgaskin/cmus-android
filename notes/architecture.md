@@ -35,34 +35,11 @@ full plan and rationale; this file describes what currently exists.
   patch files from base..HEAD (`-n` skips regen). `./patch.sh check` is
   read-only; the `:app:patchCheck` Exec task runs it before `preBuild` so
   builds fail with a hint when patches exist but aren't applied.
-- patches/cmus (13; the three upstream-candidate fixes lead the stack so
-  they rebase cleanly and can be pulled straight from Patrick's fork
-  branches, then the Android-only work; the aaudio remap-buffer-size fix
-  that used to lead is merged upstream and is now inside the pinned base,
-  b69fb9c): 0001 (upstream candidate, un-gated, from pgaskin/cmus
-  `fix-wavpack-fd-leak`) closes the `.wvc` correction fd in ip/wavpack's
-  open-failure path (it was leaked once per rejected .wv with a sibling
-  .wvc) and clears ip_data->private there; 0002 (upstream candidate,
-  un-gated, from pgaskin/cmus `fix-opus`) makes ip/opus read the fd through
-  its own read/seek/tell/close callbacks instead of op_fdopen(): that
-  fdopen()ed cmus's fd into a FILE that owned it (and, since the first
-  parameter is an *output*, overwrote the plugin's static callbacks with the
-  stdio ones), so when op_open_callbacks() rejected a truncated/empty/
-  mislabelled .opus the FILE leaked and input.c's ip_reset() close()d the fd
-  underneath it — a fatal fdsan ownership violation on Android (one bad
-  .opus aborted the whole process mid-library-scan; on glibc/musl a FILE
-  leak plus an lseek on a recycled fd number at exit). Also fixes the seek
-  callback to opusfile's 0/-1 contract (it returned the new offset, which
-  never mattered while the callbacks were dead code) and makes the table
-  const. 0003 (upstream candidate, un-gated, from pgaskin/cmus
-  `fix-utf8-invalid-overflow`, cmus/cmus#1520) makes u_print_size() count 4
-  bytes for exactly what u_set_char() prints as `<XX>` — control byte 0x1f
-  and any uchar above 0x10ffff, which is every invalid input byte since
-  u_get_char() returns `byte | U_INVALID_MASK` for those and u_char_size()
-  sized that at 1 — so u_str_print_size() no longer undersizes the buffers
-  gbuf_add_ustr() (every formatted UI line), mpris.c and android.c's
-  android_json_str() allocate from it (heap/stack overflow on non-UTF-8
-  strings). 0004 adds the app IPC socket (android.c/android.h + hook
+- patches/cmus (10; Android work plus one upstream candidate, 0003. The fixes that
+  used to lead the stack (aaudio remap buffer size, wavpack .wvc fd leak,
+  opus callbacks/fdsan, invalid-UTF-8 print size = cmus/cmus#1520) are
+  all merged upstream and inside the pinned base, v2.13.0): 0001 adds the
+  app IPC socket (android.c/android.h + hook
   hunks in ui_curses.c/command_mode.c — including a view event out of
   set_view() — + a player_pos_exact() wrapper in player.c/h reading the
   fractional position under player_lock, since player_info.pos is whole
@@ -105,7 +82,10 @@ full plan and rationale; this file describes what currently exists.
   for the *current* selection (stage 21, the floating-joystick /
   mouse=false path — no button report can reach a non-tracking cmus),
   reusing android_selected_event so it emits nothing exactly where the
-  right-click did; verbatim-name playlist add/delete; a tty-size
+  right-click did; verbatim-name playlist add/delete, the add marking
+  the target and restoring the mark with auto_mark_selected_playlist
+  held off, since with it on marking also selects the target in the
+  playlist view and swaps out the selection being added; a tty-size
   re-check the app sends after every pty resize — a SIGWINCH can beat
   cmus's handler install or its select entry, so update_size() sets
   the flag and the line itself is the wakeup]. player_pos_exact
@@ -115,15 +95,15 @@ full plan and rationale; this file describes what currently exists.
   blocking get_next callback that only the main loop can answer — a
   blocking lock there deadlocked the whole player (stage-16 fix).
   Everything guarded by CONFIG_ANDROID so the patched tree
-  still builds with the upstream Makefile), 0005 removes remote-stream
+  still builds with the upstream Makefile), 0002 removes remote-stream
   support (input.c remote machinery behind `#ifndef CONFIG_ANDROID`,
   cmus_detect_ft's http branch out) so http.c drops from the link,
-  0006 (upstream candidate, un-gated) makes do_cmus_save atomic —
+  0003 (upstream candidate, un-gated) makes do_cmus_save atomic —
   write `<filename>.tmp` + rename like every other state writer
   (lib.pl/queue.pl/playlists were the only in-place O_TRUNC writers),
   with pl_load_all skipping `*.tmp` leftovers and .tmp-suffixed
   playlist names rejected (saving playlist X writes X.tmp, which
-  would clobber a playlist named X.tmp), 0007 (Android-only, gated on
+  would clobber a playlist named X.tmp), 0004 (Android-only, gated on
   CONFIG_STATIC_PLUGINS) links every input/output plugin into the cmus
   binary instead of dlopen()ing them: each plugin's fixed ABI symbols
   (ip_ops/ip_priority/… — identical across plugins) are renamed to
@@ -132,31 +112,31 @@ full plan and rationale; this file describes what currently exists.
   ip_load_plugins/op_load_plugins walk in place of the CMUS_LIB_DIR scan
   (the upstream Makefile leaves the macro unset and keeps the dlopen
   path). The rest are app-hardening/cleanup, all gated on CONFIG_ANDROID so
-  the upstream Makefile is unaffected: 0008 drops the built-in cmus-remote
+  the upstream Makefile is unaffected: 0005 drops the built-in cmus-remote
   socket server (every server_* reference in ui_curses.c behind #ifndef
   CONFIG_ANDROID — the select set, server_init/exit, the --listen flag and
   its default socket path) so server.c leaves the link like http.c did —
-  the app has its own IPC socket; 0009 routes debug output to logcat (tag
+  the app has its own IPC socket; 0006 routes debug output to logcat (tag
   `cmus`): d_print at debug level, gated by a flag debug_init() reads once
   from CMUS_ANDROID_DEBUG_LOG so early logs get through, and _debug_bug at
-  error level always; 0010 pins the file browser's default dir: browser_init()
+  error level always; 0007 pins the file browser's default dir: browser_init()
   reads CMUS_ANDROID_BROWSER_DIR and resume_load() skips restoring the saved
   browser-dir so the app-chosen dir wins every launch (the app sets the music
-  folder, or the storage root when all-files access is granted); 0011 drops
+  folder, or the storage root when all-files access is granted); 0008 drops
   the only spawn() callers — the run/shell commands + their table rows and the
   status_display_program option/invocations — so cmus runs no external
   processes (spawn.c is left pristine for the upstream Makefile but the app
-  build no longer compiles it); 0012 drops CD-audio (no cdio plugin is built,
+  build no longer compiles it); 0009 drops CD-audio (no cdio plugin is built,
   so cdda:// can never play): the FILE_TYPE_CDDA detect branch, the
   cdda_device option, job.c's add_cdda + dispatch, and input.c's cdda open
   path, which removes the last discid.c references so it too leaves the build;
-  0013 makes option_set accept-and-ignore the specific removed option names
+  0010 makes option_set accept-and-ignore the specific removed option names
   (device, status_display_program) so an autosave/rc from an older build
   doesn't error on their stale `set` lines (other unknowns still error). The
   protocol comment atop android.c is the contract the Java client codes
   against. Amending an existing patch = fixup commit in the submodule +
   `git rebase --autosquash base`, then ./patch.sh regen.
-- Pins: cmus master b69fb9c (2026-09-24; the rest 2026-07-18), ncurses snapshot 87c2c84,
+- Pins: cmus v2.13.0 521444c (2026-10-30; the rest 2026-07-18), ncurses snapshot 87c2c84,
   libogg v1.3.6, libvorbis v1.3.7, opus v1.6.1, opusfile master 6dfd29e,
   flac 1.5.0, libmad 0.16.4 be34ec9 (the codeberg tenacityteam fork —
   the github URL silently redirects to libid3tag), wavpack 5.9.0,
@@ -191,14 +171,14 @@ full plan and rationale; this file describes what currently exists.
   ext-colors, no trace/ticlib/driver); iconv is lib/iconv.c +
   localcharset.c with a handwritten bionic config.h.
 - `native/cmus/`: cmus core (the Makefile's cmus-y set, mpris off, and
-  http.c/server.c/spawn.c/discid.c out — server by 0008, the last two by
-  0011/0012 which strip their callers, + the patch's android.c;
+  http.c/server.c/spawn.c/discid.c out — server by 0005, the last two by
+  0008/0009 which strip their callers, + the patch's android.c;
   `CONFIG_ANDROID` set as a plain compile definition on the core only; links
-  `-llog` for the logcat debug output of patch 0009) as an
+  `-llog` for the logcat debug output of patch 0006) as an
   executable named `libcmus.so`, parked in CMAKE_LIBRARY_OUTPUT_DIRECTORY,
   which AGP packages as-is; the 9 ip plugins (flac vorbis opus mad wavpack
   aac mp4 wav cue) + op/aaudio are compiled straight into that binary
-  (patch 0007 / CONFIG_STATIC_PLUGINS) as per-plugin OBJECT libs whose
+  (patch 0004 / CONFIG_STATIC_PLUGINS) as per-plugin OBJECT libs whose
   fixed ABI symbols are `-D`-renamed to `<name>_ip_ops` etc. to avoid
   collisions, with the codec static libs linked onto the object lib (for
   their header dirs) and onto cmus (for the link) — so there's a single
@@ -226,16 +206,16 @@ full plan and rationale; this file describes what currently exists.
   `nativeLibraryDir/libcmus.so` in a pty (env: HOME/TMPDIR/TERM/
   TERMINFO/CMUS_{HOME,DATA_DIR} pointing into the
   `filesDir/.cmus/` dotfolder (stage 18; CMUS_LIB_DIR dropped with the
-  plugin .so files — patch 0007 builds them into the binary) +
+  plugin .so files — patch 0004 builds them into the binary) +
   `CMUS_ANDROID_SOCKET=<filesDir>/.cmus/android.sock`, the app IPC
   socket — beside home, not in it, so zip exports of the config never
   pick up socket files, + `CMUS_ANDROID_{EXT_FILES,EXT,FILES}`, the
   pl_env base vars — names permanent, most-specific first, + a conditional
   `CMUS_ANDROID_DEBUG_LOG=1` when the debuggable-only debug-logging toggle
-  is on, read once at startup by patch 0009 so a change needs a respawn, +
+  is on, read once at startup by patch 0006 so a change needs a respawn, +
   `CMUS_ANDROID_BROWSER_DIR` = the storage root when the optional all-files
   access (MANAGE_EXTERNAL_STORAGE, granted from settings) is on else the
-  shared Music folder, pinned as the browser default every launch by 0010;
+  shared Music folder, pinned as the browser default every launch by 0007;
   cmus reads these dirs directly — MediaProvider's FUSE mount honors the
   app's READ_MEDIA_AUDIO per-process, so no MediaStore is needed — while
   import still targets only Music),
@@ -315,7 +295,8 @@ full plan and rationale; this file describes what currently exists.
   for raw command lines (rejects newline/overlong), self-reconnecting
   (100ms → 1s; every connect gets a full snapshot, so no state
   crosses connections). Positions are fractional seconds (double);
-  position events still tick at whole-second changes (≤1/s).
+  position events still tick at whole-second changes (≤1/s), plus
+  one per seek (upstream sets position_changed on every seek since 2.13).
 - `CmusTheme` — chrome-relevant color_* options resolved to ARGB (record
   built from an Options event + the live palette; equality = change
   detection, including palette pushes moving ARGB under unchanged
@@ -652,12 +633,7 @@ full plan and rationale; this file describes what currently exists.
 ## Coming next (see overview stages)
 
 Ogg/opus embedded art (20), polish/verify (21). Upstream submissions
-pending: 0006 (atomic playlist saves);
-0001/0002/0003 (wavpack .wvc leak, opus callbacks/fdsan, invalid-UTF-8
-print size = cmus/cmus#1520) are on Patrick's fork as `fix-wavpack-fd-leak`
-/ `fix-opus` / `fix-utf8-invalid-overflow` — pull from there if they change
-(cherry-pick onto the last upstream candidate, `git rebase --onto`,
-`./patch.sh cmus`). Once one merges upstream, bump the pin to it: `git
-update-index --cacheinfo 160000,<sha>,third_party/cmus`, `git rebase --onto
-origin/master base HEAD` (git drops the merged patch), `git tag -f base`,
-`./patch.sh cmus`, renumber here.
+pending: 0003 (atomic playlist saves). To bump the pin: `git update-index
+--cacheinfo 160000,<sha>,third_party/cmus`, `git rebase --onto <sha> base
+HEAD` (git drops merged patches), `git tag -f base <sha>`, `./patch.sh
+cmus`, renumber here.

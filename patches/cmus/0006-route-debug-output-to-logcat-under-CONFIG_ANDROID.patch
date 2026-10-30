@@ -1,7 +1,7 @@
-From 9a90cf0c78d96c06ab1c1539d629d375787d0408 Mon Sep 17 00:00:00 2001
+From 0d39a2486ff6c754e0c6a0f1f65b3def99afa1bf Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:51:10 -0400
-Subject: [PATCH 09/13] route debug output to logcat under CONFIG_ANDROID
+Subject: [PATCH 06/10] route debug output to logcat under CONFIG_ANDROID
 
 Under CONFIG_ANDROID, d_print goes to logcat (tag "cmus") at debug level,
 gated by a flag read once in debug_init() from CMUS_ANDROID_DEBUG_LOG so
@@ -10,7 +10,7 @@ regardless of the flag, then exit(127) as before. Non-Android builds keep
 the original cmus-debug.txt/stderr behavior.
 
 diff --git a/debug.c b/debug.c
-index 6e114b6..291532b 100644
+index 6e114b68..291532b2 100644
 --- a/debug.c
 +++ b/debug.c
 @@ -24,6 +24,63 @@

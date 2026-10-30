@@ -3,6 +3,38 @@
 Newest entries first. One entry per work session/stage; enough context to
 pick up where things left off.
 
+## 2026-10-30 — cmus updated to v2.13.0: 0001/0002/0003 merged upstream (built, not device-tested)
+
+- **Pin:** third_party/cmus gitlink b69fb9cd → 521444c8 (v2.13.0, also
+  upstream master). Upstream merged our wavpack .wvc leak, opus
+  callbacks/fdsan, and invalid-UTF-8 fixes; `git rebase --onto v2.13.0
+  base` dropped all three. `base` re-tagged.
+- **Conflict:** ui_curses.c update(): upstream moved mpris_seeked() out
+  of player_seek() into update() (new player_info.position_seeked), right
+  above the `needs_spawn` hunk of the run/shell/status_display_program
+  patch. Kept both.
+- **Behavior:** _consumer_position_update() now sets position_changed on
+  every seek, even within the same second, so the IPC `position` event
+  also fires per seek; protocol comment in android.c updated (fixup into
+  the IPC patch). New upstream option auto_mark_selected_playlist (left
+  at upstream's default, off) rides the generic options echo, but with
+  it on pl_set_marked_pl_by_name() also moves the playlist-list
+  selection, which repoints pl_visible. android_pl_add marks the target
+  before collecting the selection, so from the playlist view it added
+  the target's own selected rows instead of the user's. Fixed by holding
+  the option off across the mark/add/restore (fixup into the IPC patch).
+  Other new-in-2.13 paths checked against the stack: the `:clear`
+  split (no callers in android.c or the app; editable_clear still hits
+  the dirty hook for non-visible playlists), pl_delete's selection move
+  (upstream re-syncs the mark via sel_changed), and pl-create +
+  android-pl-add from the new-playlist dialog (pl_create doesn't move
+  the selection).
+- **Stack:** 10 patches, everything shifts down three — 0001 IPC socket
+  … 0010 removed-options. architecture.md renumbered; entries below keep
+  their historical numbers. VERSION string is now `v2.13.0-521444c`.
+- **Verified:** `:app:assembleDebug` green, patches apply from a pristine
+  checkout, `./patch.sh check` OK.
+
 ## 2026-09-24 — cmus rebased onto upstream b69fb9c: 0001 (aaudio remap buffer size) merged (built)
 
 - **Pin:** third_party/cmus gitlink 293d4935 → b69fb9cd ("op/aaudio: fix

@@ -1,7 +1,7 @@
-From 0f8886b2e6294ed8d9714e25c4f593e5afbd6dca Mon Sep 17 00:00:00 2001
+From 3a5f13b726c2e50a2521109ff9c98ca77004e689 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:51:10 -0400
-Subject: [PATCH 08/13] drop the cmus-remote socket server under CONFIG_ANDROID
+Subject: [PATCH 05/10] drop the cmus-remote socket server under CONFIG_ANDROID
 
 The app talks to cmus over its own IPC socket (patch 0001); the built-in
 cmus-remote UNIX/TCP server is unused and just opens an attack surface, so
@@ -11,7 +11,7 @@ its default socket path) so server.c drops from the link, mirroring the
 remote-stream removal. The upstream Makefile keeps building it.
 
 diff --git a/ui_curses.c b/ui_curses.c
-index 211d061..73692b8 100644
+index ca46bbc9..115b9166 100644
 --- a/ui_curses.c
 +++ b/ui_curses.c
 @@ -40,7 +40,9 @@
@@ -34,7 +34,7 @@ index 211d061..73692b8 100644
  
  /* used for messages to the client */
  static int client_fd = -1;
-@@ -2238,7 +2242,11 @@ static void main_loop(void)
+@@ -2243,7 +2247,11 @@ static void main_loop(void)
  		fd_high = (fd); \
  } while(0)
  
@@ -46,7 +46,7 @@ index 211d061..73692b8 100644
  	while (cmus_running) {
  		fd_set set;
  		struct timeval tv;
-@@ -2246,8 +2254,10 @@ static void main_loop(void)
+@@ -2251,8 +2259,10 @@ static void main_loop(void)
  		int i;
  		int nr_fds_vol = 0, fds_vol[NR_MIXER_FDS];
  		int nr_fds_out = 0, fds_out[NR_MIXER_FDS];
@@ -57,7 +57,7 @@ index 211d061..73692b8 100644
  
  		player_info_snapshot();
  
-@@ -2275,16 +2285,20 @@ static void main_loop(void)
+@@ -2280,16 +2290,20 @@ static void main_loop(void)
  		SELECT_ADD_FD(0);
  		SELECT_ADD_FD(job_fd);
  		SELECT_ADD_FD(cmus_next_track_request_fd);
@@ -78,7 +78,7 @@ index 211d061..73692b8 100644
  		if (!soft_vol) {
  			nr_fds_vol = mixer_get_fds(MIXER_FDS_VOLUME, fds_vol);
  			if (nr_fds_vol <= 0) {
-@@ -2343,6 +2357,7 @@ static void main_loop(void)
+@@ -2348,6 +2362,7 @@ static void main_loop(void)
  				clear_pipe(fds_out[i], -1);
  			}
  		}
@@ -86,7 +86,7 @@ index 211d061..73692b8 100644
  		if (FD_ISSET(server_socket, &set))
  			server_accept();
  
-@@ -2355,6 +2370,7 @@ static void main_loop(void)
+@@ -2360,6 +2375,7 @@ static void main_loop(void)
  				server_serve(client);
  			item = next;
  		}
@@ -94,7 +94,7 @@ index 211d061..73692b8 100644
  
  		if (FD_ISSET(0, &set))
  			u_getch();
-@@ -2468,7 +2484,9 @@ static void init_all(void)
+@@ -2473,7 +2489,9 @@ static void init_all(void)
  	main_thread = pthread_self();
  	cmus_track_request_init();
  
@@ -104,7 +104,7 @@ index 211d061..73692b8 100644
  
  	/* does not select output plugin */
  	player_init();
-@@ -2587,7 +2605,9 @@ static void exit_all(void)
+@@ -2592,7 +2610,9 @@ static void exit_all(void)
  		resume_exit();
  	options_exit();
  
@@ -114,7 +114,7 @@ index 211d061..73692b8 100644
  	cmus_exit();
  	if (resume_cmus)
  		cmus_save(play_queue_for_each, play_queue_autosave_filename,
-@@ -2607,7 +2627,9 @@ static void exit_all(void)
+@@ -2612,7 +2632,9 @@ static void exit_all(void)
  }
  
  enum {
@@ -124,7 +124,7 @@ index 211d061..73692b8 100644
  	FLAG_PLUGINS,
  	FLAG_SHOW_CURSOR,
  	FLAG_HELP,
-@@ -2616,7 +2638,9 @@ enum {
+@@ -2621,7 +2643,9 @@ enum {
  };
  
  static struct option options[NR_FLAGS + 1] = {
@@ -134,7 +134,7 @@ index 211d061..73692b8 100644
  	{ 0, "plugins", 0 },
  	{ 0, "show-cursor", 0 },
  	{ 0, "help", 0 },
-@@ -2665,9 +2689,11 @@ int main(int argc, char *argv[])
+@@ -2670,9 +2694,11 @@ int main(int argc, char *argv[])
  		case FLAG_PLUGINS:
  			list_plugins = 1;
  			break;
@@ -146,7 +146,7 @@ index 211d061..73692b8 100644
  		case FLAG_SHOW_CURSOR:
  			show_cursor = 1;
  			break;
-@@ -2688,8 +2714,10 @@ int main(int argc, char *argv[])
+@@ -2693,8 +2719,10 @@ int main(int argc, char *argv[])
  		using_utf8 = 1;
  
  	misc_init();

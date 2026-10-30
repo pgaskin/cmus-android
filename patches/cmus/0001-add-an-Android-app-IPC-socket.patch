@@ -1,7 +1,7 @@
-From 5076d815e84f758c746ee712e4b0e28b63352148 Mon Sep 17 00:00:00 2001
+From 3223a52d565ec25df8bade6c9bda517306b9e2ba Mon Sep 17 00:00:00 2001
 From: Claude Fable 5 <noreply@anthropic.com>
 Date: Sat, 18 Jul 2026 16:29:26 -0400
-Subject: [PATCH 04/13] add an Android app IPC socket
+Subject: [PATCH 01/10] add an Android app IPC socket
 
 A unix stream socket at $CMUS_ANDROID_SOCKET (unset = disabled) for the
 Android wrapper app: pushes newline-delimited JSON events (status,
@@ -15,10 +15,10 @@ app build sets; upstream builds never define it and stay unaffected.
 
 diff --git a/android.c b/android.c
 new file mode 100644
-index 0000000..8a180fb
+index 00000000..2ca4b405
 --- /dev/null
 +++ b/android.c
-@@ -0,0 +1,886 @@
+@@ -0,0 +1,891 @@
 +/*
 + * Copyright 2026 Various Authors
 + *
@@ -58,8 +58,8 @@ index 0000000..8a180fb
 + *       Tag keys are as stored in the file, lowercased by cmus, and may
 + *       repeat (e.g. multiple artists).
 + *   {"type":"position","position":n.nnn}
-+ *       position advance/seek, sent when the whole second changes
-+ *       (<= 1/s while playing) but carrying the exact fractional
++ *       position advance/seek, sent when the whole second changes or
++ *       on any seek (<= 1/s while playing) but carrying the exact fractional
 + *       position so clients animating between events don't jump on
 + *       rebase; only sent when no status event is sent this flush
 + *       (status carries position too)
@@ -397,18 +397,23 @@ index 0000000..8a180fb
 +/*
 + * The android-pl-add input line: cmus can only add to the *marked*
 + * playlist, so mark the target by name, add the selection, and put the
-+ * mark back where the user had it.
++ * mark back where the user had it. auto_mark_selected_playlist is off
++ * meanwhile, since with it marking also selects (and shows) the target
++ * in the playlist view, which would swap out the selection being added.
 + */
 +static void android_pl_add(const char *name)
 +{
 +	char *saved = xstrdup(pl_marked_pl_name());
++	int auto_mark = auto_mark_selected_playlist;
 +
++	auto_mark_selected_playlist = 0;
 +	pl_set_marked_pl_by_name(name);
 +	if (strcmp(pl_marked_pl_name(), name) == 0)
 +		android_for_each_sel(android_pl_add_cb, NULL);
 +	else
 +		error_msg("couldn't find a playlist named '%s' to add to", name);
 +	pl_set_marked_pl_by_name(saved);
++	auto_mark_selected_playlist = auto_mark;
 +	free(saved);
 +}
 +
@@ -907,7 +912,7 @@ index 0000000..8a180fb
 +}
 diff --git a/android.h b/android.h
 new file mode 100644
-index 0000000..d9a92eb
+index 00000000..d9a92eb4
 --- /dev/null
 +++ b/android.h
 @@ -0,0 +1,76 @@
@@ -988,7 +993,7 @@ index 0000000..d9a92eb
 +
 +#endif
 diff --git a/cache.c b/cache.c
-index e76cfc4..38034b1 100644
+index e76cfc41..38034b10 100644
 --- a/cache.c
 +++ b/cache.c
 @@ -17,6 +17,7 @@
@@ -1028,7 +1033,7 @@ index e76cfc4..38034b1 100644
  				if (track_info_unique_ref(ti)) {
  					track_info_unref(ti);
 diff --git a/command_mode.c b/command_mode.c
-index 5ca854f..292ae2d 100644
+index be105d67..6da843c2 100644
 --- a/command_mode.c
 +++ b/command_mode.c
 @@ -17,6 +17,7 @@
@@ -1039,7 +1044,7 @@ index 5ca854f..292ae2d 100644
  #include "search_mode.h"
  #include "cmdline.h"
  #include "options.h"
-@@ -786,8 +787,11 @@ static void cmd_colorscheme(char *arg)
+@@ -788,8 +789,11 @@ static void cmd_colorscheme(char *arg)
  	/* so incomplete themes don't leave behind old colors */
  	colors_reset();
  
@@ -1052,7 +1057,7 @@ index 5ca854f..292ae2d 100644
  }
  
  /*
-@@ -2977,6 +2981,11 @@ void run_parsed_command(char *cmd, char *arg)
+@@ -2978,6 +2982,11 @@ void run_parsed_command(char *cmd, char *arg)
  		}
  		i++;
  	}
@@ -1064,7 +1069,7 @@ index 5ca854f..292ae2d 100644
  }
  
  void run_command(const char *buf)
-@@ -3189,6 +3198,14 @@ void commands_init(void)
+@@ -3190,6 +3199,14 @@ void commands_init(void)
  	history_load(&cmd_history, cmd_history_filename, 2000);
  }
  
@@ -1078,9 +1083,9 @@ index 5ca854f..292ae2d 100644
 +
  void commands_exit(void)
  {
- 	view_clear(TREE_VIEW);
+ 	view_clear(TREE_VIEW, 1);
 diff --git a/command_mode.h b/command_mode.h
-index a017954..cdbd1be 100644
+index d443d937..801c8fad 100644
 --- a/command_mode.h
 +++ b/command_mode.h
 @@ -62,6 +62,9 @@ void command_mode_key(int key);
@@ -1094,7 +1099,7 @@ index a017954..cdbd1be 100644
  char **parse_cmd(const char *cmd, int *args_idx, int *ac);
  void run_parsed_command(char *cmd, char *arg);
 diff --git a/editable.c b/editable.c
-index 065c4f9..8ab5055 100644
+index 065c4f98..8ab50557 100644
 --- a/editable.c
 +++ b/editable.c
 @@ -17,6 +17,7 @@
@@ -1157,7 +1162,7 @@ index 065c4f9..8ab5055 100644
  
  	if (editable_owns_shared(e)) {
 diff --git a/history.c b/history.c
-index 1d7195e..23a6628 100644
+index 1d7195ef..23a6628d 100644
 --- a/history.c
 +++ b/history.c
 @@ -17,6 +17,7 @@
@@ -1180,7 +1185,7 @@ index 1d7195e..23a6628 100644
  	list_add(&new->node, &history->head);
  	history->lines++;
 diff --git a/keys.c b/keys.c
-index a4862e8..c6894a8 100644
+index a4862e80..c6894a84 100644
 --- a/keys.c
 +++ b/keys.c
 @@ -20,6 +20,7 @@
@@ -1204,7 +1209,7 @@ index a4862e8..c6894a8 100644
  	if (handle_key(key_bindings[c], k))
  		return;
 diff --git a/lib.c b/lib.c
-index f93e649..8b66ab5 100644
+index f93e649c..8b66ab53 100644
 --- a/lib.c
 +++ b/lib.c
 @@ -17,6 +17,7 @@
@@ -1235,7 +1240,7 @@ index f93e649..8b66ab5 100644
  		}
  		entryp = &e->next;
 diff --git a/pl.c b/pl.c
-index acf29f6..7ac8348 100644
+index be5b7f72..8ef52ccf 100644
 --- a/pl.c
 +++ b/pl.c
 @@ -17,6 +17,7 @@
@@ -1246,7 +1251,7 @@ index acf29f6..7ac8348 100644
  #include "prog.h"
  #include "editable.h"
  #include "options.h"
-@@ -444,6 +445,8 @@ static void pl_save_all(void)
+@@ -457,6 +458,8 @@ static void pl_save_all(void)
  
  static void pl_delete(struct playlist *pl)
  {
@@ -1255,7 +1260,7 @@ index acf29f6..7ac8348 100644
  	if (list_len(&pl_head) == 1)
  		pl_create_default();
  
-@@ -659,6 +662,7 @@ void pl_import(const char *path)
+@@ -667,6 +670,7 @@ void pl_import(const char *path)
  	cmus_add(pl_add_cb, path, FILE_TYPE_PL, JOB_TYPE_PL, 0, pl);
  	list_add_tail(&pl->node, &pl_head);
  	pl_list_win->changed = 1;
@@ -1263,7 +1268,7 @@ index acf29f6..7ac8348 100644
  
  	free(name);
  }
-@@ -789,6 +793,7 @@ void pl_rename_selected_pl(const char *name)
+@@ -797,6 +801,7 @@ void pl_rename_selected_pl(const char *name)
  
  	free(pl_visible->name);
  	pl_visible->name = xstrdup(name);
@@ -1271,7 +1276,7 @@ index acf29f6..7ac8348 100644
  
  	pl_mark_for_redraw();
  }
-@@ -989,6 +994,7 @@ void pl_create(const char *name)
+@@ -999,6 +1004,7 @@ void pl_create(const char *name)
  	struct playlist *pl = pl_new(name);
  	list_add_tail(&pl->node, &pl_head);
  	pl_list_win->changed = 1;
@@ -1279,7 +1284,7 @@ index acf29f6..7ac8348 100644
  }
  
  int pl_visible_is_marked(void)
-@@ -1012,6 +1018,17 @@ void pl_set_marked_pl_by_name(const char *name)
+@@ -1028,6 +1034,17 @@ void pl_set_marked_pl_by_name(const char *name)
  	}
  }
  
@@ -1298,10 +1303,10 @@ index acf29f6..7ac8348 100644
  {
  	return pl_playing ? pl_playing->name : NULL;
 diff --git a/pl.h b/pl.h
-index c2e60e9..2a28261 100644
+index fe1404bc..57fbadee 100644
 --- a/pl.h
 +++ b/pl.h
-@@ -72,6 +72,10 @@ int pl_get_cursor_in_track_window(void);
+@@ -74,6 +74,10 @@ int pl_get_cursor_in_track_window(void);
  int pl_visible_is_marked(void);
  const char *pl_marked_pl_name(void);
  void pl_set_marked_pl_by_name(const char *name);
@@ -1313,10 +1318,10 @@ index c2e60e9..2a28261 100644
  int pl_playing_pl_row(void);
  
 diff --git a/player.c b/player.c
-index 383fd94..d575069 100644
+index 9e02112f..7042f9cb 100644
 --- a/player.c
 +++ b/player.c
-@@ -1280,11 +1280,19 @@ void player_seek(double offset, int relative, int start_playing)
+@@ -1289,11 +1289,19 @@ void player_seek(double offset, int relative, int start_playing)
  				player_unlock();
  				return;
  			}
@@ -1336,7 +1341,7 @@ index 383fd94..d575069 100644
  		}
  /* 		d_print("seeking %g/%g (%g from eof)\n", new_pos, duration, duration - new_pos); */
  		rc = ip_seek(ip, new_pos);
-@@ -1309,6 +1317,37 @@ void player_seek(double offset, int relative, int start_playing)
+@@ -1317,6 +1325,37 @@ void player_seek(double offset, int relative, int start_playing)
  	player_unlock();
  }
  
@@ -1375,10 +1380,10 @@ index 383fd94..d575069 100644
   * change output plugin without stopping playback
   */
 diff --git a/player.h b/player.h
-index 9a7b39b..9d72654 100644
+index 2eb65ef7..9bfecee3 100644
 --- a/player.h
 +++ b/player.h
-@@ -101,6 +101,9 @@ void player_stop(void);
+@@ -104,6 +104,9 @@ void player_stop(void);
  void player_pause(void);
  void player_pause_playback(void);
  void player_seek(double offset, int relative, int start_playing);
@@ -1389,7 +1394,7 @@ index 9a7b39b..9d72654 100644
  void player_set_buffer_chunks(unsigned int nr_chunks);
  int player_get_buffer_chunks(void);
 diff --git a/search_mode.c b/search_mode.c
-index f8d8fd5..b8e837d 100644
+index f8d8fd50..b8e837de 100644
 --- a/search_mode.c
 +++ b/search_mode.c
 @@ -325,6 +325,14 @@ void search_mode_init(void)
@@ -1408,7 +1413,7 @@ index f8d8fd5..b8e837d 100644
  {
  	history_save(&search_history);
 diff --git a/search_mode.h b/search_mode.h
-index 9b55874..4a0643c 100644
+index 9b55874e..4a0643cb 100644
 --- a/search_mode.h
 +++ b/search_mode.h
 @@ -40,6 +40,9 @@ void search_mode_key(int key);
@@ -1422,7 +1427,7 @@ index 9b55874..4a0643c 100644
  void search_text(const char *text, int restricted, int beginning);
  
 diff --git a/ui_curses.c b/ui_curses.c
-index 0ff6ed6..211d061 100644
+index 3b3bcbb4..ca46bbc9 100644
 --- a/ui_curses.c
 +++ b/ui_curses.c
 @@ -50,8 +50,12 @@
@@ -1446,7 +1451,7 @@ index 0ff6ed6..211d061 100644
  	switch (cur_view) {
  	case TREE_VIEW:
  		searchable = tree_searchable;
-@@ -2248,6 +2253,8 @@ static void main_loop(void)
+@@ -2253,6 +2258,8 @@ static void main_loop(void)
  
  		update();
  
@@ -1455,7 +1460,7 @@ index 0ff6ed6..211d061 100644
  		/* Timeout must be so small that screen updates seem instant.
  		 * Only affects changes done in other threads (player).
  		 *
-@@ -2271,6 +2278,10 @@ static void main_loop(void)
+@@ -2276,6 +2283,10 @@ static void main_loop(void)
  		SELECT_ADD_FD(server_socket);
  		if (mpris_fd != -1)
  			SELECT_ADD_FD(mpris_fd);
@@ -1466,7 +1471,7 @@ index 0ff6ed6..211d061 100644
  		list_for_each_entry(client, &client_head, node) {
  			SELECT_ADD_FD(client->fd);
  		}
-@@ -2351,6 +2362,12 @@ static void main_loop(void)
+@@ -2356,6 +2367,12 @@ static void main_loop(void)
  		if (mpris_fd != -1 && FD_ISSET(mpris_fd, &set))
  			mpris_process();
  
@@ -1479,7 +1484,7 @@ index 0ff6ed6..211d061 100644
  		if (FD_ISSET(job_fd, &set))
  			job_handle();
  
-@@ -2478,6 +2495,7 @@ static void init_all(void)
+@@ -2483,6 +2500,7 @@ static void init_all(void)
  	pl_init_options();
  	if (mpris)
  		mpris_init();
@@ -1487,7 +1492,7 @@ index 0ff6ed6..211d061 100644
  
  	/* finally we can set the output plugin */
  	player_set_op(output_plugin);
-@@ -2519,6 +2537,44 @@ static void init_all(void)
+@@ -2524,6 +2542,44 @@ static void init_all(void)
  	worker_start();
  }
  
@@ -1532,7 +1537,7 @@ index 0ff6ed6..211d061 100644
  static void exit_all(void)
  {
  	endwin();
-@@ -2547,6 +2603,7 @@ static void exit_all(void)
+@@ -2552,6 +2608,7 @@ static void exit_all(void)
  	help_exit();
  	browser_exit();
  	mpris_free();
@@ -1541,7 +1546,7 @@ index 0ff6ed6..211d061 100644
  
  enum {
 diff --git a/ui_curses.h b/ui_curses.h
-index 5b2a24d..2b226e4 100644
+index 5b2a24d7..2b226e42 100644
 --- a/ui_curses.h
 +++ b/ui_curses.h
 @@ -59,6 +59,9 @@ void update_filterline(void);

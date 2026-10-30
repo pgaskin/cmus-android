@@ -1,7 +1,7 @@
-From 735115ef1249fe1d20fd00e84d1f8c639ad4f379 Mon Sep 17 00:00:00 2001
+From 69c4a1d45457ab784e05e2ee3e748fe91186f7b2 Mon Sep 17 00:00:00 2001
 From: "Claude Opus 4.8" <noreply@anthropic.com>
 Date: Sun, 19 Jul 2026 19:34:55 -0400
-Subject: [PATCH 07/13] link plugins into the executable under
+Subject: [PATCH 04/10] link plugins into the executable under
  CONFIG_STATIC_PLUGINS
 
 Instead of dlopen()ing <libdir>/{ip,op}/*.so, compile every plugin into
@@ -17,7 +17,7 @@ Makefile leaves it unset and keeps the dlopen path.
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
 diff --git a/input.c b/input.c
-index 0f5e5b9..16757d2 100644
+index 0f5e5b99..16757d22 100644
 --- a/input.c
 +++ b/input.c
 @@ -34,6 +34,7 @@
@@ -73,7 +73,7 @@ index 0f5e5b9..16757d2 100644
  
  struct input_plugin *ip_new(const char *filename)
 diff --git a/output.c b/output.c
-index a31677a..44461ed 100644
+index a31677a7..44461edc 100644
 --- a/output.c
 +++ b/output.c
 @@ -28,6 +28,7 @@
@@ -131,7 +131,7 @@ index a31677a..44461ed 100644
  static void init_plugin(struct output_plugin *o)
 diff --git a/static_plugins.c b/static_plugins.c
 new file mode 100644
-index 0000000..d02da96
+index 00000000..d02da963
 --- /dev/null
 +++ b/static_plugins.c
 @@ -0,0 +1,94 @@
@@ -231,7 +231,7 @@ index 0000000..d02da96
 +#endif
 diff --git a/static_plugins.h b/static_plugins.h
 new file mode 100644
-index 0000000..cf4e4f5
+index 00000000..cf4e4f55
 --- /dev/null
 +++ b/static_plugins.h
 @@ -0,0 +1,63 @@
