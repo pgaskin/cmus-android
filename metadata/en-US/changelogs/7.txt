@@ -1,0 +1,3 @@
+* Update to cmus v2.13.
+* Fix crash on invalid opus/wavpack files.
+* Fix crash on some invalid UTF-8.
